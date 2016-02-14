@@ -65,6 +65,14 @@ fastconv_execute_fwd_reord
 	);
 
 void
+fastconv_execute_rev_reord
+	(const struct fastconv_pass *first_pass
+	,const float                *input_buf
+	,float                      *output_buf
+	,float                      *work_buf
+	);
+
+void
 fastconv_execute_conv
 	(const struct fastconv_pass *first_pass
 	,const float                *input_buf

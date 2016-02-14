@@ -45,6 +45,7 @@ struct fastconv_pass {
 	void (*dit)(float *work_buf, unsigned nfft, unsigned lfft, const float *twid);
 	void (*dif)(float *work_buf, unsigned nfft, unsigned lfft, const float *twid);
 	void (*difreord)(const float *in_buf, float *out_buf, unsigned nfft, unsigned lfft);
+	void (*ditreord)(const float *in_buf, float *out_buf, unsigned nfft, unsigned lfft);
 
 	/* Position in list of all passes of this type (outer or inner pass). */
 	struct fastconv_pass       *next;
@@ -231,6 +232,27 @@ static void fc_v4_dif_r2(float *work_buf, unsigned nfft, unsigned lfft, const fl
 	} while (--nfft);
 }
 
+static void fc_v4_dit_r2_reord(const float *in_buf, float *out_buf, unsigned nfft, unsigned lfft)
+{
+	unsigned rinc = lfft * 4;
+	lfft /= 2;
+	do {
+		unsigned j = lfft;
+		do {
+			v4f re0 = v4f_ld(in_buf + 0);
+			v4f im0 = v4f_ld(in_buf + 4);
+			v4f re1 = v4f_ld(in_buf + 8);
+			v4f im1 = v4f_ld(in_buf + 12);
+			v4f_st(out_buf + 0, re0);
+			v4f_st(out_buf + 4, im0);
+			v4f_st(out_buf + rinc + 0, re1);
+			v4f_st(out_buf + rinc + 4, im1);
+			in_buf += 16; out_buf += 8;
+		} while (--j);
+		out_buf += rinc;
+	} while (--nfft);
+}
+
 static void fc_v4_dif_r2_reord(const float *in_buf, float *out_buf, unsigned nfft, unsigned lfft)
 {
 	unsigned rinc = lfft * 4;
@@ -389,6 +411,63 @@ fastconv_execute_fwd_reord
 	assert(si == 0);
 }
 
+void
+fastconv_execute_rev_reord
+	(const struct fastconv_pass *first_pass
+	,const float                *input_buf
+	,float                      *output_buf
+	,float                      *work_buf
+	)
+{
+	const struct fastconv_pass *pass_stack[FASTCONV_MAX_PASSES];
+	unsigned si = 0;
+	unsigned nfft = 1;
+	unsigned i;
+	assert(first_pass->dif == NULL && first_pass->dit == NULL);
+
+	for (i = 0; i < first_pass->lfft / 8; i++) {
+		v4f tor1, toi1, tor2, toi2, re1, im1, re2, im2;
+		V4F_LD2(re1, re2, input_buf + i*16);
+		V4F_LD2(im1, im2, input_buf + i*16 + 8);
+		V4F_DEINTERLEAVE(tor1, toi1, re1, re2);
+		V4F_DEINTERLEAVE(tor2, toi2, im1, im2);
+		V4F_DEINTERLEAVE(re1, re2, tor1, tor2);
+		V4F_DEINTERLEAVE(im1, im2, toi1, toi2);
+		re2 = v4f_reverse(re2);
+		im2 = v4f_reverse(im2);
+		im1 = v4f_neg(im1);
+		v4f_st(work_buf + i*8 + 0, re1);
+		v4f_st(work_buf + i*8 + 4, im1);
+		v4f_st(work_buf + first_pass->lfft*2 - i*8 - 8, re2);
+		v4f_st(work_buf + first_pass->lfft*2 - i*8 - 4, im2);
+	}
+
+	while (first_pass->lfft != first_pass->radix) {
+		assert(si < FASTCONV_MAX_PASSES);
+		pass_stack[si++] = first_pass;
+		first_pass = first_pass->next_compat;
+		assert(first_pass != NULL);
+		first_pass->ditreord(work_buf, output_buf, nfft, first_pass->lfft);
+		nfft *= first_pass->radix;
+
+		float *tmp = output_buf;
+		output_buf = work_buf;
+		work_buf = tmp;
+	}
+
+	while (first_pass->dit != NULL && first_pass->dif != NULL) {
+		nfft /= first_pass->radix;
+		first_pass->dit(work_buf, nfft, first_pass->lfft, first_pass->twiddle);
+		first_pass = pass_stack[--si];
+	}
+	assert(nfft == 1);
+	assert(si == 0);
+	fastconv_v4_download(output_buf, work_buf, first_pass->twiddle, first_pass->lfft);
+	/* We have no idea which buffer is which because of the reindexing. Copy
+	 * the output buffer into the work buffer. */
+	memcpy(work_buf, output_buf, sizeof(float) * first_pass->lfft * 2);
+}
+
 void fastconv_fftset_init(struct fastconv_fftset *fc)
 {
 	fc->first_outer = NULL;
@@ -446,6 +525,7 @@ static struct fastconv_pass *fastconv_get_inner_pass(struct fastconv_fftset *fc,
 		pass->dif      = fc_v4_dif_r2;
 		pass->dit      = fc_v4_dit_r2;
 		pass->difreord = fc_v4_dif_r2_reord;
+		pass->ditreord = fc_v4_dit_r2_reord;
 	} else {
 		/* Only support radix-2. */
 		abort();
@@ -526,6 +606,7 @@ const struct fastconv_pass *fastconv_get_real_conv(struct fastconv_fftset *fc, u
 	pass->dif         = NULL;
 	pass->dit         = NULL;
 	pass->difreord    = NULL;
+	pass->ditreord    = NULL;
 
 	/* Generate twiddle */
 	for (i = 0; i < length / 16; i++) {

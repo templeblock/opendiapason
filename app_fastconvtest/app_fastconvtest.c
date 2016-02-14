@@ -19,6 +19,7 @@
  * DEALINGS IN THE SOFTWARE. */
 
 #include <stdio.h>
+#include <math.h>
 #include "cop/aalloc.h"
 #include "opendiapason/fastconv.h"
 
@@ -79,11 +80,17 @@ int main(int argc, char *argv[])
 	}
 
 	for (i = 0; i < fftlen; i++) {
-		inbuf[i] = i==0?1.0:0.0;//cos(i * 2.0 * M_PI * 29.5 / fftlen + 0.4);
+		inbuf[i] = sin(i * 2.0 * M_PI * 2.5 / fftlen);
 	}
+
 	fastconv_execute_fwd_reord(test, inbuf, outbuf, scratch);
 	for (i = 0; i < fftlen/2; i++) {
 		printf("%d,%f,%f\n", i, outbuf[2*i], outbuf[2*i+1]);
+	}
+
+	fastconv_execute_rev_reord(test, outbuf, inbuf, scratch);
+	for (i = 0; i < fftlen; i++) {
+		printf("%d,%f\n", i, inbuf[i]);
 	}
 
 
