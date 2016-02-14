@@ -212,11 +212,9 @@ int main(int argc, char *argv[])
 	for (; i < fft_size; i++) {
 		fft_buf[i] = 0.0;
 	}
+	inv_buf[0] = 0.0;
 	for (i = 0; i < INVERSE_FILTER_LEN-1; i++) {
-		inv_buf[i] = fft_buf[i] * SMPL_POSITION_SCALE;
-	}
-	for (; i < INVERSE_FILTER_LEN; i++) {
-		inv_buf[i] = 0.0;
+		inv_buf[i+1] = fft_buf[i] * SMPL_POSITION_SCALE;
 	}
 	fastconv_execute_fwd_reord(fft, fft_buf, tmp_buf, tmp2_buf);
 	for (i = 0; i < fft_size/2; i++) {
@@ -233,7 +231,7 @@ int main(int argc, char *argv[])
 	printf("#define SMPL_INVERSE_FILTER_LEN (%uu)\n", INVERSE_FILTER_LEN-1);
 	printf("#define SMPL_POSITION_SCALE     (%uu)\n", SMPL_POSITION_SCALE);
 	printf("#define SMPL_INTERP_TAPS        (%uu)\n", SMPL_INTERP_TAPS);
-	printf("static const float SMPL_INVERSE_COEFS[SMPL_INVERSE_FILTER_LEN] =\n");
+	printf("static const float SMPL_INVERSE_COEFS[SMPL_INVERSE_FILTER_LEN+1] =\n");
 	for (i = 0; i < INVERSE_FILTER_LEN; i++) {
 		if (i == 0)
 			printf("{");
