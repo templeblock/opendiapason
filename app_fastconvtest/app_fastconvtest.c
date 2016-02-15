@@ -80,18 +80,40 @@ int main(int argc, char *argv[])
 	}
 
 	for (i = 0; i < fftlen; i++) {
-		inbuf[i] = sin(i * 2.0 * M_PI * 2.5 / fftlen);
+		inbuf[i] = sin(i * 2.0 * M_PI * 30.5 / fftlen);
 	}
 
+
 	fastconv_execute_fwd_reord(test, inbuf, outbuf, scratch);
+
+
+
 	for (i = 0; i < fftlen/2; i++) {
 		printf("%d,%f,%f\n", i, outbuf[2*i], outbuf[2*i+1]);
 	}
-
+#if 0
 	fastconv_execute_rev_reord(test, outbuf, inbuf, scratch);
 	for (i = 0; i < fftlen; i++) {
 		printf("%d,%f\n", i, inbuf[i]);
 	}
+#endif
+
+	fftlen  = 16384;
+	test    = fastconv_get_real_conv(&convs, fftlen);
+	inbuf   = aalloc_align_alloc(&mem, fftlen * sizeof(float), 64);
+	outbuf  = aalloc_align_alloc(&mem, fftlen * sizeof(float), 64);
+	scratch = aalloc_align_alloc(&mem, fftlen * sizeof(float), 64);
+
+	for (i = 0; i < 40000; i++) {
+		unsigned j;
+		for (j = 0; j < fftlen; j++) {
+			inbuf[j] = 0.0f;
+		}
+		fastconv_execute_fwd_reord(test, inbuf, outbuf, scratch);
+	}
+
+
+
 
 
 	fastconv_fftset_destroy(&convs);

@@ -29,6 +29,9 @@
 #error this implementation requires a vector type at the moment
 #endif
 
+#define ORDERED_PASSES_USE_STOCKHAM (1)
+
+
 struct fastconv_pass {
 	unsigned                    lfft;
 	unsigned                    radix;
@@ -44,8 +47,13 @@ struct fastconv_pass {
 	 * both non-null. */
 	void (*dit)(float *work_buf, unsigned nfft, unsigned lfft, const float *twid);
 	void (*dif)(float *work_buf, unsigned nfft, unsigned lfft, const float *twid);
+
+#if ORDERED_PASSES_USE_STOCKHAM
+	void (*stockham)(const float *in, float *out, const float *twid, unsigned ncol, unsigned nrow_div_radix);
+#else
 	void (*difreord)(const float *in_buf, float *out_buf, unsigned nfft, unsigned lfft);
 	void (*ditreord)(const float *in_buf, float *out_buf, unsigned nfft, unsigned lfft);
+#endif
 
 	/* Position in list of all passes of this type (outer or inner pass). */
 	struct fastconv_pass       *next;
@@ -302,6 +310,42 @@ static void fc_v4_dit_r2(float *work_buf, unsigned nfft, unsigned lfft, const fl
 	} while (--nfft);
 }
 
+static void fc_v4_stock_r2(const float *in, float *out, const float *twid, unsigned ncol, unsigned nrow_div_radix)
+{
+	const unsigned ooffset = (2*4)*ncol;
+	const unsigned ioffset = ooffset*nrow_div_radix;
+	do {
+		float       *out0 = out;
+		const float *tp   = twid;
+		unsigned     j    = ncol;
+		do {
+			v4f r0, i0, r1, i1;
+			V4F_LD2(r0, i0, in + 0*ioffset);
+			V4F_LD2(r1, i1, in + 1*ioffset);
+			v4f twr1 = v4f_broadcast(tp[0]);
+			v4f twi1 = v4f_broadcast(tp[1]);
+			v4f or1a = v4f_mul(r1, twr1);
+			v4f oi1a = v4f_mul(r1, twi1);
+			v4f or1b = v4f_mul(i1, twi1);
+			v4f oi1b = v4f_mul(i1, twr1);
+			r1       = v4f_sub(or1a, or1b);
+			i1       = v4f_add(oi1a, oi1b);
+			v4f or0  = v4f_add(r0, r1);
+			v4f oi0  = v4f_add(i0, i1);
+			v4f or1  = v4f_sub(r0, r1);
+			v4f oi1  = v4f_sub(i0, i1);
+			v4f_st(out0 + 0*ooffset + 0*4, or0);
+			v4f_st(out0 + 0*ooffset + 1*4, oi0);
+			v4f_st(out0 + 1*ooffset + 0*4, or1);
+			v4f_st(out0 + 1*ooffset + 1*4, oi1);
+			tp   += 2;
+			in   += (2*4);
+			out0 += (2*4);
+		} while (--j);
+		out = out + 2*ooffset;
+	} while (--nrow_div_radix);
+}
+
 void
 fastconv_execute_fwd
 	(const struct fastconv_pass *first_pass
@@ -375,6 +419,23 @@ fastconv_execute_fwd_reord
 	unsigned i;
 	assert(first_pass->dif == NULL && first_pass->dit == NULL);
 	fastconv_v4_upload(work_buf, input_buf, first_pass->twiddle, first_pass->lfft);
+#if ORDERED_PASSES_USE_STOCKHAM
+	while (first_pass->lfft != first_pass->radix) {
+		assert(si < FASTCONV_MAX_PASSES);
+		pass_stack[si++] = first_pass;
+		first_pass = first_pass->next_compat;
+		assert(first_pass != NULL);
+		nfft *= first_pass->radix;
+	}
+	while (first_pass->dit != NULL && first_pass->dif != NULL) {
+		nfft /= first_pass->radix;
+		first_pass->stockham(work_buf, output_buf, first_pass->twiddle, first_pass->lfft/2, nfft);
+		first_pass = pass_stack[--si];
+		float *tmp = output_buf;
+		output_buf = work_buf;
+		work_buf = tmp;
+	}
+#else
 	while (first_pass->lfft != first_pass->radix) {
 		assert(si < FASTCONV_MAX_PASSES);
 		pass_stack[si++] = first_pass;
@@ -391,6 +452,9 @@ fastconv_execute_fwd_reord
 		output_buf = work_buf;
 		work_buf = tmp;
 	}
+	assert(nfft == 1);
+	assert(si == 0);
+#endif
 	for (i = 0; i < first_pass->lfft / 8; i++) {
 		v4f tor1, toi1, tor2, toi2; 
 		v4f re1 = v4f_ld(work_buf + i*8 + 0);
@@ -407,10 +471,9 @@ fastconv_execute_fwd_reord
 	/* We have no idea which buffer is which because of the reindexing. Copy
 	 * the output buffer into the work buffer. */
 	memcpy(work_buf, output_buf, sizeof(float) * first_pass->lfft * 2);
-	assert(nfft == 1);
-	assert(si == 0);
 }
 
+#if 0
 void
 fastconv_execute_rev_reord
 	(const struct fastconv_pass *first_pass
@@ -467,6 +530,7 @@ fastconv_execute_rev_reord
 	 * the output buffer into the work buffer. */
 	memcpy(work_buf, output_buf, sizeof(float) * first_pass->lfft * 2);
 }
+#endif
 
 void fastconv_fftset_init(struct fastconv_fftset *fc)
 {
@@ -524,8 +588,13 @@ static struct fastconv_pass *fastconv_get_inner_pass(struct fastconv_fftset *fc,
 		pass->radix    = 2;
 		pass->dif      = fc_v4_dif_r2;
 		pass->dit      = fc_v4_dit_r2;
+
+#if ORDERED_PASSES_USE_STOCKHAM
+		pass->stockham = fc_v4_stock_r2;
+#else
 		pass->difreord = fc_v4_dif_r2_reord;
 		pass->ditreord = fc_v4_dit_r2_reord;
+#endif
 	} else {
 		/* Only support radix-2. */
 		abort();
@@ -605,8 +674,12 @@ const struct fastconv_pass *fastconv_get_real_conv(struct fastconv_fftset *fc, u
 	pass->radix       = 4;
 	pass->dif         = NULL;
 	pass->dit         = NULL;
+#if ORDERED_PASSES_USE_STOCKHAM
+	pass->stockham    = NULL;
+#else
 	pass->difreord    = NULL;
 	pass->ditreord    = NULL;
+#endif
 
 	/* Generate twiddle */
 	for (i = 0; i < length / 16; i++) {
