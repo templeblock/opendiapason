@@ -31,7 +31,6 @@
 
 #define ORDERED_PASSES_USE_STOCKHAM (1)
 
-
 struct fastconv_pass {
 	unsigned                    lfft;
 	unsigned                    radix;
@@ -39,8 +38,7 @@ struct fastconv_pass {
 	void                       *twidbase;
 
 	/* The best next pass to use (this pass will have:
-	 *      next->lfft = this->lfft / this->radix
-	 */
+	 *      next->lfft = this->lfft / this->radix */
 	const struct fastconv_pass *next_compat;
 
 	/* If these are both null, this is the upload pass. Otherwise, these are
@@ -49,7 +47,7 @@ struct fastconv_pass {
 	void (*dif)(float *work_buf, unsigned nfft, unsigned lfft, const float *twid);
 
 #if ORDERED_PASSES_USE_STOCKHAM
-	void (*stockham)(const float *in, float *out, const float *twid, unsigned ncol, unsigned nrow_div_radix);
+	void (*dif_stockham)(const float *in, float *out, const float *twid, unsigned ncol, unsigned nrow_div_radix);
 #else
 	void (*difreord)(const float *in_buf, float *out_buf, unsigned nfft, unsigned lfft);
 	void (*ditreord)(const float *in_buf, float *out_buf, unsigned nfft, unsigned lfft);
@@ -59,8 +57,6 @@ struct fastconv_pass {
 	struct fastconv_pass       *next;
 };
 
-#define FASTCONV_BUFFER_ALIGN      (64)
-#define FASTCONV_VECTOR_LEN        (4)
 #define FASTCONV_REAL_LEN_MULTIPLE (32)
 #define FASTCONV_MAX_PASSES        (24)
 
@@ -240,6 +236,76 @@ static void fc_v4_dif_r2(float *work_buf, unsigned nfft, unsigned lfft, const fl
 	} while (--nfft);
 }
 
+static void fc_v4_dit_r2(float *work_buf, unsigned nfft, unsigned lfft, const float *twid)
+{
+	unsigned rinc = lfft * 4;
+	lfft /= 2;
+	do {
+		unsigned j;
+		for (j = 0; j < lfft; j++, work_buf += 8) {
+			v4f nre  = v4f_ld(work_buf + 0);
+			v4f nim  = v4f_ld(work_buf + 4);
+			v4f ptre = v4f_ld(work_buf + rinc + 0);
+			v4f ptim = v4f_ld(work_buf + rinc + 4);
+			v4f tre  = v4f_broadcast(twid[2*j+0]);
+			v4f tim  = v4f_broadcast(twid[2*j+1]);
+			v4f fre  = ptre * tre - ptim * tim;
+			v4f fim  = ptre * tim + ptim * tre;
+			v4f onre = v4f_add(nre, fre);
+			v4f onim = v4f_add(nim, fim);
+			v4f ofre = v4f_sub(nre, fre);
+			v4f ofim = v4f_sub(nim, fim);
+			v4f_st(work_buf + 0, onre);
+			v4f_st(work_buf + 4, onim);
+			v4f_st(work_buf + rinc + 0, ofre);
+			v4f_st(work_buf + rinc + 4, ofim);
+		}
+		work_buf += rinc;
+	} while (--nfft);
+}
+
+#if ORDERED_PASSES_USE_STOCKHAM
+
+static void fc_v4_stock_r2(const float *in, float *out, const float *twid, unsigned ncol, unsigned nrow_div_radix)
+{
+	const unsigned ooffset = (2*4)*ncol;
+	const unsigned ioffset = ooffset*nrow_div_radix;
+	do {
+		const float *in0 = in;
+		const float *tp   = twid;
+		unsigned     j    = ncol;
+		do {
+			v4f r0, i0, r1, i1;
+			v4f or0, oi0, or1, oi1;
+			v4f twr1, twi1;
+			V4F_LD2(r0, i0, in0 + 0*ooffset);
+			V4F_LD2(r1, i1, in0 + 1*ooffset);
+			twr1     = v4f_broadcast(tp[0]);
+			twi1     = v4f_broadcast(tp[1]);
+			or1      = v4f_sub(r0, r1);
+			oi1      = v4f_sub(i0, i1);
+			or0      = v4f_add(r0, r1);
+			oi0      = v4f_add(i0, i1);
+			v4f or1a = v4f_mul(or1, twr1);
+			v4f or1b = v4f_mul(oi1, twi1);
+			v4f oi1a = v4f_mul(or1, twi1);
+			v4f oi1b = v4f_mul(oi1, twr1);
+			r1       = v4f_sub(or1a, or1b);
+			i1       = v4f_add(oi1a, oi1b);
+			v4f_st(out + 0*ioffset+0*4, or0);
+			v4f_st(out + 0*ioffset+1*4, oi0);
+			v4f_st(out + 1*ioffset+0*4, r1);
+			v4f_st(out + 1*ioffset+1*4, i1);
+			tp   += 2;
+			out  += (2*4);
+			in0  += (2*4);
+		} while (--j);
+		in = in + 2*ooffset;
+	} while (--nrow_div_radix);
+}
+
+#else
+
 static void fc_v4_dit_r2_reord(const float *in_buf, float *out_buf, unsigned nfft, unsigned lfft)
 {
 	unsigned rinc = lfft * 4;
@@ -282,69 +348,7 @@ static void fc_v4_dif_r2_reord(const float *in_buf, float *out_buf, unsigned nff
 	} while (--nfft);
 }
 
-static void fc_v4_dit_r2(float *work_buf, unsigned nfft, unsigned lfft, const float *twid)
-{
-	unsigned rinc = lfft * 4;
-	lfft /= 2;
-	do {
-		unsigned j;
-		for (j = 0; j < lfft; j++, work_buf += 8) {
-			v4f nre  = v4f_ld(work_buf + 0);
-			v4f nim  = v4f_ld(work_buf + 4);
-			v4f ptre = v4f_ld(work_buf + rinc + 0);
-			v4f ptim = v4f_ld(work_buf + rinc + 4);
-			v4f tre  = v4f_broadcast(twid[2*j+0]);
-			v4f tim  = v4f_broadcast(twid[2*j+1]);
-			v4f fre  = ptre * tre - ptim * tim;
-			v4f fim  = ptre * tim + ptim * tre;
-			v4f onre = v4f_add(nre, fre);
-			v4f onim = v4f_add(nim, fim);
-			v4f ofre = v4f_sub(nre, fre);
-			v4f ofim = v4f_sub(nim, fim);
-			v4f_st(work_buf + 0, onre);
-			v4f_st(work_buf + 4, onim);
-			v4f_st(work_buf + rinc + 0, ofre);
-			v4f_st(work_buf + rinc + 4, ofim);
-		}
-		work_buf += rinc;
-	} while (--nfft);
-}
-
-static void fc_v4_stock_r2(const float *in, float *out, const float *twid, unsigned ncol, unsigned nrow_div_radix)
-{
-	const unsigned ooffset = (2*4)*ncol;
-	const unsigned ioffset = ooffset*nrow_div_radix;
-	do {
-		float       *out0 = out;
-		const float *tp   = twid;
-		unsigned     j    = ncol;
-		do {
-			v4f r0, i0, r1, i1;
-			V4F_LD2(r0, i0, in + 0*ioffset);
-			V4F_LD2(r1, i1, in + 1*ioffset);
-			v4f twr1 = v4f_broadcast(tp[0]);
-			v4f twi1 = v4f_broadcast(tp[1]);
-			v4f or1a = v4f_mul(r1, twr1);
-			v4f oi1a = v4f_mul(r1, twi1);
-			v4f or1b = v4f_mul(i1, twi1);
-			v4f oi1b = v4f_mul(i1, twr1);
-			r1       = v4f_sub(or1a, or1b);
-			i1       = v4f_add(oi1a, oi1b);
-			v4f or0  = v4f_add(r0, r1);
-			v4f oi0  = v4f_add(i0, i1);
-			v4f or1  = v4f_sub(r0, r1);
-			v4f oi1  = v4f_sub(i0, i1);
-			v4f_st(out0 + 0*ooffset + 0*4, or0);
-			v4f_st(out0 + 0*ooffset + 1*4, oi0);
-			v4f_st(out0 + 1*ooffset + 0*4, or1);
-			v4f_st(out0 + 1*ooffset + 1*4, oi1);
-			tp   += 2;
-			in   += (2*4);
-			out0 += (2*4);
-		} while (--j);
-		out = out + 2*ooffset;
-	} while (--nrow_div_radix);
-}
+#endif
 
 void
 fastconv_execute_fwd
@@ -424,17 +428,14 @@ fastconv_execute_fwd_reord
 		assert(si < FASTCONV_MAX_PASSES);
 		pass_stack[si++] = first_pass;
 		first_pass = first_pass->next_compat;
+		first_pass->dif_stockham(work_buf, output_buf, first_pass->twiddle, first_pass->lfft/2, nfft);
 		assert(first_pass != NULL);
 		nfft *= first_pass->radix;
-	}
-	while (first_pass->dit != NULL && first_pass->dif != NULL) {
-		nfft /= first_pass->radix;
-		first_pass->stockham(work_buf, output_buf, first_pass->twiddle, first_pass->lfft/2, nfft);
-		first_pass = pass_stack[--si];
 		float *tmp = output_buf;
 		output_buf = work_buf;
-		work_buf = tmp;
+		work_buf   = tmp;
 	}
+	first_pass = pass_stack[0];
 #else
 	while (first_pass->lfft != first_pass->radix) {
 		assert(si < FASTCONV_MAX_PASSES);
@@ -450,7 +451,7 @@ fastconv_execute_fwd_reord
 		first_pass = pass_stack[--si];
 		float *tmp = output_buf;
 		output_buf = work_buf;
-		work_buf = tmp;
+		work_buf   = tmp;
 	}
 	assert(nfft == 1);
 	assert(si == 0);
@@ -473,7 +474,6 @@ fastconv_execute_fwd_reord
 	memcpy(work_buf, output_buf, sizeof(float) * first_pass->lfft * 2);
 }
 
-#if 0
 void
 fastconv_execute_rev_reord
 	(const struct fastconv_pass *first_pass
@@ -505,6 +505,20 @@ fastconv_execute_rev_reord
 		v4f_st(work_buf + first_pass->lfft*2 - i*8 - 4, im2);
 	}
 
+#if ORDERED_PASSES_USE_STOCKHAM
+	while (first_pass->lfft != first_pass->radix) {
+		assert(si < FASTCONV_MAX_PASSES);
+		pass_stack[si++] = first_pass;
+		first_pass = first_pass->next_compat;
+		first_pass->dif_stockham(work_buf, output_buf, first_pass->twiddle, first_pass->lfft/2, nfft);
+		assert(first_pass != NULL);
+		nfft *= first_pass->radix;
+		float *tmp = output_buf;
+		output_buf = work_buf;
+		work_buf = tmp;
+	}
+	first_pass = pass_stack[0];
+#else
 	while (first_pass->lfft != first_pass->radix) {
 		assert(si < FASTCONV_MAX_PASSES);
 		pass_stack[si++] = first_pass;
@@ -517,7 +531,6 @@ fastconv_execute_rev_reord
 		output_buf = work_buf;
 		work_buf = tmp;
 	}
-
 	while (first_pass->dit != NULL && first_pass->dif != NULL) {
 		nfft /= first_pass->radix;
 		first_pass->dit(work_buf, nfft, first_pass->lfft, first_pass->twiddle);
@@ -525,12 +538,13 @@ fastconv_execute_rev_reord
 	}
 	assert(nfft == 1);
 	assert(si == 0);
+#endif
+
 	fastconv_v4_download(output_buf, work_buf, first_pass->twiddle, first_pass->lfft);
 	/* We have no idea which buffer is which because of the reindexing. Copy
 	 * the output buffer into the work buffer. */
 	memcpy(work_buf, output_buf, sizeof(float) * first_pass->lfft * 2);
 }
-#endif
 
 void fastconv_fftset_init(struct fastconv_fftset *fc)
 {
@@ -584,16 +598,15 @@ static struct fastconv_pass *fastconv_get_inner_pass(struct fastconv_fftset *fc,
 			pass->twiddle[2*i+0] = cosf(i * (-(float)M_PI * 2.0f) / length);
 			pass->twiddle[2*i+1] = sinf(i * (-(float)M_PI * 2.0f) / length);
 		}
-		pass->lfft     = length;
-		pass->radix    = 2;
-		pass->dif      = fc_v4_dif_r2;
-		pass->dit      = fc_v4_dit_r2;
-
+		pass->lfft         = length;
+		pass->radix        = 2;
+		pass->dif          = fc_v4_dif_r2;
+		pass->dit          = fc_v4_dit_r2;
 #if ORDERED_PASSES_USE_STOCKHAM
-		pass->stockham = fc_v4_stock_r2;
+		pass->dif_stockham = fc_v4_stock_r2;
 #else
-		pass->difreord = fc_v4_dif_r2_reord;
-		pass->ditreord = fc_v4_dit_r2_reord;
+		pass->difreord     = fc_v4_dif_r2_reord;
+		pass->ditreord     = fc_v4_dit_r2_reord;
 #endif
 	} else {
 		/* Only support radix-2. */
@@ -670,15 +683,15 @@ const struct fastconv_pass *fastconv_get_real_conv(struct fastconv_fftset *fc, u
 		return NULL;
 	}
 
-	pass->lfft        = length;
-	pass->radix       = 4;
-	pass->dif         = NULL;
-	pass->dit         = NULL;
+	pass->lfft         = length;
+	pass->radix        = 4;
+	pass->dif          = NULL;
+	pass->dit          = NULL;
 #if ORDERED_PASSES_USE_STOCKHAM
-	pass->stockham    = NULL;
+	pass->dif_stockham = NULL;
 #else
-	pass->difreord    = NULL;
-	pass->ditreord    = NULL;
+	pass->difreord     = NULL;
+	pass->ditreord     = NULL;
 #endif
 
 	/* Generate twiddle */
