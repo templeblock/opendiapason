@@ -98,20 +98,20 @@ int main(int argc, char *argv[])
 #endif
 
 
-#if 0
-	fftlen  = 128;
+#if 1
+	fftlen  = 1024;
 	test    = fastconv_get_real_conv(&convs, fftlen);
 	inbuf   = aalloc_align_alloc(&mem, fftlen * sizeof(float), 64);
 	outbuf  = aalloc_align_alloc(&mem, fftlen * sizeof(float), 64);
 	scratch = aalloc_align_alloc(&mem, fftlen * sizeof(float), 64);
 
-	for (i = 0; i < 8000000; i++) {
+	for (i = 0; i < 5000000; i++) {
 		unsigned j;
 		for (j = 0; j < fftlen; j++) {
 			inbuf[j] = 0.0f;
 		}
-//		fastconv_execute_fwd(test, inbuf, outbuf);
-		fastconv_execute_fwd_reord(test, inbuf, outbuf, scratch);
+		fastconv_execute_fwd(test, inbuf, outbuf);
+//		fastconv_execute_fwd_reord(test, inbuf, outbuf, scratch);
 	}
 #endif
 

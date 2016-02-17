@@ -26,9 +26,12 @@
 #include "cop/aalloc.h"
 
 #ifndef V4F_EXISTS
-#error this implementation requires a vector type at the moment
+#error this implementation requires a vector-4 type at the moment
 #endif
 
+/* If this macro is non-zero, the "ordered output" DFTs will use the Stockham
+ * construction instead of in-place Cooley-Tukey butterfly passes with
+ * explicit out-of-place reordering. */
 #define ORDERED_PASSES_USE_STOCKHAM (1)
 
 struct fastconv_pass {
@@ -60,7 +63,7 @@ struct fastconv_pass {
 #define FASTCONV_REAL_LEN_MULTIPLE (32)
 #define FASTCONV_MAX_PASSES        (24)
 
-static void fastconv_v4_upload(float *vec_output, const float *input, const float *coefs, unsigned fft_len)
+__attribute__((noinline)) static void fastconv_v4_upload(float *vec_output, const float *input, const float *coefs, unsigned fft_len)
 {
 	const unsigned fft_len_4 = fft_len / 4;
 	unsigned i;
@@ -133,7 +136,7 @@ static void fastconv_v4_upload(float *vec_output, const float *input, const floa
 	}
 }
 
-static void fastconv_v4_download(float *output, const float *vec_input, const float *coefs, unsigned fft_len)
+__attribute__((noinline)) static void fastconv_v4_download(float *output, const float *vec_input, const float *coefs, unsigned fft_len)
 {
 	const unsigned fft_len_4 = fft_len / 4;
 	unsigned i;
@@ -409,6 +412,24 @@ fastconv_execute_conv
 	fastconv_v4_download(output_buf, work_buf, first_pass->twiddle, first_pass->lfft);
 }
 
+__attribute__((noinline)) static void fwd_post_reorder(const float *in_buf, float *out_buf, unsigned lfft)
+{
+	unsigned i;
+	for (i = 0; i < lfft / 8; i++) {
+		v4f tor1, toi1, tor2, toi2; 
+		v4f re1 = v4f_ld(in_buf + i*8 + 0);
+		v4f im1 = v4f_ld(in_buf + i*8 + 4);
+		v4f re2 = v4f_ld(in_buf + lfft*2 - i*8 - 8);
+		v4f im2 = v4f_ld(in_buf + lfft*2 - i*8 - 4);
+		re2     = v4f_reverse(re2);
+		im2     = v4f_reverse(v4f_neg(im2));
+		V4F_INTERLEAVE(tor1, tor2, re1, re2);
+		V4F_INTERLEAVE(toi1, toi2, im1, im2);
+		V4F_INTERLEAVE_STORE(out_buf + i*16,     tor1, toi1);
+		V4F_INTERLEAVE_STORE(out_buf + i*16 + 8, tor2, toi2);
+	}
+}
+
 void
 fastconv_execute_fwd_reord
 	(const struct fastconv_pass *first_pass
@@ -420,7 +441,6 @@ fastconv_execute_fwd_reord
 	const struct fastconv_pass *pass_stack[FASTCONV_MAX_PASSES];
 	unsigned si = 0;
 	unsigned nfft = 1;
-	unsigned i;
 	assert(first_pass->dif == NULL && first_pass->dit == NULL);
 	fastconv_v4_upload(work_buf, input_buf, first_pass->twiddle, first_pass->lfft);
 #if ORDERED_PASSES_USE_STOCKHAM
@@ -456,21 +476,7 @@ fastconv_execute_fwd_reord
 	assert(nfft == 1);
 	assert(si == 0);
 #endif
-	for (i = 0; i < first_pass->lfft / 8; i++) {
-		v4f tor1, toi1, tor2, toi2; 
-		v4f re1 = v4f_ld(work_buf + i*8 + 0);
-		v4f im1 = v4f_ld(work_buf + i*8 + 4);
-		v4f re2 = v4f_ld(work_buf + first_pass->lfft*2 - i*8 - 8);
-		v4f im2 = v4f_ld(work_buf + first_pass->lfft*2 - i*8 - 4);
-		re2     = v4f_reverse(re2);
-		im2     = v4f_reverse(v4f_neg(im2));
-		V4F_INTERLEAVE(tor1, tor2, re1, re2);
-		V4F_INTERLEAVE(toi1, toi2, im1, im2);
-		V4F_INTERLEAVE_STORE(output_buf + i*16,     tor1, toi1);
-		V4F_INTERLEAVE_STORE(output_buf + i*16 + 8, tor2, toi2);
-	}
-	/* We have no idea which buffer is which because of the reindexing. Copy
-	 * the output buffer into the work buffer. */
+	fwd_post_reorder(work_buf, output_buf, first_pass->lfft);
 	memcpy(work_buf, output_buf, sizeof(float) * first_pass->lfft * 2);
 }
 
