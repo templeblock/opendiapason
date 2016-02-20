@@ -113,9 +113,6 @@ struct playeng *playeng_init(unsigned max_poly, unsigned nb_channels, unsigned n
 	if ((pe = malloc(sizeof(*pe))) == NULL)
 		return NULL;
 
-	struct playeng_instance  *insts_mem;
-	struct dec_state         *decodes_mem;
-
 	if (cop_mutex_create(&pe->signal_lock)) {
 		free(pe);
 		return NULL;
@@ -195,7 +192,6 @@ get_instance(struct playeng *eng, unsigned ndec)
 {
 	assert(ndec);
 	if (ndec <= eng->nb_inactive_decodes) {
-		unsigned i;
 		struct playeng_instance *ei;
 
 		assert(eng->inactive_insts != NULL);
@@ -236,7 +232,6 @@ playeng_insert
 	)
 {
 	struct playeng_instance *ei;
-	unsigned i;
 
 	/* Get an instance and decoders if they are available. */
 	cop_mutex_lock(&eng->list_lock);

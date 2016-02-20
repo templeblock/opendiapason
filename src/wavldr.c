@@ -534,6 +534,7 @@ load_smpl_f
 		return "no/too-many loops or no release";
 
 	pipe->frequency = mw.frequency;
+	pipe->sample_rate = mw.rate;
 
 	pipe->attack.nloop = mw.nloop;
 	for (i = 0; i < mw.nloop; i++) {
@@ -791,13 +792,13 @@ load_smpl_f
 	}
 #endif
 
+#if 0
 	{
 		unsigned rsamples = (unsigned)((1.0 / mw.frequency) * mw.rate * 3.0 + 0.5);
 		unsigned clen;
 //		float *corr = eval_mse(mw.data[0], mw.data[0] + mw.release_pos, pipe->attack.ends[mw.nloop-1].end_smpl + 1, rsamples, &clen);
 //		reltable_build(tab, corr, clen, (1.0f / mw.frequency) * mw.rate);
 
-#if 0
 		{
 			FILE *f;
 			char danger[1024];
@@ -816,9 +817,8 @@ load_smpl_f
 
 			fclose(f);
 		}
-#endif
-
 	}
+#endif
 
 
 

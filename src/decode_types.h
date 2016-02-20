@@ -74,7 +74,7 @@ struct filter_state {
 /* This LCG is used for loop jump selection. Having this static implementation
  * (which should be inlined) provides wildly better code than using rand()
  * calls. */
-static uint_fast32_t update_rnd(uint_fast32_t rnd)
+static COP_ATTR_UNUSED COP_ATTR_INLINE uint_fast32_t update_rnd(uint_fast32_t rnd)
 {
 	return rnd * 1103515245 + 12345;
 }

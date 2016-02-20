@@ -21,6 +21,7 @@
 #ifndef WAVELDR_H
 #define WAVELDR_H
 
+#include "decode_types.h"
 #include "reltable.h"
 #include "cop/aalloc.h"
 #include "opendiapason/fastconv.h"
@@ -42,6 +43,7 @@ struct pipe_v1 {
 	struct dec_smpl release;
 	struct reltable reltable;
 	double          frequency;
+	unsigned long   sample_rate;
 };
 
 
