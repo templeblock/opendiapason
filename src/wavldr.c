@@ -29,7 +29,7 @@
 struct wave_cks {
 	unsigned long  datasz;
 	unsigned char *data;
-	unsigned long  smplsz; 
+	unsigned long  smplsz;
 	unsigned char *smpl;
 	unsigned long  fmtsz;
 	unsigned char *fmt;

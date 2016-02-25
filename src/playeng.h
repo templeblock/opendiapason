@@ -60,6 +60,9 @@ typedef unsigned (*playeng_callback)(void *userdata, struct dec_state **states, 
  * polyphony. */
 struct playeng *playeng_init(unsigned max_poly, unsigned nb_channels, unsigned nb_threads);
 
+/* Destroy a playback engine. */
+void playeng_destroy(struct playeng *eng);
+
 /* Get ninst free decode states from the engine and assign them to a playback
  * instance. If there are not ninst decode states available, the function
  * returns NULL and the internal state is not modified. A valid return

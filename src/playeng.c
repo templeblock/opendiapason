@@ -20,37 +20,10 @@
 
 #include "playeng.h"
 #include "cop/cop_thread.h"
+#include "cop/aalloc.h"
 #include <stdlib.h>
 
 /* TODO: IMPLEMENT SCHEDULED CALLBACKS... FLAGS CURRENTLY HAVE NO EFFECT. */
-
-/* HOW THIS THING WORKS.
- *
- * Engine
- *
- *
- *
- * Engine Instances
- *   Each instance has a flags member. The engine executes callbacks on all
- * samples which have been signalled and updates this value with the return
- * value of the callback. Flags indicates which decoders are active, any
- * termination conditions to automatically deactivate individual decoders and
- * a duration (specified in number-of-calls-to-process units) before the
- * callback will be called again regardless of the state of the signals. If
- * a callback returns zero (and hence updates the value of flags to zero) or
- * returns termination conditions which deactivate all of the decoders, the
- * instance will have completed and will be returned to the inactive queue at
- * the next opportune time. The ordering here is important. When a new decode
- * instance is created, flags are initialised to zero - this does not indicate
- * the sample s should be terminated as the callback has not yet been called.
- * A zero value in the flags indicates that the callback has not yet been
- * called and is waiting to be signalled. This means that if the caller
- * creates many sample instances with a particular signal mask while the
- * mask is blocked using playeng_signal_block(), the caller can guarantee that
- * all of the instance callbacks will be called at the same time once the
- * signal mask becomes unblocked. If there are no blocked signals, there is
- * no guarantee of when instances inserted by playeng_insert() will have
- * their callbacks made, nor of any sequencing. */
 
 struct playeng_instance {
 	struct dec_state        *states[PLAYENG_MAX_DECODERS_PER_INSTANCE];
@@ -78,10 +51,6 @@ struct playeng_thread_data {
 };
 
 struct playeng {
-	struct playeng_instance    *insts_mem;
-	struct dec_state           *decodes_mem;
-
-	/* Both are lists containing max polyphony elements. */
 	cop_mutex                     list_lock;
 	struct playeng_instance      *inactive_insts;
 	struct dec_state            **inactive_decodes;
@@ -102,77 +71,100 @@ struct playeng {
 	unsigned                      next_thread_idx;
 	struct playeng_thread_data   *threads;
 	float                      ***buffers;
+
+	/* Memory allocator for everything in engine. */
+	struct aalloc                 allocator;
 };
 
 
 struct playeng *playeng_init(unsigned max_poly, unsigned nb_channels, unsigned nb_threads)
 {
-	struct playeng *pe;
+	struct aalloc            a;
+	struct playeng_instance *insts_mem;
+	struct dec_state        *decodes_mem;
+	struct playeng          *pe;
 	unsigned i;
-
-	if ((pe = malloc(sizeof(*pe))) == NULL)
-		return NULL;
-
-	if (cop_mutex_create(&pe->signal_lock)) {
-		free(pe);
-		return NULL;
-	}
-	if (cop_mutex_create(&pe->list_lock)) {
-		cop_mutex_destroy(&pe->signal_lock);
-		free(pe);
-		return NULL;
-	}
 
 	if (nb_threads < 2)
 		nb_threads = 1;
 
+	aalloc_init(&a, 16, 16384);
+	if ((pe = aalloc_alloc(&a, sizeof(*pe))) == NULL)
+		return NULL;
+
+
 	pe->next_thread_idx  = 0;
 	pe->nb_threads       = nb_threads;
-	pe->insts_mem        = malloc(sizeof(pe->inactive_insts[0]) * max_poly);
-	pe->decodes_mem      = malloc(sizeof(pe->decodes_mem[0]) * max_poly);
-	pe->inactive_decodes = malloc(sizeof(pe->inactive_decodes[0]) * max_poly);
-	pe->threads          = malloc(sizeof(pe->threads[0]) * nb_threads);
+	insts_mem            = aalloc_alloc(&a, sizeof(insts_mem[0]) * max_poly);
+	decodes_mem          = aalloc_alloc(&a, sizeof(decodes_mem[0]) * max_poly);
+	pe->inactive_decodes = aalloc_alloc(&a, sizeof(pe->inactive_decodes[0]) * max_poly);
+	pe->threads          = aalloc_alloc(&a, sizeof(pe->threads[0]) * nb_threads);
+	if (insts_mem == NULL || decodes_mem == NULL || pe->inactive_decodes == NULL || pe->threads == NULL) {
+		aalloc_free(&a);
+		return NULL;
+	}
 	if (nb_threads > 1) {
-		pe->buffers          = malloc(sizeof(pe->buffers[0]) * (nb_threads-1));
+		if ((pe->buffers = aalloc_alloc(&a, sizeof(pe->buffers[0]) * (nb_threads-1))) == NULL) {
+			aalloc_free(&a);
+			return NULL;
+		}
+		for (i = 0; i < nb_threads-1; i++) {
+			if ((pe->buffers[i] = aalloc_alloc(&a, sizeof(pe->buffers[0][0]) * nb_channels)) == NULL) {
+				aalloc_free(&a);
+				return NULL;
+			};
+		}
 		for (i = 0; i < nb_threads-1; i++) {
 			unsigned j;
-			pe->buffers[i] = malloc(sizeof(pe->buffers[0][0]) * nb_channels);
 			for (j = 0; j < nb_channels; j++) {
-				pe->buffers[i][j] = malloc(sizeof(pe->buffers[0][0][0]) * OUTPUT_SAMPLES);
+				if ((pe->buffers[i][j] = aalloc_align_alloc(&a, sizeof(pe->buffers[0][0][0]) * OUTPUT_SAMPLES, 64)) == NULL) {
+					aalloc_free(&a);
+					return NULL;
+				}
 			}
 		}
 	}
 
-	if (pe->insts_mem == NULL || pe->inactive_decodes == NULL || pe->decodes_mem == NULL) {
+	if (cop_mutex_create(&pe->signal_lock)) {
+		aalloc_free(&a);
+		return NULL;
+	}
+	if (cop_mutex_create(&pe->list_lock)) {
 		cop_mutex_destroy(&pe->signal_lock);
-		cop_mutex_destroy(&pe->list_lock);
-		free(pe->insts_mem);
-		free(pe->inactive_decodes);
-		free(pe->decodes_mem);
-		free(pe);
+		aalloc_free(&a);
 		return NULL;
 	}
 
-	pe->ready_list = NULL;
-	pe->nb_inactive_decodes = max_poly;
-	pe->inactive_insts = NULL;
+	pe->ready_list                   = NULL;
+	pe->nb_inactive_decodes          = max_poly;
+	pe->inactive_insts               = NULL;
 	pe->locked_permitted_signal_mask = ~0u;
-	pe->current_time = 0;
-	pe->insertion_lock_level = 0;
+	pe->current_time                 = 0;
+	pe->insertion_lock_level         = 0;
 	for (i = 0; i < max_poly; i++) {
-		pe->inactive_decodes[i] = &(pe->decodes_mem[i]);
-		pe->insts_mem[i].next = pe->inactive_insts;
-		pe->inactive_insts = &(pe->insts_mem[i]);
+		pe->inactive_decodes[i] = &(decodes_mem[i]);
+		insts_mem[i].next       = pe->inactive_insts;
+		pe->inactive_insts      = &(insts_mem[i]);
 	}
 	for (i = 0; i < nb_threads; i++) {
-		pe->threads[i].active = NULL;
-		pe->threads[i].zombie = NULL;
+		pe->threads[i].active                = NULL;
+		pe->threads[i].zombie                = NULL;
 		pe->threads[i].permitted_signal_mask = pe->locked_permitted_signal_mask;
-		pe->threads[i].buffers = NULL;
-		pe->threads[i].current_time = 0;
+		pe->threads[i].buffers               = NULL;
+		pe->threads[i].current_time          = 0;
 	}
 
+	pe->allocator        = a;
+
 	return pe;
+}
+
+void playeng_destroy(struct playeng *eng)
+{
+	struct aalloc a = eng->allocator;
+	cop_mutex_destroy(&eng->signal_lock);
+	cop_mutex_destroy(&eng->list_lock);
+	aalloc_free(&a);
 }
 
 static
@@ -263,16 +255,16 @@ static void playeng_thread_data_execute(struct playeng_thread_data *td)
 		unsigned flags          = active_list->flags;
 		unsigned active_bits    = PLAYENG_GET_CALLBACK_ACTIVE(flags);
 
-		/* What is the point of this guy? When an object gets inserted into
+		/* What is the point of this guy? A: When an object gets inserted into
 		 * the engine, all of the active bits are zero and it may (depending
 		 * on how playeng_insert() was called) have no signal bits set. We
 		 * do not want to remove the sample at this point as the caller may
 		 * be reserving it to be signalled later (i.e. guarantee playback).
-		 * This only gets set if either the callback is called due to
-		 * signalling and returns no active bits OR if the sample has active
-		 * components they become deactive given the loop/fade-termination
-		 * conditions specified in the flags. */
-		int discard_sample      = 0;
+		 * Samples only get discarded if either:
+		 *   - the callback gets fired and returns no active bits OR
+		 *   - the sample had active components which became deactive given
+		 *     the loop/fade-termination conditions specified in the flags. */
+		int discard_sample = 0;
 
 		/* Check if the callback has been signalled. */
 		masked_signals = active_list->signals & td->permitted_signal_mask;

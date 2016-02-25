@@ -164,36 +164,21 @@ int main(int argc, char *argv[])
 		double re = tmp_buf[2*i];
 		double im = tmp_buf[2*i+1];
 		double gain = 10.0 * log10(re * re + im * im);
-		const double inmax = 16.0;
-		const double maxgain = 16.0;
-		const double kneegain = 6.0;
-		const double d = kneegain;
-		const double c = inmax - kneegain; //1.0;
-		const double a = (kneegain - maxgain) * 0.5;
-		const double b = -c - 3.0 * a;
 
 		assert(re == re && im == im);
-		plot_x_buf[i] = 48000 * ((i + 0.5) / fft_size);
+		plot_x_buf[i] = 44100 * ((i + 0.5) / fft_size);
 		plot_interp_filter[i] = fmin(100.0, fmax(-300, gain));
 
-		/* Run compressor */
-		gain = -gain;
-		if (gain > inmax) {
-			gain = maxgain;
-		} else if (gain > kneegain) {
-			double x = (gain - kneegain) / (inmax - kneegain);
-			double xx = x * x;
-			double xxx = xx * x;
-			gain = a * xxx + b * xx + c * x + d;
-		}
-
-		if (i > fft_size/2 * 0.96) {
-			gain = -80.0;
-		}
+		double w = (i + 0.5) / (float)(fft_size / 2);
+		double co   = 18500.0 * 2.0 / 44100.0;
+		double cooe = 21500.0 * 2.0 / 44100.0;
+		double target = 10.0 * log10(1.0 / (1.0 + pow(w / co, 38.0)));
+		double interp = fmin(fmax(0.0, (w - co) / (cooe - co)), 1.0);
+		gain = (1.0 - interp * interp) * (target - gain) + interp * interp * -12.0;
 
 		/* Invert magnitude. */
 		gain = pow(10.0, gain * 0.05);
-		
+
 		tmp_buf[2*i+0] = gain * cos(-(INVERSE_FILTER_LEN*0.5-1) * M_PI * (i + 0.5) / (double)(fft_size/2)) / (fft_size/2);
 		tmp_buf[2*i+1] = gain * sin(-(INVERSE_FILTER_LEN*0.5-1) * M_PI * (i + 0.5) / (double)(fft_size/2)) / (fft_size/2);
 	}
@@ -205,7 +190,7 @@ int main(int argc, char *argv[])
 	for (i = 0; i < INVERSE_FILTER_LEN-1; i++) {
 		tmp_double[i] = fft_buf[i] / SMPL_POSITION_SCALE;
 	}
-	apply_kaiser(tmp_double, INVERSE_FILTER_LEN-1, 2.5);
+	apply_kaiser(tmp_double, INVERSE_FILTER_LEN-1, 6.5);
 	for (i = 0; i < INVERSE_FILTER_LEN-1; i++) {
 		fft_buf[i] = tmp_double[i];
 	}
@@ -222,7 +207,7 @@ int main(int argc, char *argv[])
 		double im = tmp_buf[2*i+1] * SMPL_POSITION_SCALE;
 		double magnitude = sqrt(re * re + im * im);
 		assert(re == re && im == im);
-		plot_inverse_filter[i] = fmin(100.0, fmax(-300, 20.0 * log10(magnitude)));
+		plot_inverse_filter[i]  = fmin(100.0, fmax(-300, 20.0 * log10(magnitude)));
 		plot_combined_filter[i] = plot_interp_filter[i] + plot_inverse_filter[i];
 	}
 
