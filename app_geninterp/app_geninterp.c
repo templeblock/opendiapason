@@ -170,11 +170,11 @@ int main(int argc, char *argv[])
 		plot_interp_filter[i] = fmin(100.0, fmax(-300, gain));
 
 		double w = (i + 0.5) / (float)(fft_size / 2);
-		double co   = 18500.0 * 2.0 / 44100.0;
+		double co   = 18000.0 * 2.0 / 44100.0;
 		double cooe = 21500.0 * 2.0 / 44100.0;
 		double target = 10.0 * log10(1.0 / (1.0 + pow(w / co, 38.0)));
-		double interp = fmin(fmax(0.0, (w - co) / (cooe - co)), 1.0);
-		gain = (1.0 - interp * interp) * (target - gain) + interp * interp * -12.0;
+		double interp = pow(fmin(fmax(0.0, (w - co) / (cooe - co)), 1.0), 5);
+		gain = (1.0 - interp) * (target - gain) + interp * -40.0;
 
 		/* Invert magnitude. */
 		gain = pow(10.0, gain * 0.05);
@@ -190,7 +190,7 @@ int main(int argc, char *argv[])
 	for (i = 0; i < INVERSE_FILTER_LEN-1; i++) {
 		tmp_double[i] = fft_buf[i] / SMPL_POSITION_SCALE;
 	}
-	apply_kaiser(tmp_double, INVERSE_FILTER_LEN-1, 6.5);
+	apply_kaiser(tmp_double, INVERSE_FILTER_LEN-1, 3.5);
 	for (i = 0; i < INVERSE_FILTER_LEN-1; i++) {
 		fft_buf[i] = tmp_double[i];
 	}

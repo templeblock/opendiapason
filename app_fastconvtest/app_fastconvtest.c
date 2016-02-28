@@ -105,7 +105,7 @@ int main(int argc, char *argv[])
 	outbuf  = aalloc_align_alloc(&mem, fftlen * sizeof(float), 64);
 	scratch = aalloc_align_alloc(&mem, fftlen * sizeof(float), 64);
 
-	for (i = 0; i < 5000000; i++) {
+	for (i = 0; i < 3000000; i++) {
 		unsigned j;
 		for (j = 0; j < fftlen; j++) {
 			inbuf[j] = 0.0f;
