@@ -568,7 +568,7 @@ load_smpl_f
 			pipe->attack.starts[i].first_valid_end++;
 	}
 
-	const unsigned long as_length = pipe->attack.ends[mw.nloop-1].end_smpl;
+	const unsigned long as_loop_end   = pipe->attack.ends[mw.nloop-1].end_smpl;
 	const unsigned long as_loop_start = pipe->attack.starts[pipe->attack.ends[mw.nloop-1].start_idx].start_smpl;
 
 #if 1
@@ -576,7 +576,7 @@ load_smpl_f
 	apply_prefilter
 		(&mw
 		,as_loop_start
-		,as_length
+		,as_loop_end
 		,mw.release_pos
 		,allocator
 		,prefilt_kern
@@ -605,22 +605,22 @@ load_smpl_f
 		env_width    = (unsigned)((1.0f / mw.frequency) * mw.rate * 2.0f + 0.5f);
 		cor_fft_sz   = fastconv_recommend_length(env_width, 512);
 		fft          = fastconv_get_real_conv(fftset, cor_fft_sz);
-		envelope_buf = aalloc_align_alloc(allocator, sizeof(float) * as_length, 64);
-		mse_buf      = aalloc_align_alloc(allocator, sizeof(float) * as_length, 64);
+		envelope_buf = aalloc_align_alloc(allocator, sizeof(float) * (as_loop_end+1), 64);
+		mse_buf      = aalloc_align_alloc(allocator, sizeof(float) * (as_loop_end+1), 64);
 		kern_buf     = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
 		scratch_buf  = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
 		scratch_buf2 = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
 		scratch_buf3 = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
 
 		if (mw.channels == 2) {
-			for (i = 0; i < as_length; i++) {
+			for (i = 0; i <= as_loop_end; i++) {
 				float fl = mw.data[0][i];
 				float fr = mw.data[1][i];
 				envelope_buf[i] = fl * fl + fr * fr;
 			}
 		} else {
 			assert(mw.channels == 1);
-			for (i = 0; i < as_length; i++) {
+			for (i = 0; i <= as_loop_end; i++) {
 				float fm = mw.data[0][i];
 				envelope_buf[i] = fm * fm;
 			}
@@ -640,7 +640,7 @@ load_smpl_f
 			,envelope_buf
 			,0
 			,as_loop_start
-			,as_length
+			,(as_loop_end+1)
 			,0
 			,1
 			,scratch_buf
@@ -670,7 +670,7 @@ load_smpl_f
 				,mse_buf
 				,(ch != 0)
 				,as_loop_start
-				,as_length
+				,(as_loop_end+1)
 				,0
 				,1
 				,scratch_buf
@@ -737,7 +737,7 @@ load_smpl_f
 		fclose(f);
 #endif
 
-		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, as_length, (1.0f / mw.frequency) * mw.rate);
+		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, (as_loop_end+1), (1.0f / mw.frequency) * mw.rate);
 
 		aalloc_pop(allocator);
 	}
