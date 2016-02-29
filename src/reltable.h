@@ -40,13 +40,54 @@ reltable_find
 	,float                 *gain
 	);
 
+/* Creates a release alignment table for aligning a release with an
+ * attack/sustain segment.
+ *
+ * - envelope_buf is the power envelope of the input signal channels over a
+ *   particular number of samples: N. i.e.
+ *
+ *   for (i = 0; i < M; i++) {
+ *     envelope_buf[i] = 0.0;
+ *     for (ch = 0; ch < num_channels; ch++) {
+ *       for (n = 0; n < N; n++) {
+ *         envelope_buf[i] += attack_sustain[ch][i + n] * attack_sustain[ch][i + n];
+ *       }
+ *     }
+ *   }
+ *
+ * - correlation_buf is the sum of the correlations (one for each channel) of
+ *   N samples of the release segment with the input signal. i.e.
+ *
+ *   for (i = 0; i < M; i++) {
+ *     correlation_buf[i] = 0.0;
+ *     for (ch = 0; ch < num_channels; ch++) {
+ *       for (n = 0; n < N; n++) {
+ *         correlation_buf[i] += attack_sustain[ch][i + n] * release[ch][i + n];
+ *       }
+ *     }
+ *   }
+ *
+ * - rel_power is the sum of the powers of the release over N samples (over all
+ *   channels). i.e.
+ *
+ *   rel_power = 0.0;
+ *   for (ch = 0; ch < num_channels; ch++) {
+ *     for (n = 0; n < N; n++) {
+ *       rel_power += release[ch][n] * release[ch][n];
+ *     }
+ *   }
+ *
+ * - buf_len is the number of valid data points in envelope_buf and
+ *   correlation_buf.
+ *
+ * - period is the period in samples of the audio data. */
 void
 reltable_build
 	(struct reltable *reltable
-	,float           *error_vec
-	,const float     *corr_vec
+	,float           *envelope_buf
+	,const float     *correlation_buf
 	,float            rel_power
-	,unsigned         error_vec_len
+	,unsigned         buf_len
 	,float            period
 	);
 

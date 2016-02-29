@@ -288,7 +288,23 @@ reltable_int
 #endif
 }
 
-
+/* See doucmentation in the API for how to call this function.
+ *
+ * Alignment of releases to the playback position is pretty important in organ
+ * simulation. When a release is not aligned properly, cancellation of the
+ * signal can occur during the crossfade into the release leading to
+ * artefacts. Also, if the release is transitioned in very shortly after the
+ * attack, we may end up with a gain mismatch - this is also a significant
+ * problem. This module is trying to solve these issues.
+ *
+ * What this thing does:
+ *   1) Find the best position in the attack to align the release.
+ *   2) Starting at that position, go backwards in increments of "period"
+ *      samples searching a small region for the best alignment position. Then
+ *      do the same thing going forwards. After this we have a list of
+ *      positions which we would ideally jump into the release at sample 0
+ *      from.
+ * TODO: finish this. */
 void
 reltable_build
 	(struct reltable *reltable
