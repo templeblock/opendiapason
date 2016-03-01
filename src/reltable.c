@@ -24,6 +24,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 struct relnode {
 	double           modfac;
@@ -313,6 +314,7 @@ reltable_build
 	,float            rel_power
 	,unsigned         error_vec_len
 	,float            period
+	,const char      *debug_prefix
 	)
 {
 	double err = 0.0;
@@ -324,6 +326,27 @@ reltable_build
 	unsigned lf   = 2 * fmax(1.0, (unsigned)(period / 15.0));
 	unsigned skip = (unsigned)fmax(1.0, period - lf/2);
 	float    rel_scale = 1.0 / rel_power;
+
+	if (debug_prefix != NULL && strlen(debug_prefix) < 1024 - 50) {
+		char      namebuf[1024];
+		FILE     *dbgfile;
+		unsigned  i;
+		sprintf(namebuf, "%s_reltable_inputs.raw", debug_prefix);
+		dbgfile = fopen(namebuf, "wb");
+		if (dbgfile != NULL) {
+			for (i = 0; i < error_vec_len; i++) {
+				short sb[2];
+				float f1 = error_vec[i] * 4096 + 0.5;
+				float f2 = corr_vec[i] * 4096 + 0.5;
+				sb[0] = (f1 >= 32767) ? 32767 : ((f1 <= -32768) ? -32768 : f1);
+				sb[1] = (f2 >= 32767) ? 32767 : ((f2 <= -32768) ? -32768 : f2);
+				fwrite(sb, 2, 2, dbgfile);
+			}
+			fclose(dbgfile);
+		}
+	}
+
+
 
 	/* Find best release alignment position. */
 	for (i = 0; i < error_vec_len; i++) {

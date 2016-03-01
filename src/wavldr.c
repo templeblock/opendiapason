@@ -737,7 +737,7 @@ load_smpl_f
 		fclose(f);
 #endif
 
-		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, (as_loop_end+1), (1.0f / mw.frequency) * mw.rate);
+		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, (as_loop_end+1), (1.0f / mw.frequency) * mw.rate, filename);
 
 		aalloc_pop(allocator);
 	}

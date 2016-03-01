@@ -80,7 +80,11 @@ reltable_find
  * - buf_len is the number of valid data points in envelope_buf and
  *   correlation_buf.
  *
- * - period is the period in samples of the audio data. */
+ * - period is the period in samples of the audio data.
+ *
+ * - debug_prefix is a file-name or path which will be used as a prefix to
+ *   debug dump files. They will all begin with "reltable". If this is NULL,
+ *   no debug files will be dumped. */
 void
 reltable_build
 	(struct reltable *reltable
@@ -89,6 +93,7 @@ reltable_build
 	,float            rel_power
 	,unsigned         buf_len
 	,float            period
+	,const char      *debug_prefix
 	);
 
 #endif
