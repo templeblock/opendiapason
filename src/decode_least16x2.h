@@ -192,7 +192,7 @@ static void u16c2_instantiate(struct dec_state *instance, const struct dec_smpl 
 	instance->s.u16.loopend = sample->ends[0];
 
 	/* FILL FILTER STATE */
-	unsigned first = (ipos >= SMPL_INTERP_TAPS/2) ? (ipos - SMPL_INTERP_TAPS/2) : 0;
+	unsigned first = (ipos > SMPL_INTERP_TAPS) ? (ipos - SMPL_INTERP_TAPS) : 0;
 	for (i = first; i < ipos; i++) {
 		float tf1 = ((int_least16_t *)(sample->data))[2*i+0];
 		float tf2 = ((int_least16_t *)(sample->data))[2*i+1];

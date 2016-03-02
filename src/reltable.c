@@ -50,6 +50,8 @@ reltable_find
 	)
 {
 	unsigned i;
+	float tmp;
+
 	assert(reltable->nb_entry);
 	for (i = 0; i < reltable->nb_entry-1; i++) {
 		if (sample <= reltable->entry[i].last_sample)
@@ -68,9 +70,15 @@ reltable_find
 		}
 	}
 
-
 	/* TODO: FABS INSERTED TO PREVENT NEGATIVE OUTPUT! MAY BE A BUG ELSEWHERE. */
+#if 0
 	return fmod(fabs(sample - reltable->entry[i].b), reltable->entry[i].m);
+#else
+	tmp = sample - reltable->entry[i].b - 8.0;
+	while (tmp < 0.0)
+		tmp += reltable->entry[i].m;
+	return 8.0 + fmod(tmp, reltable->entry[i].m);
+#endif
 }
 
 static

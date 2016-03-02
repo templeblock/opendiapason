@@ -88,6 +88,7 @@ static const char *load_wave_cks(struct wave_cks *cks, unsigned char *buf, unsig
 	while (bufsz > 8) {
 		unsigned long cksz;
 
+		bufsz  -= 8;
 		cksz = parse_le32(buf + 4);
 		if (cksz > bufsz)
 			cksz = bufsz;
@@ -105,8 +106,6 @@ static const char *load_wave_cks(struct wave_cks *cks, unsigned char *buf, unsig
 			cks->fmt    = buf + 8;
 			cks->fmtsz  = cksz;
 		}
-
-		bufsz  -= 8;
 
 		cksz += (cksz & 1); /* pad byte */
 		if (cksz > bufsz)
@@ -174,7 +173,7 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 					t = (s & 0x8000u)   ? -(long)(((~s) & 0x7FFFu) + 1) : (long)s;
 					t *= 256;
 				}
-				mw->data[i][j] = t / (float)0x1000000;
+				mw->data[i][j] = t / (float)0x800000;
 			}
 		}
 	}
@@ -343,9 +342,6 @@ convolve_load_helper
 	}
 }
 
-
-
-
 static
 void
 inplace_convolve
@@ -354,7 +350,7 @@ inplace_convolve
 	,int                         add_to_output
 	,unsigned long               susp_start
 	,unsigned long               length
-	,unsigned                    prering_sample_skip
+	,unsigned                    pre_read
 	,int                         is_looped
 	,float                      *sc1
 	,float                      *sc2
@@ -365,10 +361,71 @@ inplace_convolve
 	,const struct fastconv_pass *prefilt_fft
 	)
 {
+#if 1
+	unsigned max_in = prefilt_real_fft_len - prefilt_kern_len + 1;
+	float *old_data = malloc(sizeof(float) * length);
+	unsigned input_read;
+	if (old_data == NULL)
+		abort();
+
+
+	/* Copy input buffer to temp buffer. */
+	memcpy(old_data, data, sizeof(float) * length);
+
+	/* Zero output buffer. */
+	if (!add_to_output) {
+		memset(output, 0, sizeof(float) * length);
+	}
+
+	/* Run trivial overlap add convolution */
+	input_read = 0;
+	while (1) {
+		unsigned j;
+		int output_pos = (int)input_read-(int)pre_read;
+
+		/* Build input buffer */
+		if (is_looped) {
+			for (j = 0; j < max_in; j++) {
+				unsigned target = input_read + j;
+				unsigned src = (target >= length) ? (susp_start + ((target - length) % (length - susp_start))) : (input_read + j);
+				sc1[j] = old_data[src];
+			}
+		} else {
+			for (j = 0; j < max_in && input_read+j < length; j++) sc1[j] = old_data[input_read+j];
+		}
+		for (; j < prefilt_real_fft_len;            j++) sc1[j] = 0.0f;
+
+		/* Convolve! */
+		fastconv_execute_conv(prefilt_fft, sc1, prefilt_kern, sc2, sc3);
+
+		/* Sc2 contains the convolved buffer. */
+		for (j = 0; j < prefilt_real_fft_len; j++) {
+			int x = output_pos+(int)j;
+			if (x < 0)
+				continue;
+			if (x >= length)
+				break;
+			output[x] += sc2[j];
+		}
+
+		/* added nothing to output buffer! */
+		if (j == 0)
+			break;
+
+		input_read += max_in;
+	};
+
+	free(old_data);
+#else
+	/* overlap save:
+	 *   Lf - real length of DFT
+	 *   Lk - real length of kernel
+	 *   Lm - max real length of input = Lf - Lk + 1
+	 *   nV - number of outputs that have been completely processed by filter
+	 *        kernel = Lm - 2*Lk + 1 = Lf - Lk + 1 - 2*Lk + 1 */
 	const unsigned max_in        = 1 + prefilt_real_fft_len - prefilt_kern_len;
 	const unsigned valid_outputs = max_in - 2*prefilt_kern_len + 1;
 	unsigned long read_pos       = 0;
-	const unsigned pre_read      = prefilt_kern_len / 2 - prering_sample_skip;
 	unsigned i;
 	convolve_load_helper(data, sc1, is_looped, read_pos, max_in, length, susp_start);
 	for (i = max_in; i < prefilt_real_fft_len; i++) {
@@ -402,6 +459,7 @@ inplace_convolve
 		}
 		read_pos += valid_outputs;
 	}
+#endif
 }
 
 /* This takes a memory wave and overwrites all of its channels with filtered
@@ -436,6 +494,7 @@ apply_prefilter
 	,unsigned                    prefilt_kern_len
 	,unsigned                    prefilt_real_fft_len
 	,const struct fastconv_pass *prefilt_fft
+	,const char                 *debug_prefix
 	)
 {
 	float *scratch;
@@ -455,7 +514,7 @@ apply_prefilter
 			,0
 			,susp_start
 			,susp_end+1
-			,0
+			,prefilt_kern_len / 2 + 1
 			,1
 			,inbuf
 			,outbuf
@@ -479,7 +538,7 @@ apply_prefilter
 			,0
 			,0
 			,mw->length - rel_start
-			,prefilt_kern_len / 8
+			,prefilt_kern_len / 2 + prefilt_kern_len / 8
 			,0
 			,inbuf
 			,outbuf
@@ -492,19 +551,39 @@ apply_prefilter
 	}
 	aalloc_pop(allocator);
 
-#if 0
-	FILE *f = fopen("prefilter_debug2.raw", "wb");
-	for (i = 0; i < mw->length; i++) {
-		unsigned j;
-		for (j = 0; j < mw->channels; j++) {
-			double val = 32768 * mw->data[j][i] * 2 + (rand() + (double)rand()) * 0.5 / (double)RAND_MAX;
-			int s = (int)(val + 50000.0) - 50000;
-			short v = (s > 32767) ? 32767 : ((s < -32768) ? -32768 : s);
-			fwrite(&v, 1, 2, f);
+	if (debug_prefix != NULL && mw->channels == 2) {
+		char      namebuf[1024];
+		FILE     *dbgfile;
+		unsigned  i;
+
+		sprintf(namebuf, "%s_prefilter_atk.raw", debug_prefix);
+		dbgfile = fopen(namebuf, "wb");
+		if (dbgfile != NULL) {
+			for (i = 0; i < susp_end+1; i++) {
+				short sb[2];
+				float f1 = mw->data[0][i] * 32768 + 0.5;
+				float f2 = mw->data[1][i] * 32768 + 0.5;
+				sb[0] = (f1 >= 32767) ? 32767 : ((f1 <= -32768) ? -32768 : f1);
+				sb[1] = (f2 >= 32767) ? 32767 : ((f2 <= -32768) ? -32768 : f2);
+				fwrite(sb, 2, 2, dbgfile);
+			}
+			fclose(dbgfile);
+		}
+
+		sprintf(namebuf, "%s_prefilter_rel.raw", debug_prefix);
+		dbgfile = fopen(namebuf, "wb");
+		if (dbgfile != NULL) {
+			for (i = 0; i < mw->length - rel_start; i++) {
+				short sb[2];
+				float f1 = mw->data[0][rel_start+i] * 32768 + 0.5;
+				float f2 = mw->data[1][rel_start+i] * 32768 + 0.5;
+				sb[0] = (f1 >= 32767) ? 32767 : ((f1 <= -32768) ? -32768 : f1);
+				sb[1] = (f2 >= 32767) ? 32767 : ((f2 <= -32768) ? -32768 : f2);
+				fwrite(sb, 2, 2, dbgfile);
+			}
+			fclose(dbgfile);
 		}
 	}
-	fclose(f);
-#endif
 }
 
 const char *
@@ -583,6 +662,7 @@ load_smpl_f
 		,prefilt_kern_len
 		,prefilt_real_fft_len
 		,prefilt_fft
+		,NULL //filename
 		);
 #endif
 
@@ -641,7 +721,7 @@ load_smpl_f
 			,0
 			,as_loop_start
 			,(as_loop_end+1)
-			,0
+			,env_width-1
 			,1
 			,scratch_buf
 			,scratch_buf2
@@ -656,7 +736,7 @@ load_smpl_f
 		rel_power = 0.0f;
 		for (ch = 0; ch < mw.channels; ch++) {
 			float ch_power = 0.0f;
-			for (i = 0; i < env_width;  i++) {
+			for (i = 0; i < env_width; i++) {
 				float s = mw.data[ch][mw.release_pos + env_width - 1 - i];
 				scratch_buf[i] = s * (2.0f / cor_fft_sz);
 				ch_power += s * s;
@@ -671,7 +751,7 @@ load_smpl_f
 				,(ch != 0)
 				,as_loop_start
 				,(as_loop_end+1)
-				,0
+				,env_width-1
 				,1
 				,scratch_buf
 				,scratch_buf2
@@ -736,8 +816,9 @@ load_smpl_f
 		}
 		fclose(f);
 #endif
-
-		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, (as_loop_end+1), (1.0f / mw.frequency) * mw.rate, filename);
+		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, (as_loop_end+1), (1.0f / mw.frequency) * mw.rate
+			,NULL //filename
+			);
 
 		aalloc_pop(allocator);
 	}
