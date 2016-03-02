@@ -33,9 +33,26 @@ struct relnode {
 	unsigned         startidx;
 	unsigned         endidx;
 
+	/* ideal_error is the sum of all of the errors of the "ideal" positions
+	 * to align the release starting at release sample zero. actual_error is
+	 * the sum of the errors when the release is aligned according to b and
+	 * modfac as defined in this node.
+	 *
+	 * These factors are used when building the release node tree to figure
+	 * out the next node which should be split. While this method seems to
+	 * work almost all of the time, it does have some issues with high-
+	 * frequency pipes. Because we do not interpolate the correlation signal,
+	 * the peaks that we find (i.e. points where the release would align "the-
+	 * best" are almost always going to be slightly wrong). We mitigate this
+	 * a tiny bit by using linear interpolation between errors, but this only
+	 * gets you so far. The end result is that ideal_error could end up being
+	 * smaller than actual_error, but actual_error in reality would be smaller
+	 * if the signal had been upsampled prior to this operation taking
+	 * place. Gross. */
 	double           ideal_error;
 	double           actual_error;
 
+	/* The gain associated with this node. */
 	float            rel_gain;
 
 	struct relnode  *left;
@@ -168,6 +185,8 @@ find_worst_node
 	return root;
 }
 
+/* Takes an unbalanced release node tree and serialises the leaf nodes from
+ * left to right into the release table. */
 static
 void
 recursive_construct_table
@@ -187,25 +206,11 @@ recursive_construct_table
 	table->entry[table->nb_entry].last_sample = sync_positions[node->endidx];
 	m = node->modfac;
 	b = node->b;
-	while (b > sync_positions[node->startidx]) {
-		b -= node->modfac;
-	}
 	table->entry[table->nb_entry].b = b;
 	table->entry[table->nb_entry].m = m;
 	table->entry[table->nb_entry].gain = node->rel_gain;
 	table->nb_entry++;
 }
-
-#if 0
-struct reltable {
-	unsigned nb_entry;
-	struct {
-		unsigned last_sample;
-		double   m;
-		double   b;
-	} entry[RELTABLE_MAX_ENTRIES];
-};
-#endif
 
 static
 void
@@ -217,6 +222,8 @@ printnodes(struct reltable *root)
 	}
 }
 
+/* Build an unbalanced tree of release nodes. The worst leaf node is
+ * searched for and split until the buffer of nodes is exhausted. */
 static
 void
 reltable_int
@@ -282,18 +289,15 @@ reltable_int
 		,sync_positions
 		);
 
-#if 1
+#if 0
 	unsigned i;
 	for (i = 0; i < nb_positions && i < 20; i++) {
 		float f;
 		float t = reltable_find(reltable, sync_positions[i], &f);
 		printf("%u->%f,%f\n", sync_positions[i], t, f);
-
-
 	}
-
-
 	printnodes(reltable);
+	printf("period: %f,%u,%u\n", period, skip, lf);
 #endif
 }
 
@@ -365,8 +369,6 @@ reltable_build
 			errpos = i;
 		}
 	}
-
-	printf("period: %f,%u,%u\n", period, skip, lf);
 
 	/* Find positions before best sync position */
 	for (i = errpos; i > skip; ) {
