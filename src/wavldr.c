@@ -307,41 +307,6 @@ const char *mw_load_from_file(struct memory_wave *mw, const char *fname)
 	return err;
 }
 
-
-//#include "reltable.h"
-//#include "interp_prefilter.h"
-
-float *eval_mse(const float *in1, const float *in2, unsigned l1, unsigned l2, unsigned *length);
-
-static
-void
-convolve_load_helper
-	(const float  *input
-	,float        *output
-	,int           is_looped
-	,unsigned long read_pos
-	,unsigned      nb_samples
-	,unsigned long length
-	,unsigned long restart_position
-	)
-{
-	unsigned i;
-	if (is_looped) {
-		/* Optimize this garbage. */
-		unsigned long loop_len = length - restart_position;
-		for (i = 0; i < nb_samples; i++) {
-			unsigned j = read_pos + i;
-			unsigned src = (j >= length) ? (((j - length) % loop_len) + restart_position) : j;
-			output[i] = input[src];
-		}
-	} else {
-		for (i = 0; i < nb_samples; i++) {
-			unsigned j = read_pos + i;
-			output[i] = (j >= length) ? 0.0f : input[j];
-		}
-	}
-}
-
 static
 void
 inplace_convolve
@@ -361,13 +326,12 @@ inplace_convolve
 	,const struct fastconv_pass *prefilt_fft
 	)
 {
-#if 1
 	unsigned max_in = prefilt_real_fft_len - prefilt_kern_len + 1;
 	float *old_data = malloc(sizeof(float) * length);
 	unsigned input_read;
+
 	if (old_data == NULL)
 		abort();
-
 
 	/* Copy input buffer to temp buffer. */
 	memcpy(old_data, data, sizeof(float) * length);
@@ -416,50 +380,6 @@ inplace_convolve
 	};
 
 	free(old_data);
-#else
-	/* overlap save:
-	 *   Lf - real length of DFT
-	 *   Lk - real length of kernel
-	 *   Lm - max real length of input = Lf - Lk + 1
-	 *   nV - number of outputs that have been completely processed by filter
-	 *        kernel = Lm - 2*Lk + 1 = Lf - Lk + 1 - 2*Lk + 1 */
-	const unsigned max_in        = 1 + prefilt_real_fft_len - prefilt_kern_len;
-	const unsigned valid_outputs = max_in - 2*prefilt_kern_len + 1;
-	unsigned long read_pos       = 0;
-	unsigned i;
-	convolve_load_helper(data, sc1, is_looped, read_pos, max_in, length, susp_start);
-	for (i = max_in; i < prefilt_real_fft_len; i++) {
-		sc1[i] = 0.0f;
-	}
-	while ((read_pos + pre_read < length) || ((read_pos == 0) && length)) {
-		fastconv_execute_conv(prefilt_fft, sc1, prefilt_kern, sc2, sc3);
-		read_pos += valid_outputs;
-		if (read_pos + pre_read < length) {
-			convolve_load_helper(data, sc1, is_looped, read_pos, max_in, length, susp_start);
-		}
-		read_pos -= valid_outputs;
-		if (add_to_output) {
-			if (read_pos == 0) {
-				for (i = 0; i < pre_read && i < length; i++) {
-					output[i] += sc2[i + prefilt_kern_len - pre_read];
-				}
-			}
-			for (i = 0; i < valid_outputs && (read_pos + i + pre_read < length); i++) {
-				output[read_pos + i + pre_read] += sc2[i + prefilt_kern_len];
-			}
-		} else {
-			if (read_pos == 0) {
-				for (i = 0; i < pre_read && i < length; i++) {
-					output[i] = sc2[i + prefilt_kern_len - pre_read];
-				}
-			}
-			for (i = 0; i < valid_outputs && (read_pos + i + pre_read < length); i++) {
-				output[read_pos + i + pre_read] = sc2[i + prefilt_kern_len];
-			}
-		}
-		read_pos += valid_outputs;
-	}
-#endif
 }
 
 /* This takes a memory wave and overwrites all of its channels with filtered

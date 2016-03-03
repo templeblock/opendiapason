@@ -212,16 +212,6 @@ recursive_construct_table
 	table->nb_entry++;
 }
 
-static
-void
-printnodes(struct reltable *root)
-{
-	unsigned i;
-	for (i = 0; i < root->nb_entry; i++) {
-		printf("%u) %f,%f,%f\n", root->entry[i].last_sample, root->entry[i].m, root->entry[i].b, root->entry[i].gain);
-	}
-}
-
 /* Build an unbalanced tree of release nodes. The worst leaf node is
  * searched for and split until the buffer of nodes is exhausted. */
 static
@@ -288,17 +278,6 @@ reltable_int
 		,reltable
 		,sync_positions
 		);
-
-#if 0
-	unsigned i;
-	for (i = 0; i < nb_positions && i < 20; i++) {
-		float f;
-		float t = reltable_find(reltable, sync_positions[i], &f);
-		printf("%u->%f,%f\n", sync_positions[i], t, f);
-	}
-	printnodes(reltable);
-	printf("period: %f,%u,%u\n", period, skip, lf);
-#endif
 }
 
 /* See doucmentation in the API for how to call this function.
@@ -428,6 +407,18 @@ reltable_build
 
 	free(epos);
 	free(egain);
+
+#if 0
+	for (i = 0; i < positions && i < 20; i++) {
+		float f;
+		float t = reltable_find(reltable, epos[i], &f);
+		printf("%u->%f,%f\n", epos[i], t, f);
+	}
+	for (i = 0; i < reltable->nb_entry; i++) {
+		printf("%u) %f,%f,%f\n", reltable->entry[i].last_sample, reltable->entry[i].m, reltable->entry[i].b, reltable->entry[i].gain);
+	}
+	printf("period: %f,%u,%u\n", period, skip, lf);
+#endif
 }
 
 
