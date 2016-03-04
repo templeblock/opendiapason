@@ -40,7 +40,7 @@ struct playeng_instance {
 struct playeng_thread_data {
 	struct playeng_instance    *active;
 	struct playeng_instance    *zombie;
-	float            *restrict *buffers;
+	float            *COP_ATTR_RESTRICT *buffers;
 	unsigned                    current_time;
 	unsigned                    permitted_signal_mask;
 

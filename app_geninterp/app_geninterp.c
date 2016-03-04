@@ -18,6 +18,10 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
  * DEALINGS IN THE SOFTWARE. */
 
+#ifdef _MSC_VER
+#define _USE_MATH_DEFINES
+#endif
+
 #include <math.h>
 #include <stdio.h>
 #include <assert.h>
@@ -153,7 +157,7 @@ int main(int argc, char *argv[])
 	for (i = 0; i < SMPL_INTERP_TAPS; i++) {
 		unsigned j;
 		for (j = 0; j < SMPL_POSITION_SCALE; j++) {
-			fft_buf[i] += filter[i * SMPL_POSITION_SCALE + j] / SMPL_POSITION_SCALE;
+			fft_buf[i] += (float)(filter[i * SMPL_POSITION_SCALE + j] / SMPL_POSITION_SCALE);
 		}
 	}
 	fastconv_execute_fwd_reord(fft, fft_buf, tmp_buf, tmp2_buf);

@@ -49,7 +49,7 @@ static unsigned fade_process2(struct fade_state *state, float *COP_ATTR_RESTRICT
 			if (COP_HINT_FALSE(--fadefr)) {
 				fade = v4f_add(fade, fade_inc);
 			} else {
-				fade = v4f_broadcast(fade[FADE_VEC_LEN-1]);
+				fade = v4f_broadcast(state->target);
 			}
 		}
 		v4f_st(out_l + i, o1);
@@ -73,13 +73,13 @@ static void fade_configure(struct fade_state *state, unsigned target_samples, fl
 		{
 			state->state[i] = current_gain + (i + 1) * gps;
 		}
-
 		v4f_st(state->delta, v4f_broadcast(gpf));
 		state->nb_frames = decay_frames;
 	} else {
 		v4f_st(state->state, v4f_broadcast(gain));
 		state->nb_frames = 0;
 	}
+	state->target = gain;
 }
 
 static unsigned u16c2_dec(struct dec_state *state, float *COP_ATTR_RESTRICT *buf)
@@ -107,7 +107,7 @@ static unsigned u16c2_dec(struct dec_state *state, float *COP_ATTR_RESTRICT *buf
 		 * fill a vector */
 #define BUILD_SMPL_STEREO(OL_, OR_) \
 		do { \
-			const float * restrict coefs_ = SMPL_INTERP[fpos]; \
+			const float * COP_ATTR_RESTRICT coefs_ = SMPL_INTERP[fpos]; \
 			fpos += rate; \
 			ACCUM_DUAL(s0, s1, coefs_, OL_, OR_); \
 			while (fpos >= SMPL_POSITION_SCALE) { \
@@ -115,7 +115,7 @@ static unsigned u16c2_dec(struct dec_state *state, float *COP_ATTR_RESTRICT *buf
 				float tf2_ = data[2*ipos+1]; \
 				INSERT_DUAL(s0, s1, v4f_ld0(&tf1_), v4f_ld0(&tf2_)); \
 				ipos++; \
-				if (__builtin_expect(ipos > state->s.u16.loopend.end_smpl, 0)) { \
+				if (COP_HINT_FALSE(ipos > state->s.u16.loopend.end_smpl)) { \
 					const struct dec_loop_def *pdef = state->smpl->starts + state->s.u16.loopend.start_idx; \
 					ipos = pdef->start_smpl; \
 					rndstate = update_rnd(rndstate); \

@@ -121,6 +121,7 @@ struct fade_state {
 	VEC_ALIGN_BEST float  delta[4];
 	VEC_ALIGN_BEST float  state[4];
 	unsigned              nb_frames;
+	float                 target;
 };
 
 struct dec_state {

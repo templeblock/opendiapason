@@ -206,7 +206,7 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 		unsigned long spec_data_sz = parse_le32(cks.smpl + 32);
 		double note                = (parse_le32(cks.smpl + 16) / (65536.0 * 65536.0)) + parse_le32(cks.smpl + 12);
 		mw->nloop                  = parse_le32(cks.smpl + 28);
-		mw->frequency              = 440.0 * pow(2.0, (note - 69) / 12);
+		mw->frequency              = 440.0f * powf(2.0f, (note - 69.0f) / 12.0f);
 
 		if (cks.smplsz < 36 + mw->nloop * 24 + spec_data_sz)
 			return "invalid sampler chunk";
@@ -367,7 +367,8 @@ inplace_convolve
 			int x = output_pos+(int)j;
 			if (x < 0)
 				continue;
-			if (x >= length)
+			/* Cast is safe because we check earlier for negative. */
+			if ((unsigned)x >= length)
 				break;
 			output[x] += sc2[j];
 		}
@@ -483,8 +484,8 @@ apply_prefilter
 				short sb[2];
 				float f1 = mw->data[0][i] * 32768 + 0.5;
 				float f2 = mw->data[1][i] * 32768 + 0.5;
-				sb[0] = (f1 >= 32767) ? 32767 : ((f1 <= -32768) ? -32768 : f1);
-				sb[1] = (f2 >= 32767) ? 32767 : ((f2 <= -32768) ? -32768 : f2);
+				sb[0] = (short)((f1 >= 32767) ? 32767 : ((f1 <= -32768) ? -32768 : f1));
+				sb[1] = (short)((f2 >= 32767) ? 32767 : ((f2 <= -32768) ? -32768 : f2));
 				fwrite(sb, 2, 2, dbgfile);
 			}
 			fclose(dbgfile);
@@ -497,8 +498,8 @@ apply_prefilter
 				short sb[2];
 				float f1 = mw->data[0][rel_start+i] * 32768 + 0.5;
 				float f2 = mw->data[1][rel_start+i] * 32768 + 0.5;
-				sb[0] = (f1 >= 32767) ? 32767 : ((f1 <= -32768) ? -32768 : f1);
-				sb[1] = (f2 >= 32767) ? 32767 : ((f2 <= -32768) ? -32768 : f2);
+				sb[0] = (short)((f1 >= 32767) ? 32767 : ((f1 <= -32768) ? -32768 : f1));
+				sb[1] = (short)((f2 >= 32767) ? 32767 : ((f2 <= -32768) ? -32768 : f2));
 				fwrite(sb, 2, 2, dbgfile);
 			}
 			fclose(dbgfile);
