@@ -63,7 +63,7 @@ struct fastconv_pass {
 #define FASTCONV_REAL_LEN_MULTIPLE (32)
 #define FASTCONV_MAX_PASSES        (24)
 
-__attribute__((noinline)) static void fastconv_v4_upload(float *vec_output, const float *input, const float *coefs, unsigned fft_len)
+COP_ATTR_NOINLINE static void fastconv_v4_upload(float *vec_output, const float *input, const float *coefs, unsigned fft_len)
 {
 	const unsigned fft_len_4 = fft_len / 4;
 	unsigned i;
@@ -136,7 +136,7 @@ __attribute__((noinline)) static void fastconv_v4_upload(float *vec_output, cons
 	}
 }
 
-__attribute__((noinline)) static void fastconv_v4_download(float *output, const float *vec_input, const float *coefs, unsigned fft_len)
+COP_ATTR_NOINLINE static void fastconv_v4_download(float *output, const float *vec_input, const float *coefs, unsigned fft_len)
 {
 	const unsigned fft_len_4 = fft_len / 4;
 	unsigned i;
@@ -412,7 +412,7 @@ fastconv_execute_conv
 	fastconv_v4_download(output_buf, work_buf, first_pass->twiddle, first_pass->lfft);
 }
 
-__attribute__((noinline)) static void fwd_post_reorder(const float *in_buf, float *out_buf, unsigned lfft)
+COP_ATTR_NOINLINE static void fwd_post_reorder(const float *in_buf, float *out_buf, unsigned lfft)
 {
 	unsigned i;
 	for (i = 0; i < lfft / 8; i++) {

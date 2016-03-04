@@ -189,7 +189,7 @@ struct dec_state {
 	 * release gets a short loop of zeros added to the end, completion can be
 	 * detected by the DEC_IS_LOOPING flag becoming set. I think this has
 	 * simplified the API... if it hasn't, oh well. */
-	unsigned (*decode)(struct dec_state *state, float *restrict *buf);
+	unsigned (*decode)(struct dec_state *state, float *COP_ATTR_RESTRICT *buf);
 };
 
 

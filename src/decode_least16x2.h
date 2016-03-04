@@ -25,7 +25,7 @@
 
 #define FADE_VEC_LEN (4)
 
-static unsigned fade_process2(struct fade_state *state, float *restrict *out, const float *in)
+static unsigned fade_process2(struct fade_state *state, float *COP_ATTR_RESTRICT *out, const float *in)
 {
 	float *out_l = out[0];
 	float *out_r = out[1];
@@ -45,8 +45,8 @@ static unsigned fade_process2(struct fade_state *state, float *restrict *out, co
 		i2     = v4f_mul(i2, fade);
 		o1     = v4f_add(o1, i1);
 		o2     = v4f_add(o2, i2);
-		if (__builtin_expect(fadefr, 0)) {
-			if (__builtin_expect(--fadefr, 0)) {
+		if (COP_HINT_FALSE(fadefr)) {
+			if (COP_HINT_FALSE(--fadefr)) {
 				fade = v4f_add(fade, fade_inc);
 			} else {
 				fade = v4f_broadcast(fade[FADE_VEC_LEN-1]);
@@ -82,7 +82,7 @@ static void fade_configure(struct fade_state *state, unsigned target_samples, fl
 	}
 }
 
-static unsigned u16c2_dec(struct dec_state *state, float *restrict *buf)
+static unsigned u16c2_dec(struct dec_state *state, float *COP_ATTR_RESTRICT *buf)
 {
 	float VEC_ALIGN_BEST tmp[128];
 	unsigned flags;
