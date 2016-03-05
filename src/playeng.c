@@ -424,7 +424,6 @@ void playeng_process(struct playeng *eng, float **buffers, unsigned nb_channels,
 			unsigned j;
 
 			cop_thread_join(otherthreads->thread, NULL);
-			cop_thread_destroy(otherthreads->thread);
 
 			for (j = 0; j < nb_channels; j++) {
 				unsigned k;

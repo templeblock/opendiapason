@@ -148,7 +148,7 @@ static unsigned u16c2_dec(struct dec_state *state, float *COP_ATTR_RESTRICT *buf
 			V4F_INTERLEAVE(ox7, ox8, ox2, ox4);   /* L1 L3 R1 R3 | L1 L3 R1 R3 */
 			ox2 = v4f_add(ox7, ox8);              /* L1 L3 R1 R3 */
 			/* Interleave and store output. */
-			V4F_INTERLEAVE_STORE(tmp + i, ox1, ox2); /* L0 L1 L2 L3 | R0 R1 R2 R3 */
+			V4F_ST2INT(tmp + i, ox1, ox2);        /* L0 L1 L2 L3 | R0 R1 R2 R3 */
 		}
 	}
 

@@ -507,8 +507,7 @@ COP_ATTR_NOINLINE static void fwd_post_reorder(const float *in_buf, float *out_b
 		im2     = v4f_reverse(v4f_neg(im2));
 		V4F_INTERLEAVE(tor1, tor2, re1, re2);
 		V4F_INTERLEAVE(toi1, toi2, im1, im2);
-		V4F_INTERLEAVE_STORE(out_buf + i*16,     tor1, toi1);
-		V4F_INTERLEAVE_STORE(out_buf + i*16 + 8, tor2, toi2);
+		V4F_ST2X2INT(out_buf + i*16, out_buf + i*16 + 8, tor1, toi1, tor2, toi2);
 	}
 }
 
@@ -578,10 +577,7 @@ fastconv_execute_rev_reord
 
 	for (i = 0; i < first_pass->lfft / 8; i++) {
 		v4f tor1, toi1, tor2, toi2, re1, im1, re2, im2;
-		V4F_LD2(re1, re2, input_buf + i*16);
-		V4F_LD2(im1, im2, input_buf + i*16 + 8);
-		V4F_DEINTERLEAVE(tor1, toi1, re1, re2);
-		V4F_DEINTERLEAVE(tor2, toi2, im1, im2);
+		V4F_LD2X2DINT(tor1, toi1, tor2, toi2, input_buf + i*16, input_buf + i*16 + 8);
 		V4F_DEINTERLEAVE(re1, re2, tor1, tor2);
 		V4F_DEINTERLEAVE(im1, im2, toi1, toi2);
 		re2 = v4f_reverse(re2);
