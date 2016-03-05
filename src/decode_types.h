@@ -22,7 +22,7 @@
 #define DECODE_TYPES_H
 
 #include <stdint.h>
-#include "cop/vec.h"
+#include "cop/cop_vec.h"
 #include "interp_data.inc"
 
 #if SMPL_INTERP_TAPS == 8

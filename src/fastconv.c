@@ -26,8 +26,8 @@
 #include <math.h>
 #include <stdlib.h>
 #include "opendiapason/fastconv.h"
-#include "cop/vec.h"
-#include "cop/aalloc.h"
+#include "cop/cop_vec.h"
+#include "cop/cop_alloc.h"
 
 #ifndef V4F_EXISTS
 #error this implementation requires a vector-4 type at the moment

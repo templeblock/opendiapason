@@ -20,7 +20,7 @@
 
 #include <stdio.h>
 #include <math.h>
-#include "cop/aalloc.h"
+#include "cop/cop_alloc.h"
 #include "opendiapason/fastconv.h"
 
 static const float TEST_KERNEL[] = {0.25, 0.5, 0.75, 1.0, 0.5};

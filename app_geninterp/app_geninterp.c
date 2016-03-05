@@ -25,8 +25,8 @@
 #include <math.h>
 #include <stdio.h>
 #include <assert.h>
-#include "cop/vec.h"
-#include "cop/aalloc.h"
+#include "cop/cop_vec.h"
+#include "cop/cop_alloc.h"
 #include "opendiapason/fastconv.h"
 #include "svgplot/svgplot.h"
 

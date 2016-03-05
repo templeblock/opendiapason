@@ -20,7 +20,7 @@
 
 #include "playeng.h"
 #include "cop/cop_thread.h"
-#include "cop/aalloc.h"
+#include "cop/cop_alloc.h"
 #include <stdlib.h>
 
 /* TODO: IMPLEMENT SCHEDULED CALLBACKS... FLAGS CURRENTLY HAVE NO EFFECT. */

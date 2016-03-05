@@ -23,7 +23,7 @@
 
 #include "decode_types.h"
 #include "reltable.h"
-#include "cop/aalloc.h"
+#include "cop/cop_alloc.h"
 #include "opendiapason/fastconv.h"
 
 struct memory_wave {
