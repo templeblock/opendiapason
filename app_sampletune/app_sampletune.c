@@ -1,3 +1,7 @@
+#ifdef _MSC_VER
+#define _USE_MATH_DEFINES
+#endif
+
 #include <stdlib.h>
 #include <stdio.h>
 #include "cop/cop_thread.h"
@@ -363,6 +367,7 @@ int main_audio(int argc, char *argv[])
 {
 	PaStream *astream;
 	PaError ec;
+	const PaVersionInfo *pav;
 	int finished = 0;
 
 	printf("initializing PortAudio... ");
@@ -371,8 +376,11 @@ int main_audio(int argc, char *argv[])
 		fprintf(stderr, "Pa_Initialize() failed: '%s'\n", Pa_GetErrorText(ec));
 		return -1;
 	}
-	const PaVersionInfo *pav = Pa_GetVersionInfo();
+
+#if 0
+	pav = Pa_GetVersionInfo();
 	printf("v%d.%d.%d ok\n", pav->versionMajor, pav->versionMinor, pav->versionSubMinor);
+#endif
 
 	astream = setup_sound();
 
