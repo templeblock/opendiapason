@@ -113,7 +113,7 @@ static unsigned u16c2_dec(struct dec_state *state, float *COP_ATTR_RESTRICT *buf
 			while (fpos >= SMPL_POSITION_SCALE) { \
 				float tf1_ = data[2*ipos+0]; \
 				float tf2_ = data[2*ipos+1]; \
-				INSERT_DUAL(s0, s1, v4f_ld0(&tf1_), v4f_ld0(&tf2_)); \
+				INSERT_DUAL(s0, s1, &tf1_, &tf2_); \
 				ipos++; \
 				if (COP_HINT_FALSE(ipos > state->s.u16.loopend.end_smpl)) { \
 					const struct dec_loop_def *pdef = state->smpl->starts + state->s.u16.loopend.start_idx; \
@@ -128,6 +128,7 @@ static unsigned u16c2_dec(struct dec_state *state, float *COP_ATTR_RESTRICT *buf
 		{
 			v4f s0l, s0r, s1l, s1r, s2l, s2r, s3l, s3r;
 			v4f ox1, ox2, ox3, ox4, ox5, ox6, ox7, ox8;
+
 			/* Build first two samples. */
 			BUILD_SMPL_STEREO(s0l, s0r);          /* L0 L0 L0 L0 | R0 R0 R0 R0 */
 			V4F_INTERLEAVE(ox5, ox6, s0l, s0r);   /* L0 R0 L0 R0 | L0 R0 L0 R0 */
@@ -135,18 +136,20 @@ static unsigned u16c2_dec(struct dec_state *state, float *COP_ATTR_RESTRICT *buf
 			V4F_INTERLEAVE(ox7, ox8, s1l, s1r);   /* L1 R1 L1 R1 | L1 R1 L1 R1 */
 			ox1 = v4f_add(ox5, ox6);              /* L0 R0 L0 R0 */
 			ox2 = v4f_add(ox7, ox8);              /* L1 R1 L1 R1 */
-			/* Build third sample and interleave with first. */
+
+			/* Build third and fourth sample and interleave with first. */
 			BUILD_SMPL_STEREO(s2l, s2r);          /* L2 L2 L2 L2 | R2 R2 R2 R2 */
 			V4F_INTERLEAVE(ox5, ox6, s2l, s2r);   /* L2 R2 L2 R2 | L2 R2 L2 R2 */
-			ox3 = v4f_add(ox5, ox6);              /* L2 R2 L2 R2 */
-			V4F_INTERLEAVE(ox5, ox6, ox1, ox3);   /* L0 L2 R0 R2 | L0 L2 R0 R2 */
-			ox1 = v4f_add(ox5, ox6);              /* L0 L2 R0 R2 */
-			/* Build fourth sample and interleave with second. */
 			BUILD_SMPL_STEREO(s3l, s3r);          /* L3 L3 L3 L3 | R3 R3 R3 R3 */
 			V4F_INTERLEAVE(ox7, ox8, s3l, s3r);   /* L3 R3 L3 R3 | L3 R3 L3 R3 */
+			ox3 = v4f_add(ox5, ox6);              /* L2 R2 L2 R2 */
 			ox4 = v4f_add(ox7, ox8);              /* L3 R3 L3 R3 */
+
+			V4F_INTERLEAVE(ox5, ox6, ox1, ox3);   /* L0 L2 R0 R2 | L0 L2 R0 R2 */
 			V4F_INTERLEAVE(ox7, ox8, ox2, ox4);   /* L1 L3 R1 R3 | L1 L3 R1 R3 */
+			ox1 = v4f_add(ox5, ox6);              /* L0 L2 R0 R2 */
 			ox2 = v4f_add(ox7, ox8);              /* L1 L3 R1 R3 */
+
 			/* Interleave and store output. */
 			V4F_ST2INT(tmp + i, ox1, ox2);        /* L0 L1 L2 L3 | R0 R1 R2 R3 */
 		}
@@ -196,7 +199,7 @@ static void u16c2_instantiate(struct dec_state *instance, const struct dec_smpl 
 	for (i = first; i < ipos; i++) {
 		float tf1 = ((int_least16_t *)(sample->data))[2*i+0];
 		float tf2 = ((int_least16_t *)(sample->data))[2*i+1];
-		INSERT_DUAL(s0, s1, v4f_ld0(&tf1), v4f_ld0(&tf2));
+		INSERT_DUAL(s0, s1, &tf1, &tf2);
 	}
 	instance->s.u16.resamp[0] = s0;
 	instance->s.u16.resamp[1] = s1;

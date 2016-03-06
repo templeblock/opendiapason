@@ -25,12 +25,16 @@
 #include "cop/cop_vec.h"
 #include "interp_data.inc"
 
-#if SMPL_INTERP_TAPS == 8
+#if SMPL_INTERP_TAPS != 8
+#error "only support 8-tap interpolation filters."
+#endif
+
 struct filter_state {
 	v4f s1;
 	v4f s2;
 };
 
+#if 0
 #define INSERT_SINGLE(state0_, ch0_) do { \
 	state0_.s1 = v4f_rotl(state0_.s1, state0_.s2); \
 	state0_.s2 = v4f_rotl(state0_.s2, ch0_); \
@@ -43,12 +47,15 @@ struct filter_state {
 	out0_   = v4f_mul(state0_.s2, c2_); \
 	out0_   = v4f_add(out0_, t3_); \
 } while (0)
+#endif
 
 #define INSERT_DUAL(state0_, state1_, ch0_, ch1_) do { \
+	v4f tx1_   = v4f_lde0(state0_.s1, ch0_); \
+	v4f tx2_   = v4f_lde0(state1_.s1, ch1_); \
 	state0_.s1 = v4f_rotl(state0_.s1, state0_.s2); \
 	state1_.s1 = v4f_rotl(state1_.s1, state1_.s2); \
-	state0_.s2 = v4f_rotl(state0_.s2, ch0_); \
-	state1_.s2 = v4f_rotl(state1_.s2, ch1_); \
+	state0_.s2 = v4f_rotl(state0_.s2, tx1_); \
+	state1_.s2 = v4f_rotl(state1_.s2, tx2_); \
 } while (0)
 
 #define ACCUM_DUAL(state0_, state1_, coefs_, out0_, out1_) do { \
@@ -62,14 +69,10 @@ struct filter_state {
 	out1_   = v4f_add(out1_, t2_); \
 } while (0)
 
-#endif
-
 #define OUTPUT_SAMPLES (64u)
-
 #define DEC_IS_LOOPING (1u)
 #define DEC_IS_FADING  (2u)
-
-#define MAX_LOOP (16)
+#define MAX_LOOP       (16)
 
 /* This LCG is used for loop jump selection. Having this static implementation
  * (which should be inlined) provides wildly better code than using rand()
