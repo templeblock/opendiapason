@@ -300,6 +300,74 @@ static void fc_v4_dif_r2(float *work_buf, unsigned nfft, unsigned lfft, const fl
 	} while (--nfft);
 }
 
+static void fc_v4_dif_r4(float *work_buf, unsigned nfft, unsigned lfft, const float *twid)
+{
+	unsigned rinc = lfft * 2;
+	lfft /= 4;
+	do {
+		unsigned j;
+		for (j = 0; j < lfft; j++, work_buf += 8) {
+			v4f b0r   = v4f_ld(work_buf + 0*rinc + 0);
+			v4f b0i   = v4f_ld(work_buf + 0*rinc + 4);
+			v4f b1r   = v4f_ld(work_buf + 1*rinc + 0);
+			v4f b1i   = v4f_ld(work_buf + 1*rinc + 4);
+			v4f b2r   = v4f_ld(work_buf + 2*rinc + 0);
+			v4f b2i   = v4f_ld(work_buf + 2*rinc + 4);
+			v4f b3r   = v4f_ld(work_buf + 3*rinc + 0);
+			v4f b3i   = v4f_ld(work_buf + 3*rinc + 4);
+			v4f yr0   = v4f_add(b0r, b2r);
+			v4f yi0   = v4f_add(b0i, b2i);
+			v4f yr2   = v4f_sub(b0r, b2r);
+			v4f yi2   = v4f_sub(b0i, b2i);
+			v4f yr1   = v4f_add(b1r, b3r);
+			v4f yi1   = v4f_add(b1i, b3i);
+			v4f yr3   = v4f_sub(b1r, b3r);
+			v4f yi3   = v4f_sub(b1i, b3i);
+			v4f tr0   = v4f_add(yr0, yr1);
+			v4f ti0   = v4f_add(yi0, yi1);
+			v4f tr2   = v4f_sub(yr0, yr1);
+			v4f ti2   = v4f_sub(yi0, yi1);
+			v4f tr1   = v4f_add(yr2, yi3);
+			v4f ti1   = v4f_sub(yi2, yr3);
+			v4f tr3   = v4f_sub(yr2, yi3);
+			v4f ti3   = v4f_add(yi2, yr3);
+			v4f c1r   = v4f_broadcast(twid[6*j+0]);
+			v4f c1i   = v4f_broadcast(twid[6*j+1]);
+			v4f c2r   = v4f_broadcast(twid[6*j+2]);
+			v4f c2i   = v4f_broadcast(twid[6*j+3]);
+			v4f c3r   = v4f_broadcast(twid[6*j+4]);
+			v4f c3i   = v4f_broadcast(twid[6*j+5]);
+			v4f o1ra  = v4f_mul(tr1, c1r);
+			v4f o1rb  = v4f_mul(ti1, c1i);
+			v4f o1ia  = v4f_mul(tr1, c1i);
+			v4f o1ib  = v4f_mul(ti1, c1r);
+			v4f o2ra  = v4f_mul(tr2, c2r);
+			v4f o2rb  = v4f_mul(ti2, c2i);
+			v4f o2ia  = v4f_mul(tr2, c2i);
+			v4f o2ib  = v4f_mul(ti2, c2r);
+			v4f o3ra  = v4f_mul(tr3, c3r);
+			v4f o3rb  = v4f_mul(ti3, c3i);
+			v4f o3ia  = v4f_mul(tr3, c3i);
+			v4f o3ib  = v4f_mul(ti3, c3r);
+			v4f o1r   = v4f_sub(o1ra, o1rb);
+			v4f o1i   = v4f_add(o1ia, o1ib);
+			v4f o2r   = v4f_sub(o2ra, o2rb);
+			v4f o2i   = v4f_add(o2ia, o2ib);
+			v4f o3r   = v4f_sub(o3ra, o3rb);
+			v4f o3i   = v4f_add(o3ia, o3ib);
+			v4f_st(work_buf + 0*rinc + 0, tr0);
+			v4f_st(work_buf + 0*rinc + 4, ti0);
+			v4f_st(work_buf + 1*rinc + 0, o1r);
+			v4f_st(work_buf + 1*rinc + 4, o1i);
+			v4f_st(work_buf + 2*rinc + 0, o2r);
+			v4f_st(work_buf + 2*rinc + 4, o2i);
+			v4f_st(work_buf + 3*rinc + 0, o3r);
+			v4f_st(work_buf + 3*rinc + 4, o3i);
+		}
+		work_buf += 3*rinc;
+	} while (--nfft);
+}
+
 static void fc_v4_dit_r2(float *work_buf, unsigned nfft, unsigned lfft, const float *twid)
 {
 	unsigned rinc = lfft * 4;
@@ -329,6 +397,74 @@ static void fc_v4_dit_r2(float *work_buf, unsigned nfft, unsigned lfft, const fl
 			v4f_st(work_buf + rinc + 4, ofim);
 		}
 		work_buf += rinc;
+	} while (--nfft);
+}
+
+static void fc_v4_dit_r4(float *work_buf, unsigned nfft, unsigned lfft, const float *twid)
+{
+	unsigned rinc = lfft * 2;
+	lfft /= 4;
+	do {
+		unsigned j;
+		for (j = 0; j < lfft; j++, work_buf += 8) {
+			v4f b0r  = v4f_ld(work_buf + 0*rinc + 0);
+			v4f b0i  = v4f_ld(work_buf + 0*rinc + 4);
+			v4f b1r  = v4f_ld(work_buf + 1*rinc + 0);
+			v4f b1i  = v4f_ld(work_buf + 1*rinc + 4);
+			v4f b2r  = v4f_ld(work_buf + 2*rinc + 0);
+			v4f b2i  = v4f_ld(work_buf + 2*rinc + 4);
+			v4f b3r  = v4f_ld(work_buf + 3*rinc + 0);
+			v4f b3i  = v4f_ld(work_buf + 3*rinc + 4);
+			v4f c1r  = v4f_broadcast(twid[6*j+0]);
+			v4f c1i  = v4f_broadcast(twid[6*j+1]);
+			v4f c2r  = v4f_broadcast(twid[6*j+2]);
+			v4f c2i  = v4f_broadcast(twid[6*j+3]);
+			v4f c3r  = v4f_broadcast(twid[6*j+4]);
+			v4f c3i  = v4f_broadcast(twid[6*j+5]);
+			v4f x1ra = v4f_mul(b1r, c1r);
+			v4f x1rb = v4f_mul(b1i, c1i);
+			v4f x1ia = v4f_mul(b1r, c1i);
+			v4f x1ib = v4f_mul(b1i, c1r);
+			v4f x2ra = v4f_mul(b2r, c2r);
+			v4f x2rb = v4f_mul(b2i, c2i);
+			v4f x2ia = v4f_mul(b2r, c2i);
+			v4f x2ib = v4f_mul(b2i, c2r);
+			v4f x3ra = v4f_mul(b3r, c3r);
+			v4f x3rb = v4f_mul(b3i, c3i);
+			v4f x3ia = v4f_mul(b3r, c3i);
+			v4f x3ib = v4f_mul(b3i, c3r);
+			v4f x1r  = v4f_sub(x1ra, x1rb);
+			v4f x1i  = v4f_add(x1ia, x1ib);
+			v4f x2r  = v4f_sub(x2ra, x2rb);
+			v4f x2i  = v4f_add(x2ia, x2ib);
+			v4f x3r  = v4f_sub(x3ra, x3rb);
+			v4f x3i  = v4f_add(x3ia, x3ib);
+			v4f yr0  = v4f_add(b0r, x2r);
+			v4f yi0  = v4f_add(b0i, x2i);
+			v4f yr2  = v4f_sub(b0r, x2r);
+			v4f yi2  = v4f_sub(b0i, x2i);
+			v4f yr1  = v4f_add(x1r, x3r);
+			v4f yi1  = v4f_add(x1i, x3i);
+			v4f yr3  = v4f_sub(x1r, x3r);
+			v4f yi3  = v4f_sub(x1i, x3i);
+			v4f o0r  = v4f_add(yr0, yr1);
+			v4f o0i  = v4f_add(yi0, yi1);
+			v4f o2r  = v4f_sub(yr0, yr1);
+			v4f o2i  = v4f_sub(yi0, yi1);
+			v4f o1r  = v4f_add(yr2, yi3);
+			v4f o1i  = v4f_sub(yi2, yr3);
+			v4f o3r  = v4f_sub(yr2, yi3);
+			v4f o3i  = v4f_add(yi2, yr3);
+			v4f_st(work_buf + 0*rinc + 0, o0r);
+			v4f_st(work_buf + 0*rinc + 4, o0i);
+			v4f_st(work_buf + 1*rinc + 0, o1r);
+			v4f_st(work_buf + 1*rinc + 4, o1i);
+			v4f_st(work_buf + 2*rinc + 0, o2r);
+			v4f_st(work_buf + 2*rinc + 4, o2i);
+			v4f_st(work_buf + 3*rinc + 0, o3r);
+			v4f_st(work_buf + 3*rinc + 4, o3i);
+		}
+		work_buf += 3*rinc;
 	} while (--nfft);
 }
 
@@ -367,6 +503,80 @@ static void fc_v4_stock_r2(const float *in, float *out, const float *twid, unsig
 			in0  += (2*4);
 		} while (--j);
 		in = in + 2*ooffset;
+	} while (--nrow_div_radix);
+}
+
+static void fc_v4_stock_r4(const float *in, float *out, const float *twid, unsigned ncol, unsigned nrow_div_radix)
+{
+	const unsigned ooffset = (2*4)*ncol;
+	const unsigned ioffset = ooffset*nrow_div_radix;
+	do {
+		const float *in0 = in;
+		const float *tp   = twid;
+		unsigned     j    = ncol;
+		do {
+			v4f b0r, b0i, b1r, b1i, b2r, b2i, b3r, b3i;
+			v4f y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+			v4f z0r, z0i, z1r, z1i, z2r, z2i, z3r, z3i;
+			v4f o1r, o1i, o2r, o2i, o3r, o3i;
+			v4f c1r, c1i, c2r, c2i, c3r, c3i;
+			v4f o1ra, o1ia, o2ra, o2ia, o3ra, o3ia;
+			v4f o1rb, o1ib, o2rb, o2ib, o3rb, o3ib;
+
+			V4F_LD2(b0r, b0i, in0 + 0*ooffset);
+			V4F_LD2(b1r, b1i, in0 + 1*ooffset);
+			V4F_LD2(b2r, b2i, in0 + 2*ooffset);
+			V4F_LD2(b3r, b3i, in0 + 3*ooffset);
+			y0r  = v4f_add(b0r, b2r);
+			y0i  = v4f_add(b0i, b2i);
+			y2r  = v4f_sub(b0r, b2r);
+			y2i  = v4f_sub(b0i, b2i);
+			y1r  = v4f_add(b1r, b3r);
+			y1i  = v4f_add(b1i, b3i);
+			y3r  = v4f_sub(b1r, b3r);
+			y3i  = v4f_sub(b1i, b3i);
+			z0r  = v4f_add(y0r, y1r);
+			z0i  = v4f_add(y0i, y1i);
+			z2r  = v4f_sub(y0r, y1r);
+			z2i  = v4f_sub(y0i, y1i);
+			z1r  = v4f_add(y2r, y3i);
+			z1i  = v4f_sub(y2i, y3r);
+			z3r  = v4f_sub(y2r, y3i);
+			z3i  = v4f_add(y2i, y3r);
+			c1r  = v4f_broadcast(tp[0]);
+			c1i  = v4f_broadcast(tp[1]);
+			c2r  = v4f_broadcast(tp[2]);
+			c2i  = v4f_broadcast(tp[3]);
+			c3r  = v4f_broadcast(tp[4]);
+			c3i  = v4f_broadcast(tp[5]);
+			o1ra = v4f_mul(z1r, c1r);
+			o1rb = v4f_mul(z1i, c1i);
+			o1ia = v4f_mul(z1r, c1i);
+			o1ib = v4f_mul(z1i, c1r);
+			o2ra = v4f_mul(z2r, c2r);
+			o2rb = v4f_mul(z2i, c2i);
+			o2ia = v4f_mul(z2r, c2i);
+			o2ib = v4f_mul(z2i, c2r);
+			o3ra = v4f_mul(z3r, c3r);
+			o3rb = v4f_mul(z3i, c3i);
+			o3ia = v4f_mul(z3r, c3i);
+			o3ib = v4f_mul(z3i, c3r);
+			o1r  = v4f_sub(o1ra, o1rb);
+			o1i  = v4f_add(o1ia, o1ib);
+			o2r  = v4f_sub(o2ra, o2rb);
+			o2i  = v4f_add(o2ia, o2ib);
+			o3r  = v4f_sub(o3ra, o3rb);
+			o3i  = v4f_add(o3ia, o3ib);
+			V4F_ST2(out + 0*ioffset, z0r, z0i);
+			V4F_ST2(out + 1*ioffset, o1r, o1i);
+			V4F_ST2(out + 2*ioffset, o2r, o2i);
+			V4F_ST2(out + 3*ioffset, o3r, o3i);
+
+			tp   += 6;
+			out  += (2*4);
+			in0  += (2*4);
+		} while (--j);
+		in = in + 4*ooffset;
 	} while (--nrow_div_radix);
 }
 
@@ -469,7 +679,7 @@ fastconv_execute_fwd_reord
 		assert(si < FASTCONV_MAX_PASSES);
 		pass_stack[si++] = first_pass;
 		first_pass = first_pass->next_compat;
-		first_pass->dif_stockham(work_buf, output_buf, first_pass->twiddle, first_pass->lfft/2, nfft);
+		first_pass->dif_stockham(work_buf, output_buf, first_pass->twiddle, first_pass->lfft/first_pass->radix, nfft);
 		assert(first_pass != NULL);
 		nfft *= first_pass->radix;
 		float *tmp = output_buf;
@@ -513,7 +723,7 @@ fastconv_execute_rev_reord
 		assert(si < FASTCONV_MAX_PASSES);
 		pass_stack[si++] = first_pass;
 		first_pass = first_pass->next_compat;
-		first_pass->dif_stockham(work_buf, output_buf, first_pass->twiddle, first_pass->lfft/2, nfft);
+		first_pass->dif_stockham(work_buf, output_buf, first_pass->twiddle, first_pass->lfft/first_pass->radix, nfft);
 		assert(first_pass != NULL);
 		nfft *= first_pass->radix;
 		float *tmp = output_buf;
@@ -570,7 +780,26 @@ static struct fastconv_pass *fastconv_get_inner_pass(struct fastconv_fftset *fc,
 		return NULL;
 
 	/* Detect radix. */
-	if (length % 2 == 0) {
+	if (length % 4 == 0) {
+		pass->twiddle = aalloc_malloc(sizeof(float) * 6 * length / 4, 64, &pass->twidbase);
+		if (pass->twiddle == NULL) {
+			free(pass);
+			return NULL;
+		}
+		for (i = 0; i < length / 4; i++) {
+			pass->twiddle[6*i+0] = cosf(i * (-(float)M_PI * 2.0f) / length);
+			pass->twiddle[6*i+1] = sinf(i * (-(float)M_PI * 2.0f) / length);
+			pass->twiddle[6*i+2] = cosf(i * (-(float)M_PI * 4.0f) / length);
+			pass->twiddle[6*i+3] = sinf(i * (-(float)M_PI * 4.0f) / length);
+			pass->twiddle[6*i+4] = cosf(i * (-(float)M_PI * 6.0f) / length);
+			pass->twiddle[6*i+5] = sinf(i * (-(float)M_PI * 6.0f) / length);
+		}
+		pass->lfft         = length;
+		pass->radix        = 4;
+		pass->dif          = fc_v4_dif_r4;
+		pass->dit          = fc_v4_dit_r4;
+		pass->dif_stockham = fc_v4_stock_r4;
+	} else if (length % 2 == 0) {
 		pass->twiddle = aalloc_malloc(sizeof(float) * length, 64, &pass->twidbase);
 		if (pass->twiddle == NULL) {
 			free(pass);
