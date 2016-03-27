@@ -118,6 +118,8 @@ static const char *load_wave_cks(struct wave_cks *cks, unsigned char *buf, unsig
 	return NULL;
 }
 
+#include "bufcvt.h"
+
 const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned long fsz)
 {
 	struct wave_cks cks;
@@ -157,25 +159,7 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 		for (i = 0; i < mw->channels; i++)
 			mw->data[i] = malloc(sizeof(float) * mw->length);
 
-		for (i = 0; i < mw->channels; i++) {
-			unsigned j;
-			for (j = 0; j < mw->length; j++) {
-				unsigned long s;
-				long t;
-				if (mw->native_bits == 24) {
-					s =            cks.data[3*(i+mw->channels*j)+2];
-					s = (s << 8) | cks.data[3*(i+mw->channels*j)+1];
-					s = (s << 8) | cks.data[3*(i+mw->channels*j)+0];
-					t = (s & 0x800000u) ? -(long)(((~s) & 0x7FFFFFu) + 1) : (long)s;
-				} else {
-					s =            cks.data[2*(i+mw->channels*j)+1];
-					s = (s << 8) | cks.data[2*(i+mw->channels*j)+0];
-					t = (s & 0x8000u)   ? -(long)(((~s) & 0x7FFFu) + 1) : (long)s;
-					t *= 256;
-				}
-				mw->data[i][j] = t / (float)0x800000;
-			}
-		}
+		bufcvt_deinterleave((void **)mw->data, cks.data, mw->length, mw->channels, (mw->native_bits == 24) ? BUFCVT_FMT_SLE24 : BUFCVT_FMT_SLE16, BUFCVT_FMT_FLOAT);
 	}
 
 
@@ -225,6 +209,15 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 	} else if (cks.cuesz >= 4) {
 		unsigned long nb_cue = parse_le32(cks.cue + 0);
 		unsigned i;
+		int found_rel = 0;
+		unsigned rp = 0;
+
+
+		unsigned loopend = 0;
+		for (i = 0; i < mw->nloop; i++) {
+			if (mw->loops[2*i+1] > loopend)
+				loopend = mw->loops[2*i+1];
+		}
 
 		/* 0             nb_cuepoints
 		 * 4 + 24*i + 0  dwName
@@ -239,8 +232,9 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 			return "invalid cue chunk";
 
 		for (i = 0; i < nb_cue; i++) {
-			unsigned j;
-			unsigned long cue_id        = parse_le32(cks.cue + 4 + i * 24 + 0);
+			/* We ignore the cue ID because too much software incorrectly
+			 * associates it with a loop. We instead look for a cue point that
+			 * is past the end of the last loop. */
 			unsigned long block_start   = parse_le32(cks.cue + 4 + i * 24 + 16);
 			unsigned long sample_offset = parse_le32(cks.cue + 4 + i * 24 + 20);
 			unsigned long relpos = sample_offset + block_start / (mw->channels * ((mw->native_bits + 7) / 8));
@@ -249,23 +243,25 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 				continue;
 			if (parse_le32(cks.cue + 4 + i * 24 + 8) != 0x61746164ul)
 				continue;
+			if (relpos <= loopend)
+				continue;
 
-			for (j = 0; j < mw->nloop; j++) {
-				unsigned long loop_id = parse_le32(cks.smpl + 36 + i * 24 + 0);
-				if (cue_id == loop_id || relpos <= mw->loops[2*j+1])
-					break;
-			}
-
-			/* If j==mw->nloop, the cue id was not found among the loops. */
-			if (j == mw->nloop) {
-				mw->release_pos = relpos;
-				printf("release @%lu,%lu\n", sample_offset, mw->release_pos);
-				break;
+			if (found_rel) {
+				if (relpos < rp)
+					rp = relpos;
+			} else {
+				rp = relpos;
+				found_rel = 1;
 			}
 		}
 
+		/* If j==mw->nloop, the cue id was not found among the loops. */
+		if (found_rel) {
+			mw->release_pos = rp;
+			printf("release%lu\n", mw->release_pos);
+		}
 	} else {
-		return "invalid cue chunk";
+		return "no cue chunk";
 	}
 
 	return NULL;
@@ -583,7 +579,7 @@ load_smpl_f
 		,prefilt_kern_len
 		,prefilt_real_fft_len
 		,prefilt_fft
-		,NULL //filename
+		,NULL//filename
 		);
 #endif
 
@@ -628,7 +624,7 @@ load_smpl_f
 		}
 
 		/* Build the evelope kernel. */
-		for (i = 0; i < env_width;  i++) scratch_buf[i] = 2.0f / cor_fft_sz;
+		for (i = 0; i < env_width;  i++) scratch_buf[i] = 2.0f / (cor_fft_sz * env_width);
 		for (     ; i < cor_fft_sz; i++) scratch_buf[i] = 0.0f;
 		fastconv_execute_fwd
 			(fft
@@ -659,7 +655,7 @@ load_smpl_f
 			float ch_power = 0.0f;
 			for (i = 0; i < env_width; i++) {
 				float s = mw.data[ch][mw.release_pos + env_width - 1 - i];
-				scratch_buf[i] = s * (2.0f / cor_fft_sz);
+				scratch_buf[i] = s * (2.0f / (cor_fft_sz * env_width));
 				ch_power += s * s;
 			}
 			for (; i < cor_fft_sz; i++)
@@ -684,59 +680,8 @@ load_smpl_f
 				);
 		}
 
-#if 0
-		unsigned rellvltab_len = 0;
-		unsigned rellvltab_scale = 0;
-		for (i = 0; i < as_length; i++) {
-			float f = (rel_power + envelope_buf[i] - 2.0f * mse_buf[i]) / env_width;
-			float v = envelope_buf[i] / rel_power;
-			mse_buf[i] = (f <= 0.0f) ? 0.0f : sqrtf(f);
-			envelope_buf[i] = (v <= 0.0f) ? 0.0f : (v >= 1.0f ? 1.0f : sqrtf(v));
-			if (envelope_buf[i] > 0.95f && rellvltab_len == 0) {
-				rellvltab_len = i;
-			}
-		}
+		rel_power /= env_width;
 
-		while (rellvltab_len > 512) {
-			rellvltab_len >>= 1;
-			rellvltab_scale++;
-		}
-
-		pipe->rellvltab_len = rellvltab_len;
-		pipe->rellvltab_scale = rellvltab_scale;
-		pipe->rellvltab = malloc(sizeof(pipe->rellvltab[0]) * rellvltab_len);
-		for (i = 0; i < rellvltab_len; i++) {
-			float v = envelope_buf[i << rellvltab_scale] * 32768 + 0.5;
-			if (v >= 32767.0f) {
-				pipe->rellvltab[i] = 32767;
-			} else if (v <= 0.0f) {
-				pipe->rellvltab[i] = 0;
-			} else {
-				pipe->rellvltab[i] = (int_least16_t)v;
-			}
-		}
-#endif
-
-#if 0
-		FILE *f = fopen("env_correlator_debug.raw", "wb");
-		for (i = 0; i < as_length; i++) {
-			unsigned j;
-			double val;
-			short v;
-			int s;
-			val = 32768 * envelope_buf[i] * 2 + (rand() + (double)rand()) * 0.5 / (double)RAND_MAX;
-			s = (int)(val + 50000.0) - 50000;
-			v = (s > 32767) ? 32767 : ((s < -32768) ? -32768 : s);
-			fwrite(&v, 1, 2, f);
-//			val = 32768 * mse_buf[i] * 2 + (rand() + (double)rand()) * 0.5 / (double)RAND_MAX;
-			val = envelope_buf[i] / rel_power;
-			val = 32768 * sqrt(val >= 1.0 ? 1.0 : (val < 0.0 ? 0.0 : val)) + (rand() + (double)rand()) * 0.5 / (double)RAND_MAX;
-			s = (int)(val + 50000.0) - 50000;
-			v = (s > 32767) ? 32767 : ((s < -32768) ? -32768 : s);
-			fwrite(&v, 1, 2, f);
-		}
-		fclose(f);
-#endif
 		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, (as_loop_end+1), (1.0f / mw.frequency) * mw.rate
 			,NULL //filename
 			);
@@ -745,91 +690,13 @@ load_smpl_f
 	}
 #endif
 
-#if 0
-	{
-		struct attackana_s ai;
-		unsigned env_width = (unsigned)((1.0f / mw.frequency) * mw.rate * 2.0f + 0.5f);
-		unsigned fftsz = pow2_rnd_up(env_width * 8);
-		struct fftrksf *fft = fftrksf_create(fftsz);
-		float *tmp = malloc(sizeof(float) * fftsz * 2);
-
-		build_ana_info
-			(&ai
-			,mw.data
-			,mw.channels
-			,pipe->attack.ends[mw.nloop-1].end_smpl + 1
-			,env_width
-			,fft
-			,fftsz
-			,tmp
-			);
-
-		FILE *envf = fopen("ENV.raw", "wb");
-		FILE *filtoutf = fopen("FILTOUT.raw", "wb");
-
-		for (i = 0; i < pipe->attack.ends[mw.nloop-1].end_smpl + 1; i++) {
-
-			short t;
-			float s;
-
-			s  = (ai.f0[0][i]) * 32768;
-			s += (rand() * 0.5 + rand() * 0.5) / RAND_MAX;
-			t  = (short)((int)(s + 32768) - 32768);
-			fwrite(&t, 1, 2, filtoutf);
-			s  = (ai.f0[1][i]) * 32768;
-			s += (rand() * 0.5 + rand() * 0.5) / RAND_MAX;
-			t  = (short)((int)(s + 32768) - 32768);
-			fwrite(&t, 1, 2, filtoutf);
-
-			s  = sqrt(fabsf(ai.env[i]) / env_width) * 32768;
-			s += (rand() * 0.5 + rand() * 0.5) / RAND_MAX;
-			t  = (short)((int)(s + 32768) - 32768);
-			fwrite(&t, 1, 2, envf);
-
-		}
-		
-		fclose(envf);
-		fclose(filtoutf);
-
-	}
-#endif
-
-#if 0
-	{
-		unsigned rsamples = (unsigned)((1.0 / mw.frequency) * mw.rate * 3.0 + 0.5);
-		unsigned clen;
-//		float *corr = eval_mse(mw.data[0], mw.data[0] + mw.release_pos, pipe->attack.ends[mw.nloop-1].end_smpl + 1, rsamples, &clen);
-//		reltable_build(tab, corr, clen, (1.0f / mw.frequency) * mw.rate);
-
-		{
-			FILE *f;
-			char danger[1024];
-			sprintf(danger, "%s_rcorr.raw", filename);
-			f = fopen(danger, "wb");
-
-			for (i = 0; i < clen; i++) {
-				short t;
-				float s;
-				s  = sqrt(corr[i]) * 32.0;
-				s += (rand() * 0.5 + rand() * 0.5) / RAND_MAX;
-				t  = (short)((int)(s + 32768) - 32768);
-
-				fwrite(&t, 1, 2, f);
-			}
-
-			fclose(f);
-		}
-	}
-#endif
-
-
-
 	dlen = pipe->attack.ends[mw.nloop-1].end_smpl + 1;
 	samples = malloc(sizeof(int_least16_t) * dlen * mw.channels);
 
 	/* release has 32 samples of extra zero slop for a fake loop */
 	unsigned release_length = mw.length - mw.release_pos;
 	unsigned release_slop   = 32;
+	uint_fast32_t rseed = rand();
 	relsamples = malloc(sizeof(int_least16_t) * (release_length + release_slop) * mw.channels);
 
 	pipe->release.instantiate = u16c2_instantiate;
@@ -842,9 +709,11 @@ load_smpl_f
 	for (i = 0; i < mw.channels; i++) {
 		unsigned j;
 		for (j = 0; j < release_length; j++) {
-			float s = mw.data[i][j+mw.release_pos] * 32768.0f;
-			float dither = (rand() * 0.5f + rand() * 0.5f) / RAND_MAX;
-			long v = (long)(dither + s + 32768.0f) - 32768l;
+			float s          = mw.data[i][j+mw.release_pos] * 32768.0f;
+			int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x7FFFFFFFu;
+			int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x7FFFFFFFu;
+			float dither     = ((float)r1 + (float)r2) * (0.5f / 0x7FFFFFFF);
+			int_fast32_t v   = (int_fast32_t)(dither + s + 32768.0f) - 32768l;
 			relsamples[mw.channels*j+i] = (int_least16_t)((v > 32767) ? 32767 : ((v < -32768) ? - 32768 : v));
 		}
 		for (; j < release_length + release_slop; j++) {
@@ -857,9 +726,11 @@ load_smpl_f
 	for (i = 0; i < mw.channels; i++) {
 		unsigned j;
 		for (j = 0; j < dlen; j++) {
-			float s = mw.data[i][j] * 32768.0f;
-			float dither = (rand() * 0.5f + rand() * 0.5f) / RAND_MAX;
-			long v = (long)(dither + s + 32768.0f) - 32768l;
+			float s          = mw.data[i][j] * 32768.0f;
+			int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x7FFFFFFFu;
+			int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x7FFFFFFFu;
+			float dither     = ((float)r1 + (float)r2) * (0.5f / 0x7FFFFFFF);
+			int_fast32_t v   = (int_fast32_t)(dither + s + 32768.0f) - 32768l;
 			((int_least16_t *)samples)[mw.channels*j+i] = (int_least16_t)((v > 32767) ? 32767 : ((v < -32768) ? - 32768 : v));
 		}
 	}

@@ -124,17 +124,28 @@ engine_callback
 		unsigned d = 128;
 		int      mn = get_target_note(pd->target_freq, at_rank_harmonic64);
 		double   op = states[0]->ipos + states[0]->fpos * (1.0 / SMPL_POSITION_SCALE);
+		float    error;
+		int      derror;
 
-		np   = reltable_find(&pd->data.reltable, op, &f);
-		newi = floor(np);
-		newf = (unsigned)((np - newi) * SMPL_POSITION_SCALE);
+		np    = reltable_find(&pd->data.reltable, op, &f, &error);
+		error = -10.0 * log10(error + 1e-18);
+		newi  = floor(np);
+		newf  = (unsigned)((np - newi) * SMPL_POSITION_SCALE);
 		pd->data.release.instantiate(states[1], &pd->data.release, newi, newf);
-		
-		printf("%03d-%s RELEASED ipos=%f,rpos=%f,rgain=%f\n", mn, NAMES[mn%12], op, np, (double)f);
 
 		if (f < 0.8) {
 			d = (8192 * (0.8 - f) + 128 + 0.5f);
+		} if (f > 1.1) {
+			d = (8192 * fmin((f - 1.1) / (1.3 - 1.1), 1.0) + 128 + 0.5f);
 		}
+
+		f = (f > 1.05) ? 1.05 : f;
+
+		derror = (int)((error > 0.5f) ? (error - 0.5f) * (16384.0f / 20.0f) : 0.0f);
+		d = (derror > d) ? derror : d;
+		
+		printf("%03d-%s RELEASED ipos=%f,rpos=%f,rgain=%f,mserr=%f,xfade=%d\n", mn, NAMES[mn%12], op, np, (double)f, error, d);
+
 
 		states[1]->rate = states[0]->rate;
 		states[1]->setfade(states[1], 0, 0.0f);
@@ -367,7 +378,6 @@ int main_audio(int argc, char *argv[])
 {
 	PaStream *astream;
 	PaError ec;
-	const PaVersionInfo *pav;
 	int finished = 0;
 
 	printf("initializing PortAudio... ");
@@ -421,11 +431,11 @@ int main_audio(int argc, char *argv[])
 			printf("pipe frequency set at: %.3f           \r", pipe_frequencies[current_midi-at_first_midi]);
 			break;
 		case 'x':
-			pipe_frequencies[current_midi-at_first_midi] -= 0.1;
+			pipe_frequencies[current_midi-at_first_midi] -= 0.05;
 			printf("pipe frequency set at: %.3f           \r", pipe_frequencies[current_midi-at_first_midi]);
 			break;
 		case 'c':
-			pipe_frequencies[current_midi-at_first_midi] += 0.1;
+			pipe_frequencies[current_midi-at_first_midi] += 0.05;
 			printf("pipe frequency set at: %.3f           \r", pipe_frequencies[current_midi-at_first_midi]);
 			break;
 		case 't':
@@ -646,7 +656,7 @@ int main(int argc, char *argv[])
 					riffsz = sz;
 				buf += 12;
 				while (riffsz > 8 && smpl == NULL) {
-					char   *ckid   = buf;
+					char   *ckid   = (char *)buf;
 					size_t  cksz   = parse_le32(buf + 4);
 					void   *ckdata = buf + 8;
 					size_t  padsz  = cksz + (cksz & 1);
@@ -670,8 +680,7 @@ int main(int argc, char *argv[])
 					unsigned long frac_part = (note - int_part) * (65536.0 * 65536.0);
 					store_le32(smpl + 12, int_part);
 					store_le32(smpl + 16, frac_part);
-
-					err = write_entire_file(namebuf, sz, db);
+					err = write_entire_file(namebuf, sz + 12, db);
 					if (err != NULL) {
 						fprintf(stderr, "failed to write %s: %s\n", namebuf, err);
 					}

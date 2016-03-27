@@ -54,6 +54,7 @@ struct relnode {
 
 	/* The gain associated with this node. */
 	float            rel_gain;
+	float            avg_err;
 
 	struct relnode  *left;
 	struct relnode  *right;
@@ -64,6 +65,7 @@ reltable_find
 	(const struct reltable *reltable
 	,double                 sample
 	,float                 *gain
+	,float                 *avgerr
 	)
 {
 	unsigned i;
@@ -87,6 +89,10 @@ reltable_find
 		}
 	}
 
+	if (avgerr != NULL) {
+		*avgerr = reltable->entry[i].avgerr;
+	}
+
 	/* TODO: FABS INSERTED TO PREVENT NEGATIVE OUTPUT! MAY BE A BUG ELSEWHERE. */
 #if 0
 	return fmod(fabs(sample - reltable->entry[i].b), reltable->entry[i].m);
@@ -104,6 +110,7 @@ build_relnode
 	(struct relnode *rn
 	,const unsigned *sync_positions
 	,const float    *gain_vec
+	,const float    *mse_vec
 	,unsigned        start_position
 	,unsigned        end_position
 	,const float    *error_vec
@@ -116,15 +123,19 @@ build_relnode
 		rn->b        = sync_positions[start_position];
 		rn->rel_gain = gain_vec[start_position];
 		rn->modfac   = 1.0;
+		rn->avg_err  = mse_vec[start_position] * mse_vec[start_position];
 	} else {
 		double mean_y = 0.0;
 		double mean_x = 0.0;
 		double sum_n, sum_d;
 		rn->rel_gain = 0.0f;
+		rn->avg_err  = 0.0f;
 		for (i = start_position; i <= end_position; i++) {
+			float tmp = mse_vec[i] * mse_vec[i];
 			mean_y += sync_positions[i];
 			mean_x += i;
 			rn->rel_gain = (gain_vec[i] > rn->rel_gain) ? gain_vec[i] : rn->rel_gain;
+			rn->avg_err = (tmp > rn->avg_err) ? tmp : rn->avg_err;
 		}
 		mean_y = mean_y / (end_position - start_position + 1);
 		mean_x = mean_x / (end_position - start_position + 1);
@@ -209,6 +220,7 @@ recursive_construct_table
 	table->entry[table->nb_entry].b = b;
 	table->entry[table->nb_entry].m = m;
 	table->entry[table->nb_entry].gain = node->rel_gain;
+	table->entry[table->nb_entry].avgerr = node->avg_err;
 	table->nb_entry++;
 }
 
@@ -220,6 +232,7 @@ reltable_int
 	(struct reltable *reltable
 	,const unsigned  *sync_positions
 	,const float     *gain_vec
+	,const float     *mse_vec
 	,unsigned         nb_positions
 	,const float     *error_vec
 	,unsigned         error_vec_len
@@ -231,7 +244,7 @@ reltable_int
 
 	assert(nb_positions);
 
-	build_relnode(&root, sync_positions, gain_vec, 0, nb_positions-1, error_vec, error_vec_len);
+	build_relnode(&root, sync_positions, gain_vec, mse_vec, 0, nb_positions-1, error_vec, error_vec_len);
 
 	while (nbuf > 2) {
 		struct relnode *w = find_worst_node(&root);
@@ -240,7 +253,7 @@ reltable_int
 
 		unsigned stop1, start2;
 
-		if (w->actual_error - w->ideal_error < 0.3 || w->startidx == w->endidx)
+		if (w->actual_error - w->ideal_error < 0.005 || w->startidx == w->endidx)
 			break;
 
 		for (i = w->startidx, eh = 0.0; i <= w->endidx && eh < w->actual_error; i++) {
@@ -268,8 +281,8 @@ reltable_int
 		w->left = &(nodebuf[--nbuf]);
 		w->right = &(nodebuf[--nbuf]);
 
-		build_relnode(w->left, sync_positions, gain_vec, w->startidx, stop1, error_vec, error_vec_len);
-		build_relnode(w->right, sync_positions, gain_vec, start2, w->endidx, error_vec, error_vec_len);
+		build_relnode(w->left, sync_positions, gain_vec, mse_vec, w->startidx, stop1, error_vec, error_vec_len);
+		build_relnode(w->right, sync_positions, gain_vec, mse_vec, start2, w->endidx, error_vec, error_vec_len);
 	}
 
 	reltable->nb_entry = 0;
@@ -313,6 +326,7 @@ reltable_build
 	unsigned i;
 	unsigned *epos  = malloc(error_vec_len * sizeof(unsigned));
 	float    *egain = malloc(error_vec_len * sizeof(float));
+	float    *emse  = malloc(error_vec_len * sizeof(float));
 	unsigned positions = 0;
 	unsigned lf   = 2 * fmax(1.0, (unsigned)(period / 15.0));
 	unsigned skip = (unsigned)fmax(1.0, period - lf/2);
@@ -323,14 +337,18 @@ reltable_build
 		FILE     *dbgfile;
 		unsigned  i;
 		sprintf(namebuf, "%s_reltable_inputs.raw", debug_prefix);
+		printf("analysing sample '%s'\n", debug_prefix);
 		dbgfile = fopen(namebuf, "wb");
 		if (dbgfile != NULL) {
 			for (i = 0; i < error_vec_len; i++) {
 				short sb[2];
-				float f1 = error_vec[i] * 4096 + 0.5;
-				float f2 = corr_vec[i] * 4096 + 0.5;
-				sb[0] = (f1 >= 32767) ? 32767 : ((f1 <= -32768) ? -32768 : f1);
-				sb[1] = (f2 >= 32767) ? 32767 : ((f2 <= -32768) ? -32768 : f2);
+				float rg = corr_vec[i] * rel_scale;
+				float f1 = sqrtf(fabsf(error_vec[i])) * 32768.0f + 0.5f;
+				float f2 = sqrtf(fabsf(error_vec[i] + rel_power * rg * rg - 2.0f * corr_vec[i] * rg)) * 32768.0f + 0.5f;
+
+
+				sb[0] = (f1 >= 32767.0f) ? 32767 : ((f1 <= -32768) ? -32768 : f1);
+				sb[1] = (f2 >= 32767.0f) ? 32767 : ((f2 <= -32768) ? -32768 : f2);
 				fwrite(sb, 2, 2, dbgfile);
 			}
 			fclose(dbgfile);
@@ -341,8 +359,8 @@ reltable_build
 
 	/* Find best release alignment position. */
 	for (i = 0; i < error_vec_len; i++) {
-		float f = rel_power + error_vec[i] - 2.0f * corr_vec[i]; /* Scaled up by the width of the release! */
-		error_vec[i] = (f <= 0.0f) ? 0.0f : sqrtf(f);
+		float f = (rel_power + error_vec[i] - 2.0f * corr_vec[i]); /* Scaled up by the width of the release! */
+		error_vec[i] = (f <= 0.0f) ? 0.0f : (f);
 		if (i == 0 || error_vec[i] < err) {
 			err = error_vec[i];
 			errpos = i;
@@ -361,23 +379,37 @@ reltable_build
 				le = error_vec[lep];
 			}
 		}
-		egain[positions]  = corr_vec[lep] * rel_scale;
+
+		float env = error_vec[lep] - rel_power + 2.0f * corr_vec[lep];
+		float rg = corr_vec[lep] * rel_scale;
+
+		emse[positions]   = 2.0f * corr_vec[lep] / (env + rel_power);
+		egain[positions]  = rg;
 		epos[positions++] = lep;
 		i = lep;
 	}
 
 	/* Reverse initial position list */
 	for (i = 0; i < positions/2; i++) {
+		float tmp3           = emse[i];
 		float tmp2           = egain[i];
 		unsigned tmp         = epos[i];
+		emse[i]              = emse[positions-1-i];
 		egain[i]             = egain[positions-1-i];
 		epos[i]              = epos[positions-1-i];
+		emse[positions-1-i]  = tmp3;
 		egain[positions-1-i] = tmp2;
 		epos[positions-1-i]  = tmp;
 	}
 
 	/* Insert best position */
-	egain[positions]  = corr_vec[errpos] * rel_scale;
+	float env = error_vec[errpos] - rel_power + 2.0f * corr_vec[errpos];
+	float rg = corr_vec[errpos] * rel_scale;
+
+	emse[positions]   = 2.0f * corr_vec[errpos] / (env + rel_power);
+	egain[positions]  = rg;
+//	emse[positions]   = error_vec[errpos];
+//	egain[positions]  = corr_vec[errpos] * rel_scale;
 	epos[positions++] = errpos;
 
 	/* Insert all later positions. */
@@ -391,7 +423,15 @@ reltable_build
 				le = error_vec[lep];
 			}
 		}
-		egain[positions]  = corr_vec[lep] * rel_scale;
+
+		float env = error_vec[lep] - rel_power + 2.0f * corr_vec[lep];
+		float rg = corr_vec[lep] * rel_scale;
+
+		emse[positions]   = 2.0f * corr_vec[lep] / (env + rel_power);
+		egain[positions]  = rg;
+
+//		emse[positions]   = error_vec[lep];
+//		egain[positions]  = corr_vec[lep] * rel_scale;
 		epos[positions++] = lep;
 		i = lep;
 	}
@@ -400,6 +440,7 @@ reltable_build
 		(reltable
 		,epos
 		,egain
+		,emse
 		,positions
 		,error_vec
 		,error_vec_len
@@ -408,14 +449,16 @@ reltable_build
 	free(epos);
 	free(egain);
 
+#if 1
 #if 0
 	for (i = 0; i < positions && i < 20; i++) {
 		float f;
 		float t = reltable_find(reltable, epos[i], &f);
 		printf("%u->%f,%f\n", epos[i], t, f);
 	}
+#endif
 	for (i = 0; i < reltable->nb_entry; i++) {
-		printf("%u) %f,%f,%f\n", reltable->entry[i].last_sample, reltable->entry[i].m, reltable->entry[i].b, reltable->entry[i].gain);
+		printf("%u) %f,%f,%f,%f\n", reltable->entry[i].last_sample, reltable->entry[i].m, reltable->entry[i].b, reltable->entry[i].gain, reltable->entry[i].avgerr);
 	}
 	printf("period: %f,%u,%u\n", period, skip, lf);
 #endif

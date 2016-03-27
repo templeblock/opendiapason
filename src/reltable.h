@@ -30,6 +30,7 @@ struct reltable {
 		double   m;
 		double   b;
 		float    gain;
+		float    avgerr;
 	} entry[RELTABLE_MAX_ENTRIES];
 };
 
@@ -38,6 +39,7 @@ reltable_find
 	(const struct reltable *reltable
 	,double                 sample
 	,float                 *gain
+	,float                 *avgerr
 	);
 
 /* Creates a release alignment table for aligning a release with an
