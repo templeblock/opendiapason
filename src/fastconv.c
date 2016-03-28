@@ -741,24 +741,14 @@ fastconv_execute_rev_reord
 
 void fastconv_fftset_init(struct fastconv_fftset *fc)
 {
+	aalloc_init(&fc->memory, 16, 64*1024);
 	fc->first_outer = NULL;
 	fc->first_inner = NULL;
 }
 
 void fastconv_fftset_destroy(struct fastconv_fftset *fc)
 {
-	while (fc->first_outer != NULL) {
-		struct fastconv_pass *p = fc->first_outer;
-		fc->first_outer = p->next;
-		free(p->twidbase);
-		free(p);
-	}
-	while (fc->first_inner != NULL) {
-		struct fastconv_pass *p = fc->first_inner;
-		fc->first_inner = p->next;
-		free(p->twidbase);
-		free(p);
-	}
+	aalloc_free(&fc->memory);
 }
 
 static struct fastconv_pass *fastconv_get_inner_pass(struct fastconv_fftset *fc, unsigned length)
@@ -776,17 +766,15 @@ static struct fastconv_pass *fastconv_get_inner_pass(struct fastconv_fftset *fc,
 	}
 
 	/* Create new inner pass. */
-	pass = malloc(sizeof(*pass));
+	pass = aalloc_alloc(&fc->memory, sizeof(*pass));
 	if (pass == NULL)
 		return NULL;
 
 	/* Detect radix. */
 	if (length % 4 == 0) {
-		pass->twiddle = aalloc_malloc(sizeof(float) * 6 * length / 4, 64, &pass->twidbase);
-		if (pass->twiddle == NULL) {
-			free(pass);
+		pass->twiddle = aalloc_align_alloc(&fc->memory, sizeof(float) * 6 * length / 4, 64);
+		if (pass->twiddle == NULL)
 			return NULL;
-		}
 		for (i = 0; i < length / 4; i++) {
 			pass->twiddle[6*i+0] = cosf(i * (-(float)M_PI * 2.0f) / length);
 			pass->twiddle[6*i+1] = sinf(i * (-(float)M_PI * 2.0f) / length);
@@ -801,11 +789,9 @@ static struct fastconv_pass *fastconv_get_inner_pass(struct fastconv_fftset *fc,
 		pass->dit          = fc_v4_dit_r4;
 		pass->dif_stockham = fc_v4_stock_r4;
 	} else if (length % 2 == 0) {
-		pass->twiddle = aalloc_malloc(sizeof(float) * length, 64, &pass->twidbase);
-		if (pass->twiddle == NULL) {
-			free(pass);
+		pass->twiddle = aalloc_align_alloc(&fc->memory, sizeof(float) * length, 64);
+		if (pass->twiddle == NULL)
 			return NULL;
-		}
 		for (i = 0; i < length / 2; i++) {
 			pass->twiddle[2*i+0] = cosf(i * (-(float)M_PI * 2.0f) / length);
 			pass->twiddle[2*i+1] = sinf(i * (-(float)M_PI * 2.0f) / length);
@@ -824,11 +810,8 @@ static struct fastconv_pass *fastconv_get_inner_pass(struct fastconv_fftset *fc,
 	if (pass->lfft != pass->radix) {
 		assert(pass->lfft % pass->radix == 0);
 		pass->next_compat = fastconv_get_inner_pass(fc, pass->lfft / pass->radix);
-		if (pass->next_compat == NULL) {
-			free(pass->twidbase);
-			free(pass);
+		if (pass->next_compat == NULL)
 			return NULL;
-		}
 	} else {
 		pass->next_compat = NULL;
 	}
@@ -871,24 +854,19 @@ const struct fastconv_pass *fastconv_get_real_conv(struct fastconv_fftset *fc, u
 	}
 
 	/* Create new outer pass and insert it into the list. */
-	pass = malloc(sizeof(*pass));
+	pass = aalloc_alloc(&fc->memory, sizeof(*pass));
 	if (pass == NULL)
 		return NULL;
 
 	/* Create memory for twiddle coefficients. */
-	pass->twiddle = aalloc_malloc(sizeof(float) * 56 * length / 16, 64, &pass->twidbase);
-	if (pass->twiddle == NULL) {
-		free(pass);
+	pass->twiddle = aalloc_align_alloc(&fc->memory, sizeof(float) * 56 * length / 16, 64);
+	if (pass->twiddle == NULL)
 		return NULL;
-	}
 
 	/* Create inner passes recursively. */
 	pass->next_compat = fastconv_get_inner_pass(fc, length / 4);
-	if (pass->next_compat == NULL) {
-		free(pass->twidbase);
-		free(pass);
+	if (pass->next_compat == NULL)
 		return NULL;
-	}
 
 	pass->lfft         = length;
 	pass->radix        = 4;

@@ -21,6 +21,8 @@
 #ifndef FASTCONV_H
 #define FASTCONV_H
 
+#include "cop/cop_alloc.h"
+
 /* How to use this API:
  *
  *   1) Initialize an fftset object. This will hold all the memory for the
@@ -109,6 +111,8 @@ struct fastconv_fftset {
 	struct fastconv_pass *first_inner;
 	/* Sorted list of all available outer passes. */
 	struct fastconv_pass *first_outer;
+	/* Memory for everything! */
+	struct aalloc         memory;
 };
 
 #endif
