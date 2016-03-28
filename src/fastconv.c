@@ -306,7 +306,8 @@ static void fc_v4_dif_r4(float *work_buf, unsigned nfft, unsigned lfft, const fl
 	lfft /= 4;
 	do {
 		unsigned j;
-		for (j = 0; j < lfft; j++, work_buf += 8) {
+		const float *tp = twid;
+		for (j = 0; j < lfft; j++, work_buf += 8, tp += 6) {
 			v4f b0r   = v4f_ld(work_buf + 0*rinc + 0);
 			v4f b0i   = v4f_ld(work_buf + 0*rinc + 4);
 			v4f b1r   = v4f_ld(work_buf + 1*rinc + 0);
@@ -331,12 +332,12 @@ static void fc_v4_dif_r4(float *work_buf, unsigned nfft, unsigned lfft, const fl
 			v4f ti1   = v4f_sub(yi2, yr3);
 			v4f tr3   = v4f_sub(yr2, yi3);
 			v4f ti3   = v4f_add(yi2, yr3);
-			v4f c1r   = v4f_broadcast(twid[6*j+0]);
-			v4f c1i   = v4f_broadcast(twid[6*j+1]);
-			v4f c2r   = v4f_broadcast(twid[6*j+2]);
-			v4f c2i   = v4f_broadcast(twid[6*j+3]);
-			v4f c3r   = v4f_broadcast(twid[6*j+4]);
-			v4f c3i   = v4f_broadcast(twid[6*j+5]);
+			v4f c1r   = v4f_broadcast(tp[0]);
+			v4f c1i   = v4f_broadcast(tp[1]);
+			v4f c2r   = v4f_broadcast(tp[2]);
+			v4f c2i   = v4f_broadcast(tp[3]);
+			v4f c3r   = v4f_broadcast(tp[4]);
+			v4f c3i   = v4f_broadcast(tp[5]);
 			v4f o1ra  = v4f_mul(tr1, c1r);
 			v4f o1rb  = v4f_mul(ti1, c1i);
 			v4f o1ia  = v4f_mul(tr1, c1i);
@@ -406,7 +407,8 @@ static void fc_v4_dit_r4(float *work_buf, unsigned nfft, unsigned lfft, const fl
 	lfft /= 4;
 	do {
 		unsigned j;
-		for (j = 0; j < lfft; j++, work_buf += 8) {
+		const float *tp = twid;
+		for (j = 0; j < lfft; j++, work_buf += 8, tp += 6) {
 			v4f b0r  = v4f_ld(work_buf + 0*rinc + 0);
 			v4f b0i  = v4f_ld(work_buf + 0*rinc + 4);
 			v4f b1r  = v4f_ld(work_buf + 1*rinc + 0);
@@ -415,12 +417,12 @@ static void fc_v4_dit_r4(float *work_buf, unsigned nfft, unsigned lfft, const fl
 			v4f b2i  = v4f_ld(work_buf + 2*rinc + 4);
 			v4f b3r  = v4f_ld(work_buf + 3*rinc + 0);
 			v4f b3i  = v4f_ld(work_buf + 3*rinc + 4);
-			v4f c1r  = v4f_broadcast(twid[6*j+0]);
-			v4f c1i  = v4f_broadcast(twid[6*j+1]);
-			v4f c2r  = v4f_broadcast(twid[6*j+2]);
-			v4f c2i  = v4f_broadcast(twid[6*j+3]);
-			v4f c3r  = v4f_broadcast(twid[6*j+4]);
-			v4f c3i  = v4f_broadcast(twid[6*j+5]);
+			v4f c1r  = v4f_broadcast(tp[0]);
+			v4f c1i  = v4f_broadcast(tp[1]);
+			v4f c2r  = v4f_broadcast(tp[2]);
+			v4f c2i  = v4f_broadcast(tp[3]);
+			v4f c3r  = v4f_broadcast(tp[4]);
+			v4f c3i  = v4f_broadcast(tp[5]);
 			v4f x1ra = v4f_mul(b1r, c1r);
 			v4f x1rb = v4f_mul(b1i, c1i);
 			v4f x1ia = v4f_mul(b1r, c1i);
@@ -512,9 +514,9 @@ static void fc_v4_stock_r4(const float *in, float *out, const float *twid, unsig
 	const unsigned ioffset = ooffset*nrow_div_radix;
 	do {
 		const float *in0 = in;
-		const float *tp   = twid;
-		unsigned     j    = ncol;
-		do {
+		const float *tp  = twid;
+		unsigned     j;
+		for (j = 0; j < ncol; j++, tp += 6) {
 			v4f b0r, b0i, b1r, b1i, b2r, b2i, b3r, b3i;
 			v4f y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
 			v4f z0r, z0i, z1r, z1i, z2r, z2i, z3r, z3i;
@@ -572,10 +574,9 @@ static void fc_v4_stock_r4(const float *in, float *out, const float *twid, unsig
 			V4F_ST2(out + 2*ioffset, o2r, o2i);
 			V4F_ST2(out + 3*ioffset, o3r, o3i);
 
-			tp   += 6;
 			out  += (2*4);
 			in0  += (2*4);
-		} while (--j);
+		}
 		in = in + 4*ooffset;
 	} while (--nrow_div_radix);
 }

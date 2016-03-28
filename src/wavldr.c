@@ -325,6 +325,7 @@ inplace_convolve
 	unsigned max_in = prefilt_real_fft_len - prefilt_kern_len + 1;
 	float *old_data = malloc(sizeof(float) * length);
 	unsigned input_read;
+	unsigned input_pos;
 
 	if (old_data == NULL)
 		abort();
@@ -339,21 +340,43 @@ inplace_convolve
 
 	/* Run trivial overlap add convolution */
 	input_read = 0;
+	input_pos = 0;
 	while (1) {
-		unsigned j;
+		unsigned j = 0;
 		int output_pos = (int)input_read-(int)pre_read;
 
 		/* Build input buffer */
 		if (is_looped) {
-			for (j = 0; j < max_in; j++) {
-				unsigned target = input_read + j;
-				unsigned src = (target >= length) ? (susp_start + ((target - length) % (length - susp_start))) : (input_read + j);
-				sc1[j] = old_data[src];
+			unsigned op = 0;
+			while (op < max_in) {
+				unsigned max_read;
+
+				/* How much can we read before we hit the end of the buffer? */
+				max_read = length - input_pos;
+
+				/* How much SHOULD we read? */
+				if (max_read + op > max_in)
+					max_read = max_in - op;
+
+				/* Read it. */
+				for (j = 0; j < max_read; j++)
+					sc1[j + op] = old_data[j + input_pos];
+
+				/* Increment offsets. */
+				input_pos += max_read;
+				op        += max_read;
+
+				/* If we read to the end of the buffer, move to the sustain
+				 * start. */
+				if (input_pos == length)
+					input_pos = susp_start;
 			}
+			for (; op < prefilt_real_fft_len; op++)
+				sc1[op] = 0.0f;
 		} else {
 			for (j = 0; j < max_in && input_read+j < length; j++) sc1[j] = old_data[input_read+j];
+			for (; j < prefilt_real_fft_len;            j++)      sc1[j] = 0.0f;
 		}
-		for (; j < prefilt_real_fft_len;            j++) sc1[j] = 0.0f;
 
 		/* Convolve! */
 		fastconv_execute_conv(prefilt_fft, sc1, prefilt_kern, sc2, sc3);
