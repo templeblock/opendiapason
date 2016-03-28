@@ -623,8 +623,8 @@ load_smpl_f
 		aalloc_push(allocator);
 
 		env_width    = (unsigned)((1.0f / mw.frequency) * mw.rate * 2.0f + 0.5f);
-		cor_fft_sz   = fftset_recommend_conv_length(env_width, 512);
-		fft          = fftset_create_fft(fftset, cor_fft_sz);
+		cor_fft_sz   = fftset_recommend_conv_length(env_width, 512) * 2;
+		fft          = fftset_create_fft(fftset, FFTSET_MODULATION_FREQ_OFFSET_REAL, cor_fft_sz / 2);
 		envelope_buf = aalloc_align_alloc(allocator, sizeof(float) * (as_loop_end+1), 64);
 		mse_buf      = aalloc_align_alloc(allocator, sizeof(float) * (as_loop_end+1), 64);
 		kern_buf     = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);

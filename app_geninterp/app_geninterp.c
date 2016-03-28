@@ -135,7 +135,7 @@ int main(int argc, char *argv[])
 
 	fftset_init(&convs);
 
-	fft     = fftset_create_fft(&convs, fft_size);
+	fft     = fftset_create_fft(&convs, FFTSET_MODULATION_FREQ_OFFSET_REAL, fft_size / 2);
 
 	/* 1) Build the interpolation filter and normalise the DC component to
 	 *    have unity gain. */

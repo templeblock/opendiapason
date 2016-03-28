@@ -604,8 +604,8 @@ int main(int argc, char *argv[])
 
 		/* Build the interpolation pre-filter */
 		fftset_init(&fftset);
-		prefilter_conv_len = fastconv_recommend_length(SMPL_INVERSE_FILTER_LEN, 4*SMPL_INVERSE_FILTER_LEN);
-		prefilter_conv     = fftset_create_fft(&fftset, prefilter_conv_len);
+		prefilter_conv_len = fftset_recommend_conv_length(SMPL_INVERSE_FILTER_LEN, 4*SMPL_INVERSE_FILTER_LEN) * 2;
+		prefilter_conv     = fftset_create_fft(&fftset, FFTSET_MODULATION_FREQ_OFFSET_REAL, prefilter_conv_len / 2);
 		prefilter_data     = aalloc_align_alloc(&mem, prefilter_conv_len * sizeof(float), 64);
 		aalloc_push(&mem);
 		prefilter_workbuf  = aalloc_align_alloc(&mem, prefilter_conv_len * sizeof(float), 64);

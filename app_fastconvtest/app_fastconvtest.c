@@ -42,7 +42,7 @@ int main(int argc, char *argv[])
 
 	struct aalloc mem;
 
-	fftlen = fftset_recommend_conv_length(KERN_SIZE, TEST_INSIZE);
+	fftlen = fftset_recommend_conv_length(KERN_SIZE, TEST_INSIZE) * 2;
 
 	printf("using fft size of %d\n", fftlen);
 
@@ -50,7 +50,7 @@ int main(int argc, char *argv[])
 
 	fastconv_fftset_init(&convs);
 
-	test = fastconv_get_real_conv(&convs, fftlen);
+	test = fastconv_get_real_conv(&convs, FFTSET_MODULATION_FREQ_OFFSET_REAL, fftlen / 2);
 
 	inbuf   = aalloc_align_alloc(&mem, fftlen * sizeof(float), 64);
 	outbuf  = aalloc_align_alloc(&mem, fftlen * sizeof(float), 64);
