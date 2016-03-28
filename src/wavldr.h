@@ -24,7 +24,7 @@
 #include "decode_types.h"
 #include "reltable.h"
 #include "cop/cop_alloc.h"
-#include "opendiapason/fastconv.h"
+#include "fftset/fftset.h"
 
 struct memory_wave {
 	float         **data;
@@ -52,11 +52,11 @@ load_smpl_f
 	(struct pipe_v1             *pipe
 	,const char                 *filename
 	,struct aalloc              *allocator
-	,struct fastconv_fftset     *fftset
+	,struct fftset              *fftset
 	,const float                *prefilt_kern
 	,unsigned                    prefilt_kern_len
 	,unsigned                    prefilt_real_fft_len
-	,const struct fastconv_pass *prefilt_fft
+	,const struct fftset_fft    *prefilt_fft
 	);
 
 const char *load_smpl_mem(struct memory_wave *smpl, unsigned char *buf, unsigned long fsz);

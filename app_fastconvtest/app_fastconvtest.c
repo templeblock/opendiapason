@@ -42,7 +42,7 @@ int main(int argc, char *argv[])
 
 	struct aalloc mem;
 
-	fftlen = fastconv_recommend_length(KERN_SIZE, TEST_INSIZE);
+	fftlen = fftset_recommend_conv_length(KERN_SIZE, TEST_INSIZE);
 
 	printf("using fft size of %d\n", fftlen);
 

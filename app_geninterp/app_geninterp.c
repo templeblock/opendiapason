@@ -27,7 +27,7 @@
 #include <assert.h>
 #include "cop/cop_vec.h"
 #include "cop/cop_alloc.h"
-#include "opendiapason/fastconv.h"
+#include "fftset/fftset.h"
 #include "svgplot/svgplot.h"
 
 /* This thing is disgusting... it vomits out three things:
@@ -130,12 +130,12 @@ int main(int argc, char *argv[])
 	double restored_y_buf[1024];
 	double tmp_double[2048];
 
-	struct fastconv_fftset convs;
-	const struct fastconv_pass *fft;
+	struct fftset convs;
+	const struct fftset_fft *fft;
 
-	fastconv_fftset_init(&convs);
+	fftset_init(&convs);
 
-	fft     = fastconv_get_real_conv(&convs, fft_size);
+	fft     = fftset_create_fft(&convs, fft_size);
 
 	/* 1) Build the interpolation filter and normalise the DC component to
 	 *    have unity gain. */
@@ -160,7 +160,7 @@ int main(int argc, char *argv[])
 			fft_buf[i] += (float)(filter[i * SMPL_POSITION_SCALE + j] / SMPL_POSITION_SCALE);
 		}
 	}
-	fastconv_execute_fwd_reord(fft, fft_buf, tmp_buf, tmp2_buf);
+	fftset_fft_forward(fft, fft_buf, tmp_buf, tmp2_buf);
 
 	/* 3) Create plot of interpolation filter magnitude response and create a
 	 *    response for the inverse interpolation filter. */
@@ -190,7 +190,7 @@ int main(int argc, char *argv[])
 	/* 4) Convert the inverse filter response back into the time-domain,
 	 *    truncate it to the required length and window it with a Kaiser
 	 *    window (to smooth it out). */
-	fastconv_execute_rev_reord(fft, tmp_buf, fft_buf, tmp2_buf);
+	fftset_fft_inverse(fft, tmp_buf, fft_buf, tmp2_buf);
 	for (i = 0; i < INVERSE_FILTER_LEN-1; i++) {
 		tmp_double[i] = fft_buf[i] / SMPL_POSITION_SCALE;
 	}
@@ -205,7 +205,7 @@ int main(int argc, char *argv[])
 	for (i = 0; i < INVERSE_FILTER_LEN-1; i++) {
 		inv_buf[i+1] = fft_buf[i] * SMPL_POSITION_SCALE;
 	}
-	fastconv_execute_fwd_reord(fft, fft_buf, tmp_buf, tmp2_buf);
+	fftset_fft_forward(fft, fft_buf, tmp_buf, tmp2_buf);
 	for (i = 0; i < fft_size/2; i++) {
 		double re = tmp_buf[2*i] * SMPL_POSITION_SCALE;
 		double im = tmp_buf[2*i+1] * SMPL_POSITION_SCALE;

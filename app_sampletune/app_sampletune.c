@@ -63,10 +63,10 @@ static struct pipe_executor *
 load_executors
 	(const char                 *path
 	,struct aalloc              *mem
-	,struct fastconv_fftset     *fftset
+	,struct fftset              *fftset
 	,const float                *prefilter_data
 	,unsigned                    prefilter_conv_len
-	,const struct fastconv_pass *prefilter_conv
+	,const struct fftset_fft    *prefilter_conv
 	,unsigned                    first_midi
 	,unsigned                    nb_pipes
 	,unsigned                    rank_harmonic64
@@ -596,16 +596,16 @@ int main(int argc, char *argv[])
 	aalloc_init(&mem, 32, 512*1024);
 
 	{
-		struct fastconv_fftset      fftset;
-		const struct fastconv_pass *prefilter_conv;
+		struct fftset               fftset;
+		const struct fftset_fft    *prefilter_conv;
 		unsigned                    prefilter_conv_len;
 		float                      *prefilter_data;
 		float                      *prefilter_workbuf;
 
 		/* Build the interpolation pre-filter */
-		fastconv_fftset_init(&fftset);
+		fftset_init(&fftset);
 		prefilter_conv_len = fastconv_recommend_length(SMPL_INVERSE_FILTER_LEN, 4*SMPL_INVERSE_FILTER_LEN);
-		prefilter_conv     = fastconv_get_real_conv(&fftset, prefilter_conv_len);
+		prefilter_conv     = fftset_create_fft(&fftset, prefilter_conv_len);
 		prefilter_data     = aalloc_align_alloc(&mem, prefilter_conv_len * sizeof(float), 64);
 		aalloc_push(&mem);
 		prefilter_workbuf  = aalloc_align_alloc(&mem, prefilter_conv_len * sizeof(float), 64);
@@ -615,7 +615,7 @@ int main(int argc, char *argv[])
 		for (; i < prefilter_conv_len; i++) {
 			prefilter_workbuf[i] = 0.0f;
 		}
-		fastconv_execute_fwd(prefilter_conv, prefilter_workbuf, prefilter_data);
+		fftset_fft_conv_get_kernel(prefilter_conv, prefilter_workbuf, prefilter_data);
 		aalloc_pop(&mem);
 		at_pipes = load_executors(".", &mem, &fftset, prefilter_data, prefilter_conv_len, prefilter_conv, at_first_midi, 1+at_last_midi-at_first_midi, at_rank_harmonic64);
 		pipe_frequencies = malloc(sizeof(pipe_frequencies[0]) * (1+at_last_midi-at_first_midi));

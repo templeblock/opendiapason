@@ -319,7 +319,7 @@ inplace_convolve
 	,const float                *prefilt_kern
 	,unsigned                    prefilt_kern_len
 	,unsigned                    prefilt_real_fft_len
-	,const struct fastconv_pass *prefilt_fft
+	,const struct fftset_fft    *prefilt_fft
 	)
 {
 	unsigned max_in = prefilt_real_fft_len - prefilt_kern_len + 1;
@@ -379,7 +379,7 @@ inplace_convolve
 		}
 
 		/* Convolve! */
-		fastconv_execute_conv(prefilt_fft, sc1, prefilt_kern, sc2, sc3);
+		fftset_fft_conv(prefilt_fft, sc1, prefilt_kern, sc2, sc3);
 
 		/* Sc2 contains the convolved buffer. */
 		for (j = 0; j < prefilt_real_fft_len; j++) {
@@ -433,7 +433,7 @@ apply_prefilter
 	,const float                *prefilt_kern
 	,unsigned                    prefilt_kern_len
 	,unsigned                    prefilt_real_fft_len
-	,const struct fastconv_pass *prefilt_fft
+	,const struct fftset_fft    *prefilt_fft
 	,const char                 *debug_prefix
 	)
 {
@@ -531,11 +531,11 @@ load_smpl_f
 	(struct pipe_v1             *pipe
 	,const char                 *filename
 	,struct aalloc              *allocator
-	,struct fastconv_fftset     *fftset
+	,struct fftset              *fftset
 	,const float                *prefilt_kern
 	,unsigned                    prefilt_kern_len
 	,unsigned                    prefilt_real_fft_len
-	,const struct fastconv_pass *prefilt_fft
+	,const struct fftset_fft    *prefilt_fft
 	)
 {
 	struct memory_wave mw;
@@ -612,7 +612,7 @@ load_smpl_f
 		float *mse_buf;
 		unsigned env_width;
 		unsigned cor_fft_sz;
-		const struct fastconv_pass *fft;
+		const struct fftset_fft *fft;
 		float *scratch_buf;
 		float *scratch_buf2;
 		float *scratch_buf3;
@@ -623,8 +623,8 @@ load_smpl_f
 		aalloc_push(allocator);
 
 		env_width    = (unsigned)((1.0f / mw.frequency) * mw.rate * 2.0f + 0.5f);
-		cor_fft_sz   = fastconv_recommend_length(env_width, 512);
-		fft          = fastconv_get_real_conv(fftset, cor_fft_sz);
+		cor_fft_sz   = fftset_recommend_conv_length(env_width, 512);
+		fft          = fftset_create_fft(fftset, cor_fft_sz);
 		envelope_buf = aalloc_align_alloc(allocator, sizeof(float) * (as_loop_end+1), 64);
 		mse_buf      = aalloc_align_alloc(allocator, sizeof(float) * (as_loop_end+1), 64);
 		kern_buf     = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
@@ -649,7 +649,7 @@ load_smpl_f
 		/* Build the evelope kernel. */
 		for (i = 0; i < env_width;  i++) scratch_buf[i] = 2.0f / (cor_fft_sz * env_width);
 		for (     ; i < cor_fft_sz; i++) scratch_buf[i] = 0.0f;
-		fastconv_execute_fwd
+		fftset_fft_conv_get_kernel
 			(fft
 			,scratch_buf
 			,kern_buf
@@ -684,7 +684,7 @@ load_smpl_f
 			for (; i < cor_fft_sz; i++)
 				scratch_buf[i] = 0.0f;
 			rel_power += ch_power;
-			fastconv_execute_fwd(fft, scratch_buf, kern_buf);
+			fftset_fft_conv_get_kernel(fft, scratch_buf, kern_buf);
 			inplace_convolve
 				(mw.data[ch]
 				,mse_buf
