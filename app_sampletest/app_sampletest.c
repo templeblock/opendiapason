@@ -74,23 +74,33 @@ struct test_load_entry {
 	unsigned        harmonic16;
 };
 
-#define GT  (1)
-#define SW  (2)
-#define PED (4)
+#define GT_MIDICH  (0)
+#define SW_MIDICH  (1)
+#define PED_MIDICH (2)
 
+#define GT  (1 << GT_MIDICH)
+#define SW  (1 << SW_MIDICH)
+#define PED (1 << PED_MIDICH)
+
+/* This defines the playback rate of the whole organ. It is the pitch of
+ * bottom C of a 16-foot rank. Everything will be tuned to this. */
 #define ORGAN_PITCH16 (32.5)
 
+/* I have been using samples from Pribac for testing. Each name corresponds to
+ * a sub-directory of where the build is made containing samples named in the
+ * usual way. The first number is the first MIDI note, the second is the
+ * number of pipe samples, the third is a mask of which MIDI channels activate
+ * samples, the final is the harmonic base pitch relative to 16. */
 static const struct test_load_entry TEST_ENTRY_LIST[] =
-{	{"Bourdon8",   36, 53, GT | PED, 2}
-,	{"Montre8",    36, 53, GT | PED, 2}
-,	{"Salicional8_go",   36, 53, GT | PED, 2}
-,	{"Prestant4",  36, 53, GT | PED, 4}
-//,	{"Doublette2", 36, 53, GT | PED, 6}
-,	{"Pleinjeu3",  36, 53, GT | PED, 2}
-,	{"Trompette8", 36, 53, PED,      2}
-,	{"Soubasse16", 36, 25, PED,      1}
-,	{"Hautbois8",  53, 37, SW,       2}
-//,   {"/Users/nappleton/Documents/Organs/Veendam_K_en_T_HW1/PED/Bombarde16", 36, 25, PED, 1}
+{	{"Bourdon8",       36, 53, GT | PED, 2}
+//,	{"Montre8",        36, 53, GT | PED, 2}
+,	{"Salicional8_go", 36, 53, GT | PED, 2}
+,	{"Prestant4",      36, 53, GT | PED, 4}
+//,	{"Doublette2",     36, 53, GT | PED, 8}
+//,	{"Pleinjeu3",      36, 53, GT | PED, 2}
+//,	{"Trompette8",     36, 53, PED,      2}
+,	{"Soubasse16",     36, 25, PED,      1}
+,	{"Hautbois8",      53, 37, SW,       2}
 };
 
 #define NUM_TEST_ENTRY_LIST (sizeof(TEST_ENTRY_LIST) / sizeof(TEST_ENTRY_LIST[0]))
