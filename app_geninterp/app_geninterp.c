@@ -160,7 +160,7 @@ int main(int argc, char *argv[])
 			fft_buf[i] += (float)(filter[i * SMPL_POSITION_SCALE + j] / SMPL_POSITION_SCALE);
 		}
 	}
-	fftset_fft_forward(fft, fft_buf, tmp_buf, tmp2_buf);
+	fftset_fft_forward(fft, tmp_buf, fft_buf, tmp2_buf);
 
 	/* 3) Create plot of interpolation filter magnitude response and create a
 	 *    response for the inverse interpolation filter. */
@@ -190,7 +190,7 @@ int main(int argc, char *argv[])
 	/* 4) Convert the inverse filter response back into the time-domain,
 	 *    truncate it to the required length and window it with a Kaiser
 	 *    window (to smooth it out). */
-	fftset_fft_inverse(fft, tmp_buf, fft_buf, tmp2_buf);
+	fftset_fft_inverse(fft, fft_buf, tmp_buf, tmp2_buf);
 	for (i = 0; i < INVERSE_FILTER_LEN-1; i++) {
 		tmp_double[i] = fft_buf[i] / SMPL_POSITION_SCALE;
 	}
@@ -205,7 +205,7 @@ int main(int argc, char *argv[])
 	for (i = 0; i < INVERSE_FILTER_LEN-1; i++) {
 		inv_buf[i+1] = fft_buf[i] * SMPL_POSITION_SCALE;
 	}
-	fftset_fft_forward(fft, fft_buf, tmp_buf, tmp2_buf);
+	fftset_fft_forward(fft, tmp_buf, fft_buf, tmp2_buf);
 	for (i = 0; i < fft_size/2; i++) {
 		double re = tmp_buf[2*i] * SMPL_POSITION_SCALE;
 		double im = tmp_buf[2*i+1] * SMPL_POSITION_SCALE;

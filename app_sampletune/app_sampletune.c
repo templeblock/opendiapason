@@ -615,7 +615,7 @@ int main(int argc, char *argv[])
 		for (; i < prefilter_conv_len; i++) {
 			prefilter_workbuf[i] = 0.0f;
 		}
-		fftset_fft_conv_get_kernel(prefilter_conv, prefilter_workbuf, prefilter_data);
+		fftset_fft_conv_get_kernel(prefilter_conv, prefilter_data, prefilter_workbuf);
 		aalloc_pop(&mem);
 		at_pipes = load_executors(".", &mem, &fftset, prefilter_data, prefilter_conv_len, prefilter_conv, at_first_midi, 1+at_last_midi-at_first_midi, at_rank_harmonic64);
 		pipe_frequencies = malloc(sizeof(pipe_frequencies[0]) * (1+at_last_midi-at_first_midi));

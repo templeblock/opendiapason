@@ -379,7 +379,7 @@ inplace_convolve
 		}
 
 		/* Convolve! */
-		fftset_fft_conv(prefilt_fft, sc1, prefilt_kern, sc2, sc3);
+		fftset_fft_conv(prefilt_fft, sc2, sc1, prefilt_kern, sc3);
 
 		/* Sc2 contains the convolved buffer. */
 		for (j = 0; j < prefilt_real_fft_len; j++) {
@@ -651,8 +651,8 @@ load_smpl_f
 		for (     ; i < cor_fft_sz; i++) scratch_buf[i] = 0.0f;
 		fftset_fft_conv_get_kernel
 			(fft
-			,scratch_buf
 			,kern_buf
+			,scratch_buf
 			);
 		/* Get the envelope */
 		inplace_convolve
@@ -684,7 +684,7 @@ load_smpl_f
 			for (; i < cor_fft_sz; i++)
 				scratch_buf[i] = 0.0f;
 			rel_power += ch_power;
-			fftset_fft_conv_get_kernel(fft, scratch_buf, kern_buf);
+			fftset_fft_conv_get_kernel(fft, kern_buf, scratch_buf);
 			inplace_convolve
 				(mw.data[ch]
 				,mse_buf
