@@ -27,31 +27,16 @@
 
 #include "fftset/fftset.h"
 #include "opendiapason/src/wavldr.h"
-
 #include "cop/cop_alloc.h"
 #include "portaudio.h"
 #include "portmidi.h"
 #include "opendiapason/src/playeng.h"
-
-#include <libkern/OSAtomic.h>
 
 /* This is high not because I am a deluded "audiophile". It is high, because
  * it gives the playback system heaps of frequency headroom before aliasing
  * occurse. The playback rate of a sample can be doubled before aliasing
  * starts getting folded back down the spectrum. */
 #define PLAYBACK_SAMPLE_RATE (96000)
-
-typedef int32_t acs;
-
-static inline void acs_signal(volatile acs *lock)
-{
-	(void)OSAtomicCompareAndSwap32Barrier(0, 1, lock);
-}
-
-static inline int acs_signalled(volatile acs *lock)
-{
-	return OSAtomicCompareAndSwap32Barrier(1, 0, lock);
-}
 
 cop_mutex         thing_lock;
 
@@ -267,7 +252,7 @@ struct midi_stream_data {
 	PortMidiStream *pms;
 	cop_thread      th;
 	void           *ud;
-	acs             abort_signal;
+	cop_mutex       abort_signal;
 };
 
 #define NEVENTREAD (64)
@@ -276,16 +261,19 @@ static void *midi_thread_proc(void *argument)
 {
 	struct midi_event me;
 	struct midi_stream_data *msd;
-	acs *asig;
 	PortMidiStream *pms;
 	PmEvent events[NEVENTREAD];
 	int nread = 0;
 	int note_locked = 0;
+	int terminated = 0;
 
 	msd = argument;
 	pms = msd->pms;
-	asig = &msd->abort_signal;
-	while (!acs_signalled(asig) || nread != 0) {
+	do {
+		terminated = cop_mutex_trylock(&msd->abort_signal);
+		if (terminated)
+			cop_mutex_unlock(&msd->abort_signal);
+
 		while ((nread = Pm_Read(pms, events, NEVENTREAD)) > 0) {
 			int i;
 			for (i = 0; i < nread; i++) {
@@ -364,7 +352,7 @@ static void *midi_thread_proc(void *argument)
 		}
 
 		Pa_Sleep(10);
-	}
+	} while (nread != 0 || !terminated);
 
 	{
 		/* MIDI THREAD TERMINATED */
@@ -388,16 +376,25 @@ static struct midi_stream_data *start_midi(PmDeviceID midi_in_id, void *ud)
 	if ((msd = malloc(sizeof(*msd))) == NULL)
 		return NULL;
 
-	msd->ud  = ud;
-	msd->abort_signal = 0;
+	msd->ud = ud;
 
-	if ((merr = Pm_OpenInput(&msd->pms, midi_in_id, NULL, 128, NULL, NULL)) != pmNoError) {
+	if (cop_mutex_create(&msd->abort_signal)) {
 		free(msd);
 		return NULL;
 	}
 
+	if ((merr = Pm_OpenInput(&msd->pms, midi_in_id, NULL, 128, NULL, NULL)) != pmNoError) {
+		cop_mutex_destroy(&msd->abort_signal);
+		free(msd);
+		return NULL;
+	}
+
+	cop_mutex_lock(&msd->abort_signal);
+
 	if ((threrr = cop_thread_create(&msd->th, midi_thread_proc, msd, 0, 0)) != 0) {
 		(void)Pm_Close(msd->pms);
+		cop_mutex_unlock(&msd->abort_signal);
+		cop_mutex_destroy(&msd->abort_signal);
 		free(msd);
 		return NULL;
 	}
@@ -477,8 +474,9 @@ static int setup_sound(void)
 
 	Pa_StopStream(stream);
 
-	acs_signal(&midi_acs->abort_signal);
+	cop_mutex_unlock(&midi_acs->abort_signal);
 	cop_thread_join(midi_acs->th, NULL);
+	cop_mutex_destroy(&midi_acs->abort_signal);
 
 	Pa_CloseStream(stream);
 
