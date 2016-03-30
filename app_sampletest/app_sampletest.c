@@ -547,9 +547,10 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
+#if 0
 	const PaVersionInfo *pav = Pa_GetVersionInfo();
 	printf("v%d.%d.%d ok\n", pav->versionMajor, pav->versionMinor, pav->versionSubMinor);
-
+#endif
 	merr = Pm_Initialize();
 	if (merr != pmNoError) {
 		fprintf(stderr, "Pm_Initialize() failed: '%s'\n", Pm_GetErrorText(merr));
