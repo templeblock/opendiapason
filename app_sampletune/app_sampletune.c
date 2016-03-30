@@ -73,19 +73,21 @@ load_executors
 	)
 {
 	struct pipe_executor *pipes = malloc(sizeof(*pipes) * nb_pipes);
-	unsigned i;
-	for (i = 0; i < nb_pipes; i++) {
-		const char * err;
-		char namebuf[128];
-		sprintf(namebuf, "%s/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
-		err = load_smpl_f(&(pipes[i].pd.data), namebuf, mem, fftset, prefilter_data, SMPL_INVERSE_FILTER_LEN, prefilter_conv_len, prefilter_conv);
-		if (err != NULL) {
-			printf("WAVE ERR: %s-%s\n", namebuf, err);
-			abort();
+	if (pipes != NULL) {
+		unsigned i;
+		for (i = 0; i < nb_pipes; i++) {
+			const char * err;
+			char namebuf[128];
+			sprintf(namebuf, "%s/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
+			err = load_smpl_f(&(pipes[i].pd.data), namebuf, mem, fftset, prefilter_data, SMPL_INVERSE_FILTER_LEN, prefilter_conv_len, prefilter_conv);
+			if (err != NULL) {
+				printf("WAVE ERR: %s-%s\n", namebuf, err);
+				abort();
+			}
+			pipes[i].pd.target_freq = get_target_frequency(i + first_midi, rank_harmonic64);
+			pipes[i].instance = NULL;
+			pipes[i].nb_insts = 0;
 		}
-		pipes[i].pd.target_freq = get_target_frequency(i + first_midi, rank_harmonic64);
-		pipes[i].instance = NULL;
-		pipes[i].nb_insts = 0;
 	}
 	return pipes;
 }
@@ -586,6 +588,12 @@ int main(int argc, char *argv[])
 	at_last_midi               = atoi(argv[2]);
 	at_rank_harmonic64         = atoi(argv[3]);
 	at_tuning_signal_enabled   = 1;
+
+	if (at_first_midi > at_last_midi) {
+		cop_mutex_destroy(&at_param_lock);
+		fprintf(stderr, "last midi index must be greater than or equal to the first midi index.\n");
+		return -1;
+	}
 
 	current_midi               = at_first_midi;
 	at_current_midi            = at_last_midi;
