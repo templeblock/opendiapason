@@ -18,6 +18,10 @@ endif()
 add_executable(geninterp app_geninterp.c)
 target_link_libraries(geninterp svgplot fftset)
 
+if (UNIX)
+  target_link_libraries(geninterp m)
+endif()
+
 add_subdirectory("../../cop" "${CMAKE_CURRENT_BINARY_DIR}/cop_dep")
 add_subdirectory("../../fftset" "${CMAKE_CURRENT_BINARY_DIR}/fftset_dep")
 add_subdirectory("../../svgplot" "${CMAKE_CURRENT_BINARY_DIR}/svgplot_dep")
