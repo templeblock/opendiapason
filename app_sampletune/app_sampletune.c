@@ -175,6 +175,7 @@ pa_callback
 {
 	unsigned long samp;
 	float *ob = output;
+	const float rate = 2.0f * ((float)M_PI) / at_tuning_period;
 
 	if (cop_mutex_trylock(&at_param_lock)) {
 		/* Copy parameters from control thread. */
@@ -206,56 +207,29 @@ pa_callback
 		cop_mutex_unlock(&at_param_lock);
 	}
 
-	if (frameCount % OUTPUT_SAMPLES == 0) {
-		float VEC_ALIGN_BEST ipbuf[128];
-		float *buffers[2];
-		unsigned subframe = frameCount / OUTPUT_SAMPLES;
+	/* Run audio engine. */
+	playeng_process(engine, ob, 2, frameCount);
 
-		buffers[0] = ipbuf + 0;
-		buffers[1] = ipbuf + OUTPUT_SAMPLES;
-
-		while (subframe--) {
-
-			float rate = 2.0f * ((float)M_PI) / at_tuning_period;
-
-			/* Synthesis the tuning signal */
-			if (at_tuning_signal_enabled) {
-				for (samp = 0; samp < frameCount; samp++) {
-					float tunesig = 0.0f;
-					tunesig += (at_tuning_signal_components > 0) ? sinf(at_time * 1 * rate) : 0.0f;
-					tunesig += (at_tuning_signal_components > 1) ? (cosf(at_time * 2 * rate) * 0.5f) : 0.0f;
-					tunesig += (at_tuning_signal_components > 2) ? (sinf(at_time * 3 * rate) * 0.25f) : 0.0f;
-					tunesig += (at_tuning_signal_components > 3) ? (cosf(at_time * 4 * rate) * 0.125f) : 0.0f;
-					tunesig += (at_tuning_signal_components > 4) ? (sinf(at_time * 5 * rate) * 0.0625f) : 0.0f;
-					at_time += SMPL_POSITION_SCALE;
-					while (at_time >= at_tuning_period) {
-						at_time -= at_tuning_period;
-					}
-					buffers[0][samp] = tunesig * 0.125f;
-					buffers[1][samp] = tunesig * 0.125f;
-				}
-			} else {
-				for (samp = 0; samp < frameCount; samp++) {
-					buffers[0][samp] = 0.0f;
-					buffers[1][samp] = 0.0f;
-				}
-			}
-
-			/* Run audio engine. */
-			playeng_process(engine, buffers, 2, OUTPUT_SAMPLES);
-
-			/* Copy to audio buffers. */
-			for (samp = 0; samp < frameCount; samp++) {
-				*ob++ = buffers[0][samp] * 0.5;
-				*ob++ = buffers[1][samp] * 0.5;
-			}
-		}
+	for (samp = 0; samp < frameCount; samp++) {
+		ob[2*samp+0] *= 0.5f;
+		ob[2*samp+1] *= 0.5f;
 	}
-	else
-	{
+
+	/* Synthesis the tuning signal */
+	if (at_tuning_signal_enabled) {
 		for (samp = 0; samp < frameCount; samp++) {
-			*ob++ = ((rand() / (double)RAND_MAX) - 0.5) * 0.125;
-			*ob++ = ((rand() / (double)RAND_MAX) - 0.5) * 0.125;
+			float tunesig = 0.0f;
+			tunesig += (at_tuning_signal_components > 0) ? sinf(at_time * 1 * rate) : 0.0f;
+			tunesig += (at_tuning_signal_components > 1) ? (cosf(at_time * 2 * rate) * 0.5f) : 0.0f;
+			tunesig += (at_tuning_signal_components > 2) ? (sinf(at_time * 3 * rate) * 0.25f) : 0.0f;
+			tunesig += (at_tuning_signal_components > 3) ? (cosf(at_time * 4 * rate) * 0.125f) : 0.0f;
+			tunesig += (at_tuning_signal_components > 4) ? (sinf(at_time * 5 * rate) * 0.0625f) : 0.0f;
+			at_time += SMPL_POSITION_SCALE;
+			while (at_time >= at_tuning_period) {
+				at_time -= at_tuning_period;
+			}
+			*ob++ += tunesig * 0.125f;
+			*ob++ += tunesig * 0.125f;
 		}
 	}
 
@@ -309,7 +283,7 @@ static PaStream *setup_sound(void)
 			,NULL
 			,&stream_params
 			,PLAYBACK_SAMPLE_RATE
-			,64
+			,paFramesPerBufferUnspecified
 			,0
 			,&pa_callback
 			,NULL /* user data */

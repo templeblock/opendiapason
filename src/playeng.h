@@ -80,7 +80,7 @@ void playeng_destroy(struct playeng *eng);
 struct playeng_instance *playeng_insert(struct playeng *eng, unsigned ndec, unsigned sigmask, playeng_callback callback, void *userdata);
 
 /* Create a single output block of audio. */
-void playeng_process(struct playeng *eng, float **buffers, unsigned nb_channels, unsigned nb_samples);
+void playeng_process(struct playeng *eng, float *buffers, unsigned nb_channels, unsigned nb_samples);
 
 /* Set the given signal mask bits. If the bits are set and are not blocked (
  * using playeng_signal_block), a callback will be triggered from the audio

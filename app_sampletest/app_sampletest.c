@@ -78,11 +78,11 @@ struct test_load_entry {
  * samples, the final is the harmonic base pitch relative to 16. */
 static const struct test_load_entry TEST_ENTRY_LIST[] =
 {	{"Bourdon8",       36, 53, GT | PED, 2}
-//,	{"Montre8",        36, 53, GT | PED, 2}
+,	{"Montre8",        36, 53, GT | PED, 2}
 ,	{"Salicional8_go", 36, 53, GT | PED, 2}
 ,	{"Prestant4",      36, 53, GT | PED, 4}
 //,	{"Doublette2",     36, 53, GT | PED, 8}
-//,	{"Pleinjeu3",      36, 53, GT | PED, 2}
+,	{"Pleinjeu3",      36, 53, GT | PED, 2}
 //,	{"Trompette8",     36, 53, PED,      2}
 ,	{"Soubasse16",     36, 25, PED,      1}
 ,	{"Hautbois8",      53, 37, SW,       2}
@@ -207,26 +207,11 @@ pa_callback
 	unsigned long samp;
 	float *ob = output;
 
-	if (frameCount % OUTPUT_SAMPLES == 0) {
-		float VEC_ALIGN_BEST ipbuf[128];
-		float *buffers[2];
+	playeng_process(engine, ob, 2, frameCount);
 
-		buffers[0] = ipbuf + 0;
-		buffers[1] = ipbuf + OUTPUT_SAMPLES;
-
-		memset(ipbuf, 0, sizeof(ipbuf));
-
-		playeng_process(engine, buffers, 2, 64);
-
-		for (samp = 0; samp < frameCount; samp++) {
-			ob[2*samp+0] = ipbuf[samp] * 0.5;
-			ob[2*samp+1] = ipbuf[OUTPUT_SAMPLES+samp] * 0.5;
-		}
-	} else {
-		for (samp = 0; samp < frameCount; samp++) {
-			*ob++ = ((rand() / (double)RAND_MAX) - 0.5) * 0.125;
-			*ob++ = ((rand() / (double)RAND_MAX) - 0.5) * 0.125;
-		}
+	for (samp = 0; samp < frameCount; samp++) {
+		ob[2*samp+0] *= 0.5;
+		ob[2*samp+1] *= 0.5;
 	}
 
 	return paContinue;
@@ -449,7 +434,7 @@ static int setup_sound(void)
 			,NULL
 			,&stream_params
 			,PLAYBACK_SAMPLE_RATE
-			,64
+			,paFramesPerBufferUnspecified
 			,0
 			,&pa_callback
 			,NULL /* user data */

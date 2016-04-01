@@ -40,7 +40,7 @@ struct playeng_instance {
 struct playeng_thread_data {
 	struct playeng_instance    *active;
 	struct playeng_instance    *zombie;
-	float            *COP_ATTR_RESTRICT *buffers;
+	float   *COP_ATTR_RESTRICT *buffers;
 	unsigned                    current_time;
 	unsigned                    permitted_signal_mask;
 
@@ -70,7 +70,10 @@ struct playeng {
 	unsigned                      nb_threads;
 	unsigned                      next_thread_idx;
 	struct playeng_thread_data   *threads;
-	float                      ***buffers;
+
+	unsigned                      reblock_length;
+	unsigned                      reblock_start;
+	float     *COP_ATTR_RESTRICT *reblock_buffers;
 
 	/* Memory allocator for everything in engine. */
 	struct aalloc                 allocator;
@@ -103,25 +106,33 @@ struct playeng *playeng_init(unsigned max_poly, unsigned nb_channels, unsigned n
 		aalloc_free(&a);
 		return NULL;
 	}
-	if (nb_threads > 1) {
-		if ((pe->buffers = aalloc_alloc(&a, sizeof(pe->buffers[0]) * (nb_threads-1))) == NULL) {
+
+	for (i = 0; i < nb_threads; i++) {
+		if ((pe->threads[i].buffers = aalloc_alloc(&a, sizeof(pe->threads[i].buffers[0]) * nb_channels)) == NULL) {
 			aalloc_free(&a);
 			return NULL;
-		}
-		for (i = 0; i < nb_threads-1; i++) {
-			if ((pe->buffers[i] = aalloc_alloc(&a, sizeof(pe->buffers[0][0]) * nb_channels)) == NULL) {
+		};
+	}
+
+	for (i = 0; i < nb_threads; i++) {
+		unsigned j;
+		for (j = 0; j < nb_channels; j++) {
+			if ((pe->threads[i].buffers[j] = aalloc_align_alloc(&a, sizeof(pe->threads[i].buffers[0][0]) * OUTPUT_SAMPLES, 64)) == NULL) {
 				aalloc_free(&a);
 				return NULL;
-			};
-		}
-		for (i = 0; i < nb_threads-1; i++) {
-			unsigned j;
-			for (j = 0; j < nb_channels; j++) {
-				if ((pe->buffers[i][j] = aalloc_align_alloc(&a, sizeof(pe->buffers[0][0][0]) * OUTPUT_SAMPLES, 64)) == NULL) {
-					aalloc_free(&a);
-					return NULL;
-				}
 			}
+		}
+	}
+
+	/* Create buffers for reblocking (nb_channels * OUTPUT_SAMPLES) */
+	if ((pe->reblock_buffers = aalloc_alloc(&a, sizeof(pe->reblock_buffers[0]) * nb_channels)) == NULL) {
+		aalloc_free(&a);
+		return NULL;
+	}
+	for (i = 0; i < nb_channels; i++) {
+		if ((pe->reblock_buffers[i] = aalloc_align_alloc(&a, sizeof(pe->reblock_buffers[0][0]) * OUTPUT_SAMPLES, 64)) == NULL) {
+			aalloc_free(&a);
+			return NULL;
 		}
 	}
 
@@ -135,6 +146,8 @@ struct playeng *playeng_init(unsigned max_poly, unsigned nb_channels, unsigned n
 		return NULL;
 	}
 
+	pe->reblock_length               = 0;
+	pe->reblock_start                = 0;
 	pe->ready_list                   = NULL;
 	pe->nb_inactive_decodes          = max_poly;
 	pe->inactive_insts               = NULL;
@@ -150,7 +163,6 @@ struct playeng *playeng_init(unsigned max_poly, unsigned nb_channels, unsigned n
 		pe->threads[i].active                = NULL;
 		pe->threads[i].zombie                = NULL;
 		pe->threads[i].permitted_signal_mask = pe->locked_permitted_signal_mask;
-		pe->threads[i].buffers               = NULL;
 		pe->threads[i].current_time          = 0;
 	}
 
@@ -322,11 +334,10 @@ static void* playeng_thread_proc(void *context)
 
 
 /* Create a single output block of audio. */
-void playeng_process(struct playeng *eng, float **buffers, unsigned nb_channels, unsigned nb_samples)
+void playeng_process(struct playeng *eng, float *buffers, unsigned nb_channels, unsigned nb_samples)
 {
-	struct playeng_thread_data *otherthreads = NULL;
-	struct playeng_thread_data *thisthread = NULL;
 	unsigned i;
+	unsigned out_offset = 0;
 
 	/* Insert new instances in the playback list. */
 	if (cop_mutex_trylock(&eng->list_lock)) {
@@ -358,87 +369,196 @@ void playeng_process(struct playeng *eng, float **buffers, unsigned nb_channels,
 		cop_mutex_unlock(&eng->signal_lock);
 	}
 
-	/* TEMP HACK - RUN THREAD PROCS IN AUDIO THREAD. */
-	for (i = 0; i < eng->nb_threads; i++) {
-		if (eng->threads[i].active != NULL) {
-			if (thisthread == NULL) {
-				thisthread = &(eng->threads[i]);
-			} else {
-				eng->threads[i].next = otherthreads;
-				otherthreads = &(eng->threads[i]);
+	/* First, if there is anything sitting in the reblocking buffer, use as
+	 * much of that as we can. */
+	if (eng->reblock_length && nb_samples) {
+		/* We will read the minimum of the number of samples requested and the
+		 * total number of samples in the reblocking buffer. i.e. we are
+		 * either going to completely empty the reblocking buffer, or we are
+		 * going to take some samples from it and not run any samplers. */
+		unsigned reblock_read = (eng->reblock_length > nb_samples) ? nb_samples : eng->reblock_length;
+		nb_samples -= reblock_read;
+
+		/* Will the read wrap past the end of the buffer? The reblock_buffers
+		 * are ring buffers so the data may start somewhere in the middle and
+		 * wrap around to the start again. If this is going to happen we will
+		 * perform the read in two components. This could be done with a
+		 * single loop using modulo arithmetic - but lets not do that because
+		 * we like doing premature optimization. */
+		if (eng->reblock_start + reblock_read >= OUTPUT_SAMPLES) {
+			unsigned end_read = OUTPUT_SAMPLES - eng->reblock_start;
+			for (i = 0; i < nb_channels; i++) {
+				unsigned j;
+				for (j = 0; j < end_read; j++) {
+					buffers[nb_channels*(out_offset+j)+i] = eng->reblock_buffers[i][eng->reblock_start + j];
+				}
 			}
-			eng->threads[i].current_time = eng->current_time;
+			out_offset            += end_read;
+			reblock_read          -= end_read;
+			eng->reblock_length   -= end_read;
+			eng->reblock_start     = 0;
 		}
+
+		/* Read the rest... */
+		for (i = 0; i < nb_channels; i++) {
+			unsigned j;
+			for (j = 0; j < reblock_read; j++) {
+				buffers[nb_channels*(out_offset+j)+i] = eng->reblock_buffers[i][eng->reblock_start + j];
+			}
+		}
+
+		out_offset          += reblock_read;
+		eng->reblock_length -= reblock_read;
+		eng->reblock_start  += reblock_read;
 	}
 
-	/* Spawn all other processing threads (if there are any). If a thread
-	 * fails to build (for whatever reason), the calling thread will process
-	 * the samples that were supposed to be processed by the thread directly
-	 * into the output buffer. The otherthreads list will be rebuilt and will
-	 * only contain threads that actually ran in another thread. This is done
-	 * so that when otherthreads is parsed later, we can actually call join()
-	 * on threads that were active and sum output buffers which contain non-
-	 * zero data into the output. */
-	if (otherthreads != NULL) {
-		struct playeng_thread_data   *td = otherthreads;
-		float                      ***tbs = eng->buffers;
-		otherthreads = NULL;
-		while (td != NULL) {
-			int err;
-			unsigned j;
+	while (nb_samples) {
+		struct playeng_thread_data *otherthreads = NULL;
+		struct playeng_thread_data *thisthread = NULL;
 
-			/* Zero the thread's data buffer. */
-			td->buffers = *tbs++;
+		/* The first thread we find that has entries in the active list will
+		 * be actually be processed by the calling thread. All other threads
+		 * with entries in the active list will be spawned in other
+		 * threads. */
+		for (i = 0; i < eng->nb_threads; i++) {
+			if (eng->threads[i].active != NULL) {
+				if (thisthread == NULL) {
+					thisthread = &(eng->threads[i]);
+				} else {
+					eng->threads[i].next = otherthreads;
+					otherthreads = &(eng->threads[i]);
+				}
+				eng->threads[i].current_time = eng->current_time;
+			}
+		}
+
+		/* Zero the buffer that will be written to by the calling thread. We
+		 * do this here because when threads fail to spawn, we execute them
+		 * in this thread (we don't want audio to ever fail to be written). */
+		if (thisthread != NULL) {
+			unsigned j;
 			for (j = 0; j < nb_channels; j++) {
 				unsigned k;
 				for (k = 0; k < OUTPUT_SAMPLES; k++) {
-					td->buffers[j][k] = 0.0f;
+					thisthread->buffers[j][k] = 0.0f;
 				}
 			}
+		}
 
-			/* If the thread failed to be created, run this thread locally
-			 * into the main output buffer. */
-			err = cop_thread_create(&td->thread, playeng_thread_proc, td, 0, 0);
-			if (err) {
-				td->buffers = buffers;
-				playeng_thread_data_execute(td);
-				td = td->next;
+		/* Spawn all other processing threads (if there are any). If a thread
+		 * fails to build (for whatever reason), the calling thread will
+		 * process the samples that were supposed to be processed by the
+		 * thread directly into the output buffer. The otherthreads list will
+		 * be rebuilt and will only contain threads that actually ran in
+		 * another thread. This is done so that when otherthreads is parsed
+		 * later, we can actually call join() on threads that were active and
+		 * sum output buffers which contain non-zero data into the output. */
+		if (otherthreads != NULL) {
+			struct playeng_thread_data *td = otherthreads;
+			otherthreads = NULL;
+			assert(thisthread != NULL);
+			while (td != NULL) {
+				int err;
+				unsigned j;
+
+				/* Zero the thread's data buffer. TODO: Move this into the
+				 * thread proc (NOT playeng_thread_data_execute!!!!!! AS WE
+				 * MAY WRITE INTO ITS BUFFERS MULTIPLE TIMES). */
+				for (j = 0; j < nb_channels; j++) {
+					unsigned k;
+					for (k = 0; k < OUTPUT_SAMPLES; k++) {
+						td->buffers[j][k] = 0.0f;
+					}
+				}
+
+				/* If the thread failed to be created, run this thread locally
+				 * into the main output buffer. */
+				err = cop_thread_create(&td->thread, playeng_thread_proc, td, 0, 0);
+				if (err) {
+					float *COP_ATTR_RESTRICT *buftmp = td->buffers;
+					td->buffers = thisthread->buffers;
+					playeng_thread_data_execute(td);
+					td->buffers = buftmp;
+					td = td->next;
+				} else {
+					/* Thread executed successfully, put the thread item back
+					 * into the otherthreads list. */
+					struct playeng_thread_data *tmp = td->next;
+					td->next = otherthreads;
+					otherthreads = td;
+					td = tmp;
+				}
+			}
+		}
+
+		if (thisthread != NULL) {
+			/* Run this thread into the user supplied output buffer. */
+			playeng_thread_data_execute(thisthread);
+
+			/* Run all other threads and sum the output into the buffer
+			 * produced by the calling thread. */
+			while (otherthreads != NULL) {
+				unsigned j;
+				cop_thread_join(otherthreads->thread, NULL);
+				for (j = 0; j < nb_channels; j++) {
+					unsigned k;
+					for (k = 0; k < OUTPUT_SAMPLES; k++) {
+						thisthread->buffers[j][k] += otherthreads->buffers[j][k];
+					}
+				}
+				otherthreads = otherthreads->next;
+			}
+
+			/* At this point, thisthread's buffer contains all of the output
+			 * samples produced by all of the playback instances. Some of
+			 * those samples need to be written into the output buffer, and
+			 * some may need to be shoved into the reblocking buffer. We do
+			 * this here. */
+			if (nb_samples >= OUTPUT_SAMPLES) {
+				unsigned j;
+				for (j = 0; j < nb_channels; j++) {
+					unsigned k;
+					for (k = 0; k < OUTPUT_SAMPLES; k++) {
+						buffers[nb_channels*(out_offset+k)+j] = thisthread->buffers[j][k];
+					}
+				}
 			} else {
-				/* Thread executed successfully, put the thread item back
-				 * into the otherthreads list. */
-				struct playeng_thread_data *tmp = td->next;
-				td->next = otherthreads;
-				otherthreads = td;
-				td = tmp;
-			}
-		}
-	}
-
-	if (thisthread != NULL) {
-		/* Run this thread into the user supplied output buffer. */
-		thisthread->buffers = buffers;
-		playeng_thread_data_execute(thisthread);
-
-		/* Wait for all other threads to finish and sum their output. */
-		while (otherthreads != NULL) {
-			unsigned j;
-
-			cop_thread_join(otherthreads->thread, NULL);
-
-			for (j = 0; j < nb_channels; j++) {
-				unsigned k;
-				for (k = 0; k < OUTPUT_SAMPLES; k++) {
-					buffers[j][k] += otherthreads->buffers[j][k];
+				unsigned j;
+				/* nb_samples remaining is less than the number of samples
+				 * produced by the threads. Copy the required samples to the
+				 * output buffer and then insert the rest into the re-blocking
+				 * ring buffer. */
+				for (j = 0; j < nb_channels; j++) {
+					unsigned k;
+					for (k = 0; k < nb_samples; k++) {
+						buffers[nb_channels*(out_offset+k)+j] = thisthread->buffers[j][k];
+					}
+					for (; k < OUTPUT_SAMPLES; k++) {
+						eng->reblock_buffers[j][(eng->reblock_start + (k - nb_samples)) % OUTPUT_SAMPLES] = thisthread->buffers[j][k];
+					}
 				}
+				assert(eng->reblock_length == 0);
+				eng->reblock_length = OUTPUT_SAMPLES - nb_samples;
 			}
 
-			otherthreads = otherthreads->next;
+		} else {
+			/* If there were no threads in the primary list, there had better
+			 * not be any sitting in threads - otherwise we will not have
+			 * waited for them to finish. */
+			assert(otherthreads == NULL);
 		}
-	} else {
-		/* If there were no threads in the primary list, there had better not
-		 * be any sitting in threads - otherwise we will not have waited for
-		 * them to finish. */
-		assert(otherthreads == NULL);
+
+		eng->current_time = (eng->current_time + 1) & 0x7FFFFFFFu;
+
+		if (nb_samples > OUTPUT_SAMPLES) {
+			nb_samples -= OUTPUT_SAMPLES;
+			out_offset += OUTPUT_SAMPLES;
+		} else {
+			/* We don't need to modifiy out_offset as we have finished
+			 * writing to the output buffer. This assignment of nb_samples
+			 * could be replaced by a break. */
+			nb_samples = 0;
+		}
 	}
 
 	/* Try to get instance lock to return free instances. */
@@ -454,8 +574,6 @@ void playeng_process(struct playeng *eng, float **buffers, unsigned nb_channels,
 		}
 		cop_mutex_unlock(&eng->list_lock);
 	}
-
-	eng->current_time = (eng->current_time + 1) & 0x7FFFFFFFu;
 }
 
 void playeng_signal_block(struct playeng *eng, unsigned sigmask)
