@@ -542,10 +542,35 @@ void playeng_process(struct playeng *eng, float *buffers, unsigned nb_channels, 
 			}
 
 		} else {
-			/* If there were no threads in the primary list, there had better
-			 * not be any sitting in threads - otherwise we will not have
-			 * waited for them to finish. */
+			/* There were no threads in the primary list (i.e. there were not
+			 * samples scheduled for playback), so there had better not be any
+			 * threads which were scheduled to run. This is a logical sanity
+			 * check. */
 			assert(otherthreads == NULL);
+
+			/* We still need to put zeroes in the output buffer and the
+			 * reblocking buffer, otherwise we are going to get weird timing
+			 * problems. */
+			if (nb_samples >= OUTPUT_SAMPLES) {
+				unsigned j;
+				for (j = 0; j < nb_channels; j++) {
+					unsigned k;
+					for (k = 0; k < OUTPUT_SAMPLES; k++) {
+						buffers[nb_channels*(out_offset+k)+j] = 0.0f;
+					}
+				}
+			} else {
+				unsigned j;
+				for (j = 0; j < nb_channels; j++) {
+					unsigned k;
+					for (k = 0; k < nb_samples; k++) {
+						buffers[nb_channels*(out_offset+k)+j] = 0.0f;
+					}
+					for (; k < OUTPUT_SAMPLES; k++) {
+						eng->reblock_buffers[j][(eng->reblock_start + (k - nb_samples)) % OUTPUT_SAMPLES] = 0.0f;
+					}
+				}
+			}
 		}
 
 		eng->current_time = (eng->current_time + 1) & 0x7FFFFFFFu;
