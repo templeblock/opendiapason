@@ -286,7 +286,7 @@ static void *midi_thread_proc(void *argument)
 							if (midx >= TEST_ENTRY_LIST[j].first_midi) {
 								midx -= TEST_ENTRY_LIST[j].first_midi;
 								if (midx < TEST_ENTRY_LIST[j].nb_pipes) {
-									if (loaded_ranks[j][midx].nb_insts == 1) {
+									if (loaded_ranks[j][midx].nb_insts == 1 && loaded_ranks[j][midx].instance != NULL) {
 										if (!note_locked) {
 											playeng_push_block_insertion(engine);
 											playeng_signal_block(engine, 0x3);
@@ -312,7 +312,7 @@ static void *midi_thread_proc(void *argument)
 							if (midx >= TEST_ENTRY_LIST[j].first_midi) {
 								midx -= TEST_ENTRY_LIST[j].first_midi;
 								if (midx < TEST_ENTRY_LIST[j].nb_pipes) {
-									if (loaded_ranks[j][midx].nb_insts == 0) {
+									if (loaded_ranks[j][midx].nb_insts == 0 || loaded_ranks[j][midx].instance == NULL) {
 										if (!note_locked) {
 											playeng_push_block_insertion(engine);
 											playeng_signal_block(engine, 0x3);
@@ -320,6 +320,8 @@ static void *midi_thread_proc(void *argument)
 										}
 //										printf("insert %u\n", me.evt.note.idx);
 										loaded_ranks[j][midx].instance = playeng_insert(engine, 2, 0x01, engine_callback, &(loaded_ranks[j][midx].pd));
+										if (loaded_ranks[j][midx].instance == NULL)
+											printf("Polyphony exceeded!\n");
 									}
 									loaded_ranks[j][midx].nb_insts++;
 								}
@@ -516,7 +518,7 @@ int main(int argc, char *argv[])
 	int rv;
 
 	cop_mutex_create(&thing_lock);
-	engine = playeng_init(2048, 2, 4);
+	engine = playeng_init(4096, 2, 4);
 	if (engine == NULL) {
 		fprintf(stderr, "couldn't create playback engine. out of memory.\n");
 		return -1;
