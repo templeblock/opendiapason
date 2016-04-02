@@ -11,8 +11,8 @@ I do all of my development on OS X, but will try my best to keep everything work
 You will need my "cop" and "fftset" repositories regardless of the operating system you are using and everything must reside at the same level in your filesystem. If you intend on fiddling around with the interpolation filter (which you really do not need to do), you will also need the "svgplot" repository.
 
 > git clone https://github.com/nickappleton/opendiapason
-> git clone https://github.com/nickappleton/cop
-> git clone https://github.com/nickappleton/fftset
+git clone https://github.com/nickappleton/cop
+git clone https://github.com/nickappleton/fftset
 
 I follow a convention in my repositories that anything buildable as an application resides in a subdirectory beginning with "app" (i.e. this directory always contains a CMakeLists.txt file containing a project() directive). You should always be able to point cmake at one of these directories to get project files for whatever that application is for.
 
