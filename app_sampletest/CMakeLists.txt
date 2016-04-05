@@ -11,8 +11,9 @@ endif()
 project(app_sampletest)
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  set(CMAKE_C_FLAGS_DEBUG "-Wall -O0 -g -fsanitize=address")
-  set(CMAKE_C_FLAGS_RELEASE "-Wall -DNDEBUG=1 -O3 -g")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")
+  set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -fsanitize=address")
+  set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -g")
 endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_LIST_DIR}/../cmakemodules)
