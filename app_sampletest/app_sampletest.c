@@ -34,11 +34,12 @@
 
 /* This is high not because I am a deluded "audiophile". It is high, because
  * it gives the playback system heaps of frequency headroom before aliasing
- * occurse. The playback rate of a sample can be doubled before aliasing
- * starts getting folded back down the spectrum. */
+ * occurs. The playback rate of a sample can be doubled before aliasing
+ * starts getting folded back down the spectrum.
+ *
+ * I am relying on the sound driver low-pass filtering this... which is
+ * probably a bad assumption. */
 #define PLAYBACK_SAMPLE_RATE (96000)
-
-cop_mutex         thing_lock;
 
 struct simple_pipe {
 	struct pipe_v1 data;
@@ -94,16 +95,16 @@ static struct pipe_executor *loaded_ranks[NUM_TEST_ENTRY_LIST];
 
 static struct pipe_executor *
 load_executors
-	(const char *path
-	,struct aalloc *mem
-	,struct fftset *fftset
-	,const float *prefilter_data
-	,unsigned prefilter_conv_len
+	(const char              *path
+	,struct aalloc           *mem
+	,struct fftset           *fftset
+	,const float             *prefilter_data
+	,unsigned                 prefilter_conv_len
 	,const struct fftset_fft *prefilter_conv
-	,unsigned first_midi
-	,unsigned nb_pipes
-	,double organ_pitch16
-	,unsigned harmonic16
+	,unsigned                 first_midi
+	,unsigned                 nb_pipes
+	,double                   organ_pitch16
+	,unsigned                 harmonic16
 	)
 {
 	struct pipe_executor *pipes = malloc(sizeof(*pipes) * nb_pipes);
@@ -210,28 +211,12 @@ pa_callback
 	playeng_process(engine, ob, 2, frameCount);
 
 	for (samp = 0; samp < frameCount; samp++) {
-		ob[2*samp+0] *= 0.5;
-		ob[2*samp+1] *= 0.5;
+		ob[2*samp+0] *= 0.25;
+		ob[2*samp+1] *= 0.25;
 	}
 
 	return paContinue;
 }
-
-
-struct midi_event {
-	int end_event;
-	union {
-		struct {
-			int      note_on;
-			unsigned ch;
-			unsigned idx;
-			unsigned velocity;
-		} note;
-		struct {
-			PmError error;
-		} end;
-	} evt;
-};
 
 struct midi_stream_data {
 	PortMidiStream *pms;
@@ -244,17 +229,17 @@ struct midi_stream_data {
 
 static void *midi_thread_proc(void *argument)
 {
-	struct midi_event me;
 	struct midi_stream_data *msd;
 	PortMidiStream *pms;
 	PmEvent events[NEVENTREAD];
 	int nread = 0;
-	int note_locked = 0;
 	int terminated = 0;
 
 	msd = argument;
 	pms = msd->pms;
 	do {
+		int note_locked = 0;
+
 		terminated = cop_mutex_trylock(&msd->abort_signal);
 		if (terminated)
 			cop_mutex_unlock(&msd->abort_signal);
@@ -262,91 +247,71 @@ static void *midi_thread_proc(void *argument)
 		while ((nread = Pm_Read(pms, events, NEVENTREAD)) > 0) {
 			int i;
 			for (i = 0; i < nread; i++) {
+				unsigned j;
 				long     msg      = events[i].message;
 				unsigned channel  = Pm_MessageStatus(msg) & 0x0F;
 				unsigned evtid    = Pm_MessageStatus(msg) & 0xF0;
 				unsigned idx      = Pm_MessageData1(msg);
 				unsigned velocity = Pm_MessageData2(msg);
 
-				me.end_event         = 0;
-				me.evt.note.ch       = channel;
-				me.evt.note.velocity = velocity;
-				me.evt.note.idx      = idx;
+				for (j = 0; j < NUM_TEST_ENTRY_LIST; j++) {
+					unsigned midx = idx;
 
-				if (evtid == 0x80 || (evtid == 0x90 && velocity == 0x00)) {
-					unsigned j;
+					if ((TEST_ENTRY_LIST[j].midi_channel_mask & (1ul << channel)) == 0)
+						continue;
 
-//					printf("evt %u\n", me.evt.note.idx);
+					if (midx < TEST_ENTRY_LIST[j].first_midi)
+						continue;
 
-					me.evt.note.note_on = 0;
+					midx -= TEST_ENTRY_LIST[j].first_midi;
 
-					for (j = 0; j < NUM_TEST_ENTRY_LIST; j++) {
-						if (TEST_ENTRY_LIST[j].midi_channel_mask & (1ul << me.evt.note.ch)) {
-							unsigned midx = me.evt.note.idx;
-							if (midx >= TEST_ENTRY_LIST[j].first_midi) {
-								midx -= TEST_ENTRY_LIST[j].first_midi;
-								if (midx < TEST_ENTRY_LIST[j].nb_pipes) {
-									if (loaded_ranks[j][midx].nb_insts == 1 && loaded_ranks[j][midx].instance != NULL) {
-										if (!note_locked) {
-											playeng_push_block_insertion(engine);
-											playeng_signal_block(engine, 0x3);
-											note_locked = 1;
-										}
-//										printf("remove %u\n", me.evt.note.idx);
-										playeng_signal_instance(engine, loaded_ranks[j][midx].instance, 0x02);
-									}
-									loaded_ranks[j][midx].nb_insts--;
-								}
-							}
+					if (midx >= TEST_ENTRY_LIST[j].nb_pipes)
+						continue;
+
+					if (evtid == 0x80 || (evtid == 0x90 && velocity == 0x00)) {
+						if (loaded_ranks[j][midx].nb_insts < 1)
+							continue;
+
+						loaded_ranks[j][midx].nb_insts--;
+
+						if (loaded_ranks[j][midx].nb_insts != 0 || loaded_ranks[j][midx].instance == NULL)
+							continue;
+
+						if (!note_locked) {
+							playeng_push_block_insertion(engine);
+							playeng_signal_block(engine, 0x3);
+							note_locked = 1;
 						}
-					}
 
-				} else if (evtid == 0x90) {
-					unsigned j;
+						playeng_signal_instance(engine, loaded_ranks[j][midx].instance, 0x02);
+						loaded_ranks[j][midx].instance = NULL;
+					} else if (evtid == 0x90) {
+						loaded_ranks[j][midx].nb_insts++;
 
-					me.evt.note.note_on = 1;
+						if (loaded_ranks[j][midx].instance != NULL)
+							continue;
 
-					for (j = 0; j < NUM_TEST_ENTRY_LIST; j++) {
-						if (TEST_ENTRY_LIST[j].midi_channel_mask & (1ul << me.evt.note.ch)) {
-							unsigned midx = me.evt.note.idx;
-							if (midx >= TEST_ENTRY_LIST[j].first_midi) {
-								midx -= TEST_ENTRY_LIST[j].first_midi;
-								if (midx < TEST_ENTRY_LIST[j].nb_pipes) {
-									if (loaded_ranks[j][midx].nb_insts == 0 || loaded_ranks[j][midx].instance == NULL) {
-										if (!note_locked) {
-											playeng_push_block_insertion(engine);
-											playeng_signal_block(engine, 0x3);
-											note_locked = 1;
-										}
-//										printf("insert %u\n", me.evt.note.idx);
-										loaded_ranks[j][midx].instance = playeng_insert(engine, 2, 0x01, engine_callback, &(loaded_ranks[j][midx].pd));
-										if (loaded_ranks[j][midx].instance == NULL)
-											printf("Polyphony exceeded!\n");
-									}
-									loaded_ranks[j][midx].nb_insts++;
-								}
-							}
+						if (!note_locked) {
+							playeng_push_block_insertion(engine);
+							playeng_signal_block(engine, 0x3);
+							note_locked = 1;
 						}
+
+						loaded_ranks[j][midx].instance = playeng_insert(engine, 2, 0x01, engine_callback, &(loaded_ranks[j][midx].pd));
+						if (loaded_ranks[j][midx].instance == NULL)
+							printf("Polyphony exceeded!\n");
 					}
 				}
 			}
+		}
 
-			if (note_locked) {
-				playeng_signal_unblock(engine, 0x3);
-				playeng_pop_block_insertion(engine);
-				note_locked = 0;
-			}
+		if (note_locked) {
+			playeng_signal_unblock(engine, 0x3);
+			playeng_pop_block_insertion(engine);
 		}
 
 		Pa_Sleep(10);
 	} while (nread != 0 || !terminated);
-
-	{
-		/* MIDI THREAD TERMINATED */
-		me.end_event = 1;
-		me.evt.end.error = nread;
-//		msd->cb(&me, msd->ud);
-	}
 
 	(void)Pm_Close(pms);
 	free(msd);
@@ -420,7 +385,7 @@ static int setup_sound(void)
 
 	printf("using %s on %s API\n", def_device_info->name, def_api_info->name);
 
-	printf("opening a 44.1 kHz stream... ");
+	printf("opening a %u Hz stream... ", PLAYBACK_SAMPLE_RATE);
 	stream_params.device                    = def_api_info->defaultOutputDevice;
 	stream_params.channelCount              = 2;
 	stream_params.sampleFormat              = paFloat32;
@@ -454,6 +419,7 @@ static int setup_sound(void)
 		Pa_CloseStream(stream);
 		return -3;
 	}
+	printf("ok\n");
 
 	Pa_StartStream(stream);
 
@@ -515,37 +481,48 @@ int main(int argc, char *argv[])
 {
 	PaError ec;
 	PmError merr;
-	int rv;
-
-	cop_mutex_create(&thing_lock);
-	engine = playeng_init(4096, 2, 4);
-	if (engine == NULL) {
-		fprintf(stderr, "couldn't create playback engine. out of memory.\n");
-		return -1;
-	}
+	int rv = -1;
 
 	printf("OpenDiapason terminal frontend\n");
 	printf("----------------------------------\n");
-
 	printf("initializing PortAudio... ");
 	ec = Pa_Initialize();
 	if (ec != paNoError) {
 		fprintf(stderr, "Pa_Initialize() failed: '%s'\n", Pa_GetErrorText(ec));
 		return -1;
 	}
+	printf("ok\n");
 
-#if 0
-	const PaVersionInfo *pav = Pa_GetVersionInfo();
-	printf("v%d.%d.%d ok\n", pav->versionMajor, pav->versionMinor, pav->versionSubMinor);
-#endif
+	printf("initializing PortMidi... ");
 	merr = Pm_Initialize();
 	if (merr != pmNoError) {
 		fprintf(stderr, "Pm_Initialize() failed: '%s'\n", Pm_GetErrorText(merr));
 		Pa_Terminate();
 		return -2;
 	}
+	printf("ok\n");
 
-	{
+	engine = playeng_init(4096, 2, 4);
+	if (engine == NULL) {
+		Pm_Terminate();
+		Pa_Terminate();
+		fprintf(stderr, "couldn't create playback engine. out of memory.\n");
+		return -1;
+	}
+
+	if (argc > 1) {
+		if (strcmp(argv[1], "listmidi") == 0) {
+			int i;
+			int nd = Pm_CountDevices();
+			for (i = 0; i < nd; i++) {
+				const PmDeviceInfo* d = Pm_GetDeviceInfo(i);
+				printf("%d) %s/%s %d, %d, %d\n", i, d->interf, d->name, d->input, d->output, d->opened);
+			}
+			if (i == 0) {
+				printf("no midi devices!\n");
+			}
+		}
+	} else {
 		unsigned i;
 		struct aalloc               mem;
 		struct fftset               fftset;
@@ -574,15 +551,14 @@ int main(int argc, char *argv[])
 		for (i = 0; i < NUM_TEST_ENTRY_LIST; i++) {
 			loaded_ranks[i] = load_executors(TEST_ENTRY_LIST[i].directory_name, &mem, &fftset, prefilter_data, prefilter_conv_len, prefilter_conv, TEST_ENTRY_LIST[i].first_midi, TEST_ENTRY_LIST[i].nb_pipes, ORGAN_PITCH16, TEST_ENTRY_LIST[i].harmonic16);
 		}
+
+		rv = setup_sound();
 	}
 
-	rv = setup_sound();
-
 	/* Who cares? */
+	playeng_destroy(engine);
 	(void)Pm_Terminate();
 	(void)Pa_Terminate();
-
-	cop_mutex_destroy(&thing_lock);
 
 	return rv;
 }
