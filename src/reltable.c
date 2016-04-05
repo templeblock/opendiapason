@@ -332,6 +332,7 @@ reltable_build
 	unsigned skip = (unsigned)fmax(1.0, period - lf/2);
 	float    rel_scale = 1.0 / rel_power;
 
+#if OPENDIAPASON_VERBOSE_DEBUG
 	if (debug_prefix != NULL && strlen(debug_prefix) < 1024 - 50) {
 		char      namebuf[1024];
 		FILE     *dbgfile;
@@ -354,7 +355,9 @@ reltable_build
 			fclose(dbgfile);
 		}
 	}
-
+#else
+	(void)debug_prefix;
+#endif
 
 
 	/* Find best release alignment position. */
@@ -449,14 +452,7 @@ reltable_build
 	free(epos);
 	free(egain);
 
-#if 1
-#if 0
-	for (i = 0; i < positions && i < 20; i++) {
-		float f;
-		float t = reltable_find(reltable, epos[i], &f);
-		printf("%u->%f,%f\n", epos[i], t, f);
-	}
-#endif
+#ifdef OPENDIAPASON_VERBOSE_DEBUG
 	for (i = 0; i < reltable->nb_entry; i++) {
 		printf("%u) %f,%f,%f,%f\n", reltable->entry[i].last_sample, reltable->entry[i].m, reltable->entry[i].b, reltable->entry[i].gain, reltable->entry[i].avgerr);
 	}

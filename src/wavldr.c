@@ -256,10 +256,8 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 		}
 
 		/* If j==mw->nloop, the cue id was not found among the loops. */
-		if (found_rel) {
+		if (found_rel)
 			mw->release_pos = rp;
-			printf("release%lu\n", mw->release_pos);
-		}
 	} else {
 		return "no cue chunk";
 	}
@@ -491,6 +489,7 @@ apply_prefilter
 	}
 	aalloc_pop(allocator);
 
+#if OPENDIAPASON_VERBOSE_DEBUG
 	if (debug_prefix != NULL && mw->channels == 2) {
 		char      namebuf[1024];
 		FILE     *dbgfile;
@@ -524,6 +523,9 @@ apply_prefilter
 			fclose(dbgfile);
 		}
 	}
+#else
+	(void)debug_prefix;
+#endif
 }
 
 const char *
@@ -761,9 +763,11 @@ load_smpl_f
 	pipe->attack.data = samples;
 	pipe->attack.instantiate = u16c2_instantiate;
 
+#if OPENDIAPASON_VERBOSE_DEBUG
 	for (i = 0; i < mw.nloop; i++) {
-		printf("%u,%u,%u,%u\n", i, pipe->attack.starts[pipe->attack.ends[i].start_idx].first_valid_end, pipe->attack.starts[pipe->attack.ends[i].start_idx].start_smpl , pipe->attack.ends[i].end_smpl);
+		printf("loop %u) %u,%u,%u\n", i, pipe->attack.starts[pipe->attack.ends[i].start_idx].first_valid_end, pipe->attack.starts[pipe->attack.ends[i].start_idx].start_smpl , pipe->attack.ends[i].end_smpl);
 	}
+#endif
 
 	return NULL;
 }

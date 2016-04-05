@@ -126,7 +126,9 @@ load_executors
 		pipes[i].pd.rate = (target_freq * pipes[i].pd.data.sample_rate) * SMPL_POSITION_SCALE / (PLAYBACK_SAMPLE_RATE * pipe_freq) + 0.5;
 		pipes[i].instance = NULL;
 		pipes[i].nb_insts = 0;
+#if OPENDIAPASON_VERBOSE_DEBUG
 		printf("%s:%d FREQUENCIES: %f,%f,%u\n", path, i, target_freq, pipe_freq, pipes[i].pd.rate);
+#endif
 	}
 	return pipes;
 }
@@ -354,7 +356,7 @@ static struct midi_stream_data *start_midi(PmDeviceID midi_in_id, void *ud)
 	return msd;
 }
 
-static int setup_sound(void)
+static int setup_sound(PmDeviceID midi_devid)
 {
 	PaHostApiIndex def_api;
 	const PaHostApiInfo *def_api_info;
@@ -413,7 +415,7 @@ static int setup_sound(void)
 	printf("ok\n");
 
 	printf("initializing default midi device... ");
-	struct midi_stream_data *midi_acs = start_midi(Pm_GetDefaultInputDeviceID(), NULL);
+	struct midi_stream_data *midi_acs = start_midi(midi_devid, NULL);
 	if (midi_acs == NULL) {
 		fprintf(stderr, "Failed to start midi thread.\n");
 		Pa_CloseStream(stream);
@@ -482,6 +484,8 @@ int main(int argc, char *argv[])
 	PaError ec;
 	PmError merr;
 	int rv = -1;
+	int start_audio = 1;
+	PmDeviceID midi_devid = -1;
 
 	printf("OpenDiapason terminal frontend\n");
 	printf("----------------------------------\n");
@@ -510,19 +514,45 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-	if (argc > 1) {
-		if (strcmp(argv[1], "listmidi") == 0) {
-			int i;
-			int nd = Pm_CountDevices();
-			for (i = 0; i < nd; i++) {
-				const PmDeviceInfo* d = Pm_GetDeviceInfo(i);
-				printf("%d) %s/%s %d, %d, %d\n", i, d->interf, d->name, d->input, d->output, d->opened);
-			}
-			if (i == 0) {
-				printf("no midi devices!\n");
+	if (argc > 1 && strcmp(argv[1], "--midilist") == 0) {
+		int i;
+		int nd = Pm_CountDevices();
+		for (i = 0; i < nd; i++) {
+			const PmDeviceInfo* d = Pm_GetDeviceInfo(i);
+			if (!d->input)
+				continue;
+
+			printf("%d) %s/%s\n", i, d->interf, d->name);
+		}
+		if (i == 0) {
+			printf("no midi devices!\n");
+		}
+		start_audio = 0;
+	}
+	else if (argc > 2 && strcmp(argv[1], "--midiname") == 0)
+	{
+		int i;
+		int nd = Pm_CountDevices();
+		for (i = 0; i < nd; i++) {
+			const PmDeviceInfo* d = Pm_GetDeviceInfo(i);
+			if (!d->input)
+				continue;
+			if (strstr(d->interf, argv[2]) != NULL || strstr(d->name, argv[2]) != NULL) {
+				if (midi_devid >= 0) {
+					fprintf(stderr, "could not choose between midi devices\n");
+					start_audio = 0;
+				} else {
+					midi_devid = i;
+				}
 			}
 		}
-	} else {
+		if (midi_devid < 0) {
+			fprintf(stderr, "could not find midi device containing '%s'\n", argv[2]);
+			start_audio = 0;
+		}
+	}
+
+	if (start_audio) {
 		unsigned i;
 		struct aalloc               mem;
 		struct fftset               fftset;
@@ -549,10 +579,14 @@ int main(int argc, char *argv[])
 		aalloc_pop(&mem);
 
 		for (i = 0; i < NUM_TEST_ENTRY_LIST; i++) {
+			printf("loading '%s'\n", TEST_ENTRY_LIST[i].directory_name);
 			loaded_ranks[i] = load_executors(TEST_ENTRY_LIST[i].directory_name, &mem, &fftset, prefilter_data, prefilter_conv_len, prefilter_conv, TEST_ENTRY_LIST[i].first_midi, TEST_ENTRY_LIST[i].nb_pipes, ORGAN_PITCH16, TEST_ENTRY_LIST[i].harmonic16);
 		}
 
-		rv = setup_sound();
+		rv = setup_sound((midi_devid < 0) ? Pm_GetDefaultInputDeviceID() : midi_devid);
+
+		fftset_destroy(&fftset);
+		aalloc_free(&mem);
 	}
 
 	/* Who cares? */
