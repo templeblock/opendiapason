@@ -722,24 +722,39 @@ load_smpl_f
 	unsigned release_length = mw.length - mw.release_pos;
 	unsigned release_slop   = 32;
 	uint_fast32_t rseed = rand();
+	float minv, maxv;
+	float boost;
+
 	relsamples = malloc(sizeof(int_least16_t) * (release_length + release_slop) * mw.channels);
 
-	pipe->release.instantiate = u16c2_instantiate;
-	pipe->release.nloop = 1;
+	pipe->release.instantiate               = u16c2_instantiate;
+	pipe->release.nloop                     = 1;
 	pipe->release.starts[0].start_smpl      = release_length;
 	pipe->release.starts[0].first_valid_end = 0;
 	pipe->release.ends[0].end_smpl          = release_length + release_slop - 1;
 	pipe->release.ends[0].start_idx         = 0;
-	pipe->release.gain = 1.0 / 32768.0;
+
+	for (maxv = 0.0f, minv = 0.0f, i = 0; i < mw.channels; i++) {
+		unsigned j;
+		for (j = 0; j < release_length; j++) {
+			float s = mw.data[i][j+mw.release_pos];
+			maxv = (s > maxv) ? s : maxv;
+			minv = (s < minv) ? s : minv;
+		}
+	}
+	maxv               = ((maxv > -minv) ? maxv : -minv) * 0.9999f * (1.0f / 32768.0f);
+	boost              = 1.0f / maxv;
+	pipe->release.gain = maxv;
 	for (i = 0; i < mw.channels; i++) {
 		unsigned j;
 		for (j = 0; j < release_length; j++) {
-			float s          = mw.data[i][j+mw.release_pos] * 32768.0f;
-			int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x7FFFFFFFu;
-			int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x7FFFFFFFu;
-			float dither     = ((float)r1 + (float)r2) * (0.5f / 0x7FFFFFFF);
-			int_fast32_t v   = (int_fast32_t)(dither + s + 32768.0f) - 32768l;
-			relsamples[mw.channels*j+i] = (int_least16_t)((v > 32767) ? 32767 : ((v < -32768) ? - 32768 : v));
+			float s          = mw.data[i][j+mw.release_pos] * boost;
+			int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
+			int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
+			float dither     = (r1 + r2) * (1.0f / 0x7FFFFFFF);
+			int_fast32_t v   = (int_fast32_t)(dither + s + 32768.0f) - 32768;
+			assert(v >= -32768 && v <= 32767);
+			relsamples[mw.channels*j+i] = (int_least16_t)v;
 		}
 		for (; j < release_length + release_slop; j++) {
 			relsamples[mw.channels*j+i] = 0;
@@ -747,20 +762,31 @@ load_smpl_f
 	}
 	pipe->release.data = relsamples;
 
-	pipe->attack.gain = 1.0 / 32768;
+	for (maxv = 0.0f, minv = 0.0f, i = 0; i < mw.channels; i++) {
+		unsigned j;
+		for (j = 0; j < dlen; j++) {
+			float s = mw.data[i][j];
+			maxv = (s > maxv) ? s : maxv;
+			minv = (s < minv) ? s : minv;
+		}
+	}
+	maxv              = ((maxv > -minv) ? maxv : -minv) * 0.9999f * (1.0f / 32768.0f);
+	boost             = 1.0f / maxv;
+	pipe->attack.gain = maxv;
 	for (i = 0; i < mw.channels; i++) {
 		unsigned j;
 		for (j = 0; j < dlen; j++) {
-			float s          = mw.data[i][j] * 32768.0f;
-			int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x7FFFFFFFu;
-			int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x7FFFFFFFu;
-			float dither     = ((float)r1 + (float)r2) * (0.5f / 0x7FFFFFFF);
-			int_fast32_t v   = (int_fast32_t)(dither + s + 32768.0f) - 32768l;
-			((int_least16_t *)samples)[mw.channels*j+i] = (int_least16_t)((v > 32767) ? 32767 : ((v < -32768) ? - 32768 : v));
+			float s          = mw.data[i][j] * boost;
+			int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
+			int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
+			float dither     = (r1 + r2) * (1.0f / 0x7FFFFFFF);
+			int_fast32_t v   = (int_fast32_t)(dither + s + 32768.0f) - 32768;
+			assert(v >= -32768 && v <= 32767);
+			((int_least16_t *)samples)[mw.channels*j+i] = (int_least16_t)v;
 		}
 	}
-
 	pipe->attack.data = samples;
+
 	pipe->attack.instantiate = u16c2_instantiate;
 
 #if OPENDIAPASON_VERBOSE_DEBUG
@@ -768,6 +794,12 @@ load_smpl_f
 		printf("loop %u) %u,%u,%u\n", i, pipe->attack.starts[pipe->attack.ends[i].start_idx].first_valid_end, pipe->attack.starts[pipe->attack.ends[i].start_idx].start_smpl , pipe->attack.ends[i].end_smpl);
 	}
 #endif
+
+	free(mw.loops);
+	for (i = 0; i < mw.channels; i++) {
+		free(mw.data[i]);
+	}
+	free(mw.data);
 
 	return NULL;
 }
