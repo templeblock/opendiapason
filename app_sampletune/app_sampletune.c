@@ -10,6 +10,8 @@
 #include "opendiapason/src/playeng.h"
 #include <math.h>
 
+#define DUMP_TUNING_SESSION "out.raw"
+
 #define PLAYBACK_SAMPLE_RATE (48000)
 
 struct simple_pipe {
@@ -162,6 +164,8 @@ engine_callback
 	return old_flags;
 }
 
+FILE *dump;
+
 static
 int
 pa_callback
@@ -213,6 +217,14 @@ pa_callback
 	for (samp = 0; samp < frameCount; samp++) {
 		ob[2*samp+0] *= 0.5f;
 		ob[2*samp+1] *= 0.5f;
+#ifdef DUMP_TUNING_SESSION
+		{
+			short pair[2];
+			pair[0] = (short)((int)(ob[2*samp+0] * 65536 + 65536.5) - 65536);
+			pair[1] = (short)((int)(ob[2*samp+1] * 65536 + 65536.5) - 65536);
+			fwrite(pair, 4, 1, dump);
+		}
+#endif
 	}
 
 	/* Synthesis the tuning signal */
@@ -368,6 +380,16 @@ int main_audio(int argc, char *argv[])
 	printf("v%d.%d.%d ok\n", pav->versionMajor, pav->versionMinor, pav->versionSubMinor);
 #endif
 
+#ifdef DUMP_TUNING_SESSION
+	printf("dumping output to " DUMP_TUNING_SESSION "\n");
+	dump = fopen(DUMP_TUNING_SESSION, "wb");
+	if (dump == NULL) {
+		Pa_Terminate();
+		fprintf(stderr, "could not open " DUMP_TUNING_SESSION " for writing\n");
+		return -1;
+	}
+#endif
+
 	astream = setup_sound();
 
 	do {
@@ -451,8 +473,13 @@ int main_audio(int argc, char *argv[])
 		}
 	} while (!finished);
 
+#ifdef DUMP_TUNING_SESSION
+	fclose(dump);
+#endif
+
 	Pa_StopStream(astream);
 	Pa_CloseStream(astream);
+	Pa_Terminate();
 
 	return 0;
 }
