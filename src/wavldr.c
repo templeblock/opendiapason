@@ -604,7 +604,7 @@ load_smpl_f
 		,prefilt_kern_len
 		,prefilt_real_fft_len
 		,prefilt_fft
-		,NULL//filename
+		,filename
 		);
 #endif
 
@@ -707,9 +707,7 @@ load_smpl_f
 
 		rel_power /= env_width;
 
-		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, (as_loop_end+1), (1.0f / mw.frequency) * mw.rate
-			,NULL //filename
-			);
+		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, (as_loop_end+1), (1.0f / mw.frequency) * mw.rate, filename);
 
 		aalloc_pop(allocator);
 	}
