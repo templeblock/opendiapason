@@ -127,7 +127,6 @@ int main(int argc, char *argv[])
 	double plot_interp_filter[1024];
 	double plot_inverse_filter[1024];
 	double plot_combined_filter[1024];
-	double restored_y_buf[1024];
 	double tmp_double[2048];
 
 	struct fftset convs;
@@ -174,25 +173,28 @@ int main(int argc, char *argv[])
 		plot_interp_filter[i] = fmin(100.0, fmax(-300, gain));
 
 		double w = (i + 0.5) / (float)(fft_size / 2);
-		double co   = 18000.0 * 2.0 / 44100.0;
+		double co   = 19500.0 * 2.0 / 44100.0;
 		double cooe = 21500.0 * 2.0 / 44100.0;
 		double target = 10.0 * log10(1.0 / (1.0 + pow(w / co, 38.0)));
 		double interp = pow(fmin(fmax(0.0, (w - co) / (cooe - co)), 1.0), 5);
-		gain = (1.0 - interp) * (target - gain) + interp * -40.0;
+		gain = (1.0 - interp) * (target - gain) + interp * -100.0;
 
 		/* Invert magnitude. */
 		gain = pow(10.0, gain * 0.05);
 
-		tmp_buf[2*i+0] = gain * cos(-(INVERSE_FILTER_LEN*0.5-1) * M_PI * (i + 0.5) / (double)(fft_size/2)) / (fft_size/2);
-		tmp_buf[2*i+1] = gain * sin(-(INVERSE_FILTER_LEN*0.5-1) * M_PI * (i + 0.5) / (double)(fft_size/2)) / (fft_size/2);
+		tmp_buf[2*i+0] = gain / (fft_size/2);
+		tmp_buf[2*i+1] = 0.0f;
 	}
 
 	/* 4) Convert the inverse filter response back into the time-domain,
 	 *    truncate it to the required length and window it with a Kaiser
 	 *    window (to smooth it out). */
 	fftset_fft_inverse(fft, fft_buf, tmp_buf, tmp2_buf);
-	for (i = 0; i < INVERSE_FILTER_LEN-1; i++) {
-		tmp_double[i] = fft_buf[i] / SMPL_POSITION_SCALE;
+	tmp_double[INVERSE_FILTER_LEN/2-1] = fft_buf[0] / SMPL_POSITION_SCALE;
+	for (i = 1; i < INVERSE_FILTER_LEN/2; i++) {
+		double x = fft_buf[i] / SMPL_POSITION_SCALE;
+		tmp_double[INVERSE_FILTER_LEN/2-1-i] = x;
+		tmp_double[INVERSE_FILTER_LEN/2-1+i] = x;
 	}
 	apply_kaiser(tmp_double, INVERSE_FILTER_LEN-1, 3.5);
 	for (i = 0; i < INVERSE_FILTER_LEN-1; i++) {
