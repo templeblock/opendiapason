@@ -742,7 +742,7 @@ load_smpl_f
 			minv = (s < minv) ? s : minv;
 		}
 	}
-	maxv               = ((maxv > -minv) ? maxv : -minv) * 0.9999f * (1.0f / 32768.0f);
+	maxv               = ((maxv > -minv) ? maxv : -minv) * (1.0f / (32768.0f * 0.9999f));
 	boost              = 1.0f / maxv;
 	pipe->release.gain = maxv;
 	for (i = 0; i < mw.channels; i++) {
@@ -770,7 +770,7 @@ load_smpl_f
 			minv = (s < minv) ? s : minv;
 		}
 	}
-	maxv              = ((maxv > -minv) ? maxv : -minv) * 0.9999f * (1.0f / 32768.0f);
+	maxv              = ((maxv > -minv) ? maxv : -minv) * (1.0f / (32768.0f * 0.9999f));
 	boost             = 1.0f / maxv;
 	pipe->attack.gain = maxv;
 	for (i = 0; i < mw.channels; i++) {
