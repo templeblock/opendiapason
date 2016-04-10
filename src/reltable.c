@@ -451,6 +451,7 @@ reltable_build
 
 	free(epos);
 	free(egain);
+	free(emse);
 
 #ifdef OPENDIAPASON_VERBOSE_DEBUG
 	for (i = 0; i < reltable->nb_entry; i++) {
