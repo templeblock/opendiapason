@@ -173,11 +173,11 @@ int main(int argc, char *argv[])
 		plot_interp_filter[i] = fmin(100.0, fmax(-300, gain));
 
 		double w = (i + 0.5) / (float)(fft_size / 2);
-		double co   = 19500.0 * 2.0 / 44100.0;
+		double co   = 19000.0 * 2.0 / 44100.0;
 		double cooe = 21500.0 * 2.0 / 44100.0;
 		double target = 10.0 * log10(1.0 / (1.0 + pow(w / co, 38.0)));
 		double interp = pow(fmin(fmax(0.0, (w - co) / (cooe - co)), 1.0), 5);
-		gain = (1.0 - interp) * (target - gain) + interp * -100.0;
+		gain = (1.0 - interp) * (target - gain) + interp * -80.0;
 
 		/* Invert magnitude. */
 		gain = pow(10.0, gain * 0.05);
@@ -306,7 +306,7 @@ int main(int argc, char *argv[])
 		gi.y.show_text = 1;
 		gi.y.auto_size = 0;
 		gi.y.start = -130;
-		gi.y.end   = 30;
+		gi.y.end   = 35;
 		svgplot_finalise(&plot, &gi, 12, 12*3/4, 0.2, f);
 		fclose(f);
 	}
