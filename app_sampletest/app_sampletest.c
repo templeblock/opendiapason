@@ -78,15 +78,24 @@ struct test_load_entry {
  * number of pipe samples, the third is a mask of which MIDI channels activate
  * samples, the final is the harmonic base pitch relative to 16. */
 static const struct test_load_entry TEST_ENTRY_LIST[] =
-{	{"Bourdon8",       36, 53, GT | PED, 2}
-,	{"Montre8",        36, 53, GT | PED, 2}
-,	{"Salicional8_go", 36, 53, GT | PED, 2}
-,	{"Prestant4",      36, 53, GT | PED, 4}
-//,	{"Doublette2",     36, 53, GT | PED, 8}
-,	{"Pleinjeu3",      36, 53, GT | PED, 2}
-//,	{"Trompette8",     36, 53, PED,      2}
-,	{"Soubasse16",     36, 25, PED,      1}
-,	{"Hautbois8",      53, 37, SW,       2}
+{//	{"Bourdon8",       36, 53, GT | PED, 2}
+//,	{"Montre8",        36, 53, GT | PED, 2}
+//,	{"Salicional8_go", 36, 53, GT | PED, 2}
+//,	{"Prestant4",      36, 53, GT | PED, 4}
+//,	{"Doublette2",     36, 53, GT | PED, 6}
+//,	{"Pleinjeu3",      36, 53, GT | PED, 2}
+//	{"I Bordun 16",         36, 53, PED | GT,  1}
+	{"I Principal 8",       36, 53, PED | GT,  2}
+,	{"I Octave 4",          36, 53, PED | GT,  4}
+,	{"I Quinte 2 23",       36, 53, GT,  6}
+//,	{"I Octave 2",          36, 53, PED | GT,  8}
+,	{"I Mixtur 3f",         36, 53, PED | GT,  2}
+,	{"P Posaune 16",        36, 27, PED,       1}
+,	{"P Subbass 16",        36, 27, PED,       1}
+,	{"P Violon 16",         36, 27, PED,       1}
+,	{"P Octavbass 8",       36, 27, PED,       2}
+//,	{"II Viola di Gamba 8", 36, 53, SW,      2}
+//,	{"II Gedact 8",         36, 53, SW,      2}
 };
 
 #define NUM_TEST_ENTRY_LIST (sizeof(TEST_ENTRY_LIST) / sizeof(TEST_ENTRY_LIST[0]))
@@ -213,8 +222,8 @@ pa_callback
 	playeng_process(engine, ob, 2, frameCount);
 
 	for (samp = 0; samp < frameCount; samp++) {
-		ob[2*samp+0] *= 0.25;
-		ob[2*samp+1] *= 0.25;
+		ob[2*samp+0] *= 1; /* 0.25 */
+		ob[2*samp+1] *= 1; /* 0.25 */
 	}
 
 	return paContinue;

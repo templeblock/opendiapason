@@ -211,6 +211,7 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 		unsigned i;
 		int found_rel = 0;
 		unsigned rp = 0;
+		unsigned last_release = 0;
 
 
 		unsigned loopend = 0;
@@ -243,6 +244,10 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 				continue;
 			if (parse_le32(cks.cue + 4 + i * 24 + 8) != 0x61746164ul)
 				continue;
+
+			if (relpos > last_release)
+				last_release = relpos;
+
 			if (relpos <= loopend)
 				continue;
 
@@ -255,9 +260,13 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 			}
 		}
 
-		/* If j==mw->nloop, the cue id was not found among the loops. */
-		if (found_rel)
-			mw->release_pos = rp;
+		if (!found_rel) {
+			printf("%d,%d\n", last_release, loopend);
+//			return "no release?";
+			rp = last_release;
+		}
+
+		mw->release_pos = rp;
 	} else {
 		return "no cue chunk";
 	}
