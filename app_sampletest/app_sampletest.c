@@ -558,10 +558,18 @@ int main(int argc, char *argv[])
 	int start_audio = 1;
 	PmDeviceID midi_devid = -1;
 
-	printf("ps=%lu,phy=%lu\n", cop_memory_query_page_size(), cop_memory_query_system_memory());
-
 	printf("OpenDiapason terminal frontend\n");
 	printf("----------------------------------\n");
+	{
+		size_t lockable = cop_memory_query_current_lockable();
+		printf("page size:     %lu\n", (unsigned long)cop_memory_query_page_size());
+		printf("system memory: %lu\n", (unsigned long)cop_memory_query_system_memory());
+		if (lockable == SIZE_MAX)
+			printf("max lockable:  not limited\n");
+		else
+			printf("max lockable:  %lu\n", (unsigned long)lockable);
+	}
+
 	printf("initializing PortAudio... ");
 	ec = Pa_Initialize();
 	if (ec != paNoError) {

@@ -564,7 +564,7 @@ int main(int argc, char *argv[])
 {
 	int ret;
 	unsigned i;
-	struct aalloc               mem;
+	struct aalloc mem;
 	size_t sysmem = cop_memory_query_system_memory();
 
 	if (sysmem == 0) {
@@ -577,6 +577,16 @@ int main(int argc, char *argv[])
 		printf("  %s [ first midi ] [ last midi ] [ fundamental pitch ]\n", argv[0]);
 		printf("%s", USAGE_STR);
 		return -1;
+	}
+
+	{
+		size_t lockable = cop_memory_query_current_lockable();
+		printf("page size:     %lu\n", (unsigned long)cop_memory_query_page_size());
+		printf("system memory: %lu\n", (unsigned long)sysmem);
+		if (lockable == SIZE_MAX)
+			printf("max lockable:  not limited\n");
+		else
+			printf("max lockable:  %lu\n", (unsigned long)lockable);
 	}
 
 	if (cop_mutex_create(&at_param_lock) != 0) {
