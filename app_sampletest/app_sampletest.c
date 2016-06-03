@@ -558,6 +558,8 @@ int main(int argc, char *argv[])
 	int start_audio = 1;
 	PmDeviceID midi_devid = -1;
 
+	printf("ps=%lu,phy=%lu\n", cop_memory_query_page_size(), cop_memory_query_system_memory());
+
 	printf("OpenDiapason terminal frontend\n");
 	printf("----------------------------------\n");
 	printf("initializing PortAudio... ");
@@ -631,9 +633,16 @@ int main(int argc, char *argv[])
 		unsigned                    prefilter_conv_len;
 		float                      *prefilter_data;
 		float                      *prefilter_workbuf;
+		size_t sysmem = cop_memory_query_system_memory();
+
+		if (sysmem > 1024*(size_t)1024*1024) {
+			sysmem -= 256*(size_t)1024*1024;
+		} else {
+			sysmem = 3 * (sysmem / 4);
+		}
 
 		/* Build the interpolation pre-filter */
-		aalloc_init(&mem, 32, 512*1024);
+		aalloc_init(&mem, sysmem, 32, 16*1024*1024);
 		fftset_init(&fftset);
 		prefilter_conv_len = fftset_recommend_conv_length(SMPL_INVERSE_FILTER_LEN, 4*SMPL_INVERSE_FILTER_LEN) * 2;
 		prefilter_conv     = fftset_create_fft(&fftset, FFTSET_MODULATION_FREQ_OFFSET_REAL, prefilter_conv_len / 2);

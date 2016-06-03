@@ -565,6 +565,12 @@ int main(int argc, char *argv[])
 	int ret;
 	unsigned i;
 	struct aalloc               mem;
+	size_t sysmem = cop_memory_query_system_memory();
+
+	if (sysmem == 0) {
+		fprintf(stderr, "could not get system memory\n");
+		return -1;
+	}
 
 	if (argc < 4) {
 		printf("usage:\n");
@@ -602,7 +608,12 @@ int main(int argc, char *argv[])
 	tuning_signal_octave       = 0;
 	at_tuning_signal_octave    = 0;
 
-	aalloc_init(&mem, 32, 512*1024);
+	if (sysmem > 1024*(size_t)1024*1024) {
+		sysmem -= 256*(size_t)1024*1024;
+	} else {
+		sysmem = 3 * (sysmem / 4);
+	}
+	aalloc_init(&mem, sysmem, 32, 16*1024*1024);
 
 	{
 		struct fftset               fftset;

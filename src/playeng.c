@@ -91,7 +91,7 @@ struct playeng *playeng_init(unsigned max_poly, unsigned nb_channels, unsigned n
 	if (nb_threads < 2)
 		nb_threads = 1;
 
-	aalloc_init(&a, 16, 16384);
+	aalloc_init(&a, 33554432, 16, 16384);
 	if ((pe = aalloc_alloc(&a, sizeof(*pe))) == NULL)
 		return NULL;
 
