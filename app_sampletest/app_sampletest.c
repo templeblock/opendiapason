@@ -50,6 +50,7 @@ struct pipe_executor {
 	struct simple_pipe       pd;
 	struct playeng_instance *instance;
 	int                      nb_insts;
+	int                      enabled;
 };
 
 struct test_load_entry {
@@ -58,6 +59,7 @@ struct test_load_entry {
 	unsigned        nb_pipes;
 	unsigned        midi_channel_mask;
 	unsigned        harmonic16;
+	int             shortcut;
 };
 
 #define GT_MIDICH  (0)
@@ -84,18 +86,21 @@ static const struct test_load_entry TEST_ENTRY_LIST[] =
 //,	{"Prestant4",      36, 53, GT | PED, 4}
 //,	{"Doublette2",     36, 53, GT | PED, 6}
 //,	{"Pleinjeu3",      36, 53, GT | PED, 2}
-//	{"I Bordun 16",         36, 53, PED | GT,  1}
-	{"I Principal 8",       36, 53, PED | GT,  2}
-,	{"I Octave 4",          36, 53, PED | GT,  4}
-,	{"I Quinte 2 23",       36, 53, GT,  6}
-//,	{"I Octave 2",          36, 53, PED | GT,  8}
-,	{"I Mixtur 3f",         36, 53, PED | GT,  2}
-,	{"P Posaune 16",        36, 27, PED,       1}
-,	{"P Subbass 16",        36, 27, PED,       1}
-,	{"P Violon 16",         36, 27, PED,       1}
-,	{"P Octavbass 8",       36, 27, PED,       2}
-//,	{"II Viola di Gamba 8", 36, 53, SW,      2}
-//,	{"II Gedact 8",         36, 53, SW,      2}
+	{"I Bordun 16",         36, 53, PED | GT,  1, 'a'}
+,	{"I Principal 8",       36, 53, PED | GT,  2, 's'}
+,	{"I Octave 4",          36, 53, PED | GT,  4, 'd'}
+,	{"I Quinte 2 23",       36, 53, GT,        6, 'f'}
+,	{"I Octave 2",          36, 53, PED | GT,  8, 'g'}
+,	{"I Mixtur 3f",         36, 53, PED | GT,  2, 'h'}
+,	{"P Posaune 16",        36, 27, PED,       1, 'z'}
+,	{"P Violon 16",         36, 27, PED,       1, 'x'}
+,	{"P Subbass 16",        36, 27, PED,       1, 'c'}
+,	{"P Octavbass 8",       36, 27, PED,       2, 'v'}
+,	{"P Bassflote 8",       36, 27, PED,       2, 'b'}
+,	{"II Viola di Gamba 8", 36, 53, SW,        2, '1'}
+,	{"II Gedact 8",         36, 53, SW,        2, '2'}
+,	{"II Geigen-principal 8", 36, 53, SW,      2, '3'}
+,	{"II Praestant 4",      36, 53, SW,        4, '4'}
 };
 
 #define NUM_TEST_ENTRY_LIST (sizeof(TEST_ENTRY_LIST) / sizeof(TEST_ENTRY_LIST[0]))
@@ -135,6 +140,7 @@ load_executors
 		pipes[i].pd.rate = (target_freq * pipes[i].pd.data.sample_rate) * SMPL_POSITION_SCALE / (PLAYBACK_SAMPLE_RATE * pipe_freq) + 0.5;
 		pipes[i].instance = NULL;
 		pipes[i].nb_insts = 0;
+		pipes[i].enabled = 0;
 #if OPENDIAPASON_VERBOSE_DEBUG
 		printf("%s:%d FREQUENCIES: %f,%f,%u\n", path, i, target_freq, pipe_freq, pipes[i].pd.rate);
 #endif
@@ -279,6 +285,9 @@ static void *midi_thread_proc(void *argument)
 					if (midx >= TEST_ENTRY_LIST[j].nb_pipes)
 						continue;
 
+					if (!loaded_ranks[j][midx].enabled)
+						continue;
+
 					if (evtid == 0x80 || (evtid == 0x90 && velocity == 0x00)) {
 						if (loaded_ranks[j][midx].nb_insts < 1)
 							continue;
@@ -365,6 +374,36 @@ static struct midi_stream_data *start_midi(PmDeviceID midi_in_id, void *ud)
 	return msd;
 }
 
+#ifdef _WIN32
+
+#include <windows.h>
+
+static int immediate_getchar()
+{
+	/* TODO - disable echo... */
+	return getch();
+}
+
+#else
+
+#include <termios.h>
+#include <unistd.h>
+
+static int immediate_getchar()
+{
+	static struct termios oldt, newt;
+	int ret;
+	tcgetattr(STDIN_FILENO, &oldt);
+	newt          = oldt;
+	newt.c_lflag &= ~(ECHO | ICANON);
+	tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+	ret = getchar();
+	tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+	return ret;
+}
+
+#endif
+
 static int setup_sound(PmDeviceID midi_devid)
 {
 	PaHostApiIndex def_api;
@@ -373,6 +412,7 @@ static int setup_sound(PmDeviceID midi_devid)
 	PaStreamParameters stream_params;
 	PaError pa_err;
 	PaStream *stream;
+	int input;
 
 	printf("attempting to a default device... ");
 
@@ -434,7 +474,29 @@ static int setup_sound(PmDeviceID midi_devid)
 
 	Pa_StartStream(stream);
 
-	Pa_Sleep(1280000);
+	while ((input = immediate_getchar()) != 'q') {
+		unsigned i;
+		for (i = 0; i < NUM_TEST_ENTRY_LIST; i++) {
+			if (TEST_ENTRY_LIST[i].shortcut == input) {
+				if (loaded_ranks[i][0].enabled) {
+					unsigned j;
+					for (j = 0; j < TEST_ENTRY_LIST[i].nb_pipes; j++) {
+						if (loaded_ranks[i][j].nb_insts && loaded_ranks[i][j].instance) {
+							playeng_signal_instance(engine, loaded_ranks[i][j].instance, 0x02);
+						}
+						loaded_ranks[i][j].instance = NULL;
+						loaded_ranks[i][j].nb_insts = 0;
+						loaded_ranks[i][j].enabled = 0;
+					}
+				} else {
+					unsigned j;
+					for (j = 0; j < TEST_ENTRY_LIST[i].nb_pipes; j++) {
+						loaded_ranks[i][j].enabled = 1;
+					}
+				}
+			}
+		}
+	}
 
 	Pa_StopStream(stream);
 
