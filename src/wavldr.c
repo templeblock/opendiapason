@@ -409,6 +409,49 @@ inplace_convolve
 	free(old_data);
 }
 
+static float quantize_boost_interleave16
+	(int_least16_t  *out_buf
+	,float         **in_bufs
+	,unsigned        channels
+	,unsigned        in_start
+	,unsigned        in_length
+	,unsigned        out_length
+	,uint_fast32_t  *dither_seed
+	)
+{
+	float maxv, minv;
+	uint_fast32_t rseed = *dither_seed;
+	float boost;
+	unsigned i;
+	for (maxv = 0.0f, minv = 0.0f, i = 0; i < channels; i++) {
+		unsigned j;
+		for (j = 0; j < in_length; j++) {
+			float s = in_bufs[i][j+in_start];
+			maxv = (s > maxv) ? s : maxv;
+			minv = (s < minv) ? s : minv;
+		}
+	}
+	maxv               = ((maxv > -minv) ? maxv : -minv) * (1.0f / (32768.0f * 0.9999f));
+	boost              = 1.0f / maxv;
+	for (i = 0; i < channels; i++) {
+		unsigned j;
+		for (j = 0; j < in_length; j++) {
+			float s          = in_bufs[i][j+in_start] * boost;
+			int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
+			int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
+			float dither     = (r1 + r2) * (1.0f / 0x7FFFFFFF);
+			int_fast32_t v   = (int_fast32_t)(dither + s + 32768.0f) - 32768;
+			assert(v >= -32768 && v <= 32767);
+			out_buf[channels*j+i] = (int_least16_t)v;
+		}
+		for (; j < out_length; j++) {
+			out_buf[channels*j+i] = 0;
+		}
+	}
+	*dither_seed = rseed;
+	return maxv;
+}
+
 /* This takes a memory wave and overwrites all of its channels with filtered
  * versions. This is designed to compensate for the high-frequency roll-off
  * which is introduced by the interpolation filters.
@@ -552,9 +595,11 @@ load_smpl_f
 	struct memory_wave mw;
 	const char *err;
 	unsigned i;
-	void *samples;
-	int_least16_t *relsamples;
 	unsigned long dlen;
+	uint_fast32_t rseed = rand();
+	void *buf;
+	/* release has 32 samples of extra zero slop for a fake loop */
+	const unsigned release_slop   = 32;
 
 	err = mw_load_from_file(&mw, filename);
 	if (err != NULL)
@@ -723,77 +768,41 @@ load_smpl_f
 #endif
 
 	dlen = pipe->attack.ends[mw.nloop-1].end_smpl + 1;
-	samples = malloc(sizeof(int_least16_t) * dlen * mw.channels);
 
-	/* release has 32 samples of extra zero slop for a fake loop */
 	unsigned release_length = mw.length - mw.release_pos;
-	unsigned release_slop   = 32;
-	uint_fast32_t rseed = rand();
-	float minv, maxv;
-	float boost;
 
-	relsamples = malloc(sizeof(int_least16_t) * (release_length + release_slop) * mw.channels);
-
-	pipe->release.instantiate               = u16c2_instantiate;
 	pipe->release.nloop                     = 1;
 	pipe->release.starts[0].start_smpl      = release_length;
 	pipe->release.starts[0].first_valid_end = 0;
 	pipe->release.ends[0].end_smpl          = release_length + release_slop - 1;
 	pipe->release.ends[0].start_idx         = 0;
 
-	for (maxv = 0.0f, minv = 0.0f, i = 0; i < mw.channels; i++) {
-		unsigned j;
-		for (j = 0; j < release_length; j++) {
-			float s = mw.data[i][j+mw.release_pos];
-			maxv = (s > maxv) ? s : maxv;
-			minv = (s < minv) ? s : minv;
-		}
-	}
-	maxv               = ((maxv > -minv) ? maxv : -minv) * (1.0f / (32768.0f * 0.9999f));
-	boost              = 1.0f / maxv;
-	pipe->release.gain = maxv;
-	for (i = 0; i < mw.channels; i++) {
-		unsigned j;
-		for (j = 0; j < release_length; j++) {
-			float s          = mw.data[i][j+mw.release_pos] * boost;
-			int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
-			int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
-			float dither     = (r1 + r2) * (1.0f / 0x7FFFFFFF);
-			int_fast32_t v   = (int_fast32_t)(dither + s + 32768.0f) - 32768;
-			assert(v >= -32768 && v <= 32767);
-			relsamples[mw.channels*j+i] = (int_least16_t)v;
-		}
-		for (; j < release_length + release_slop; j++) {
-			relsamples[mw.channels*j+i] = 0;
-		}
-	}
-	pipe->release.data = relsamples;
+	buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (release_length + release_slop) * mw.channels);
+	pipe->release.gain =
+		quantize_boost_interleave16
+			(buf
+			,mw.data
+			,mw.channels
+			,mw.release_pos
+			,release_length
+			,release_length + release_slop
+			,&rseed
+			);
+	pipe->release.data = buf;
+	pipe->release.instantiate = u16c2_instantiate;
 
-	for (maxv = 0.0f, minv = 0.0f, i = 0; i < mw.channels; i++) {
-		unsigned j;
-		for (j = 0; j < dlen; j++) {
-			float s = mw.data[i][j];
-			maxv = (s > maxv) ? s : maxv;
-			minv = (s < minv) ? s : minv;
-		}
-	}
-	maxv              = ((maxv > -minv) ? maxv : -minv) * (1.0f / (32768.0f * 0.9999f));
-	boost             = 1.0f / maxv;
-	pipe->attack.gain = maxv;
-	for (i = 0; i < mw.channels; i++) {
-		unsigned j;
-		for (j = 0; j < dlen; j++) {
-			float s          = mw.data[i][j] * boost;
-			int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
-			int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
-			float dither     = (r1 + r2) * (1.0f / 0x7FFFFFFF);
-			int_fast32_t v   = (int_fast32_t)(dither + s + 32768.0f) - 32768;
-			assert(v >= -32768 && v <= 32767);
-			((int_least16_t *)samples)[mw.channels*j+i] = (int_least16_t)v;
-		}
-	}
-	pipe->attack.data = samples;
-
+	buf = aalloc_alloc(allocator, sizeof(int_least16_t) * dlen * mw.channels);
+	pipe->attack.gain =
+		quantize_boost_interleave16
+			(buf
+			,mw.data
+			,mw.channels
+			,0
+			,dlen
+			,dlen
+			,&rseed
+			);
+	pipe->attack.data = buf;
 	pipe->attack.instantiate = u16c2_instantiate;
 
 #if OPENDIAPASON_VERBOSE_DEBUG
