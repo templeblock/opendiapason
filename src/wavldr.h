@@ -57,6 +57,7 @@ load_smpl_f
 	,unsigned                    prefilt_kern_len
 	,unsigned                    prefilt_real_fft_len
 	,const struct fftset_fft    *prefilt_fft
+	,int                         load_type
 	);
 
 const char *load_smpl_mem(struct memory_wave *smpl, unsigned char *buf, unsigned long fsz);

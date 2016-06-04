@@ -136,10 +136,10 @@ struct dec_state {
 		struct {
 			struct filter_state   resamp[2]; /* left/right */
 			struct fade_state     fade;
-			const int_least16_t  *data;
+			const void           *data;
 			struct dec_loop_end   loopend;
 			uint_fast32_t         rndstate;
-		} u16;
+		} uncms;
 	} s;
 
 	/* This is a reference to the sample. It is undefined for the sample to be

@@ -22,6 +22,7 @@
 #define DECODE_LEAST16X2
 
 #include "decode_types.h"
+#include "cop/cop_conversions.h"
 
 #define FADE_VEC_LEN (4)
 
@@ -82,7 +83,37 @@ static void fade_configure(struct fade_state *state, unsigned target_samples, fl
 	state->target = gain;
 }
 
-static unsigned u16c2_dec(struct dec_state *state, float *COP_ATTR_RESTRICT *buf)
+static void COP_ATTR_ALWAYSINLINE decode2x12(const void *buf, float *a, float *b)
+{
+#if __LITTLE_ENDIAN__ && defined(__clang__)
+/* A little explanation is probably required here...
+ * I wanted to add support for 12-bit samples but trying to get plain-C code
+ * to optimize the three loads into nice code was just not working. This
+ * decoder requires that the buffer always at least contains one extra element
+ * of initialized data and (to produce decent code) requires the compiler to
+ * not call a standard-library version of memcpy...
+ *
+ * Clang produces very nice code here, but other compilers should be checked
+ * and manually added to the above conditional logic when it is shown they
+ * build good code.
+ *
+ * Also, I don't think the current guard is actually good enough... there are
+ * probably more cases for this code to be broken. */
+	uint32_t v; memcpy(&v, buf, sizeof(uint32_t));
+#else
+	uint32_t v = cop_ld_ule24(buf);
+#endif
+	*a = ((int32_t)(v << 8)) >> 20;
+	*b = ((int32_t)(v << 20)) >> 20;
+}
+static void COP_ATTR_ALWAYSINLINE encode2x12(void *buf, int a, int b)
+{
+	uint32_t au = a;
+	uint32_t bu = b;
+	cop_st_ule24(buf, ((au & 0xFFF) << 12) | (bu & 0xFFF));
+}
+
+unsigned u16c2_dec(struct dec_state *state, float *COP_ATTR_RESTRICT *buf)
 {
 	float VEC_ALIGN_BEST tmp[128];
 	unsigned flags;
@@ -93,12 +124,12 @@ static unsigned u16c2_dec(struct dec_state *state, float *COP_ATTR_RESTRICT *buf
 	unsigned ipos, fpos, i;
 	unsigned rate = state->rate;
 
-	data     = state->s.u16.data;
-	rndstate = state->s.u16.rndstate;
+	data     = state->s.uncms.data;
+	rndstate = state->s.uncms.rndstate;
 	ipos     = state->ipos;
 	fpos     = state->fpos;
-	s0       = state->s.u16.resamp[0];
-	s1       = state->s.u16.resamp[1];
+	s0       = state->s.uncms.resamp[0];
+	s1       = state->s.uncms.resamp[1];
 
 	for (i = 0; i < 2*OUTPUT_SAMPLES; i += 2*FADE_VEC_LEN) {
 
@@ -115,11 +146,11 @@ static unsigned u16c2_dec(struct dec_state *state, float *COP_ATTR_RESTRICT *buf
 				float tf2_ = data[2*ipos+1]; \
 				INSERT_DUAL(s0, s1, &tf1_, &tf2_); \
 				ipos++; \
-				if (COP_HINT_FALSE(ipos > state->s.u16.loopend.end_smpl)) { \
-					const struct dec_loop_def *pdef = state->smpl->starts + state->s.u16.loopend.start_idx; \
+				if (COP_HINT_FALSE(ipos > state->s.uncms.loopend.end_smpl)) { \
+					const struct dec_loop_def *pdef = state->smpl->starts + state->s.uncms.loopend.start_idx; \
 					ipos = pdef->start_smpl; \
 					rndstate = update_rnd(rndstate); \
-					state->s.u16.loopend = state->smpl->ends[pdef->first_valid_end + rndstate % (state->smpl->nloop - pdef->first_valid_end)]; \
+					state->s.uncms.loopend = state->smpl->ends[pdef->first_valid_end + rndstate % (state->smpl->nloop - pdef->first_valid_end)]; \
 				} \
 				fpos -= SMPL_POSITION_SCALE; \
 			} \
@@ -144,6 +175,7 @@ static unsigned u16c2_dec(struct dec_state *state, float *COP_ATTR_RESTRICT *buf
 			V4F_INTERLEAVE(ox7, ox8, s3l, s3r);   /* L3 R3 L3 R3 | L3 R3 L3 R3 */
 			ox3 = v4f_add(ox5, ox6);              /* L2 R2 L2 R2 */
 			ox4 = v4f_add(ox7, ox8);              /* L3 R3 L3 R3 */
+#undef BUILD_SMPL_STEREO
 
 			V4F_INTERLEAVE(ox5, ox6, ox1, ox3);   /* L0 L2 R0 R2 | L0 L2 R0 R2 */
 			V4F_INTERLEAVE(ox7, ox8, ox2, ox4);   /* L1 L3 R1 R3 | L1 L3 R1 R3 */
@@ -155,17 +187,108 @@ static unsigned u16c2_dec(struct dec_state *state, float *COP_ATTR_RESTRICT *buf
 		}
 	}
 
-	state->s.u16.rndstate  = rndstate;
+	state->s.uncms.rndstate  = rndstate;
 	state->ipos            = ipos;
 	state->fpos            = fpos;
-	state->s.u16.resamp[0] = s0;
-	state->s.u16.resamp[1] = s1;
+	state->s.uncms.resamp[0] = s0;
+	state->s.uncms.resamp[1] = s1;
 
 	flags = 0;
-	if (state->ipos >= state->smpl->starts[state->s.u16.loopend.start_idx].start_smpl) {
+	if (state->ipos >= state->smpl->starts[state->s.uncms.loopend.start_idx].start_smpl) {
 		flags |= DEC_IS_LOOPING;
 	}
-	if (fade_process2(&state->s.u16.fade, buf, tmp) > 0) {
+	if (fade_process2(&state->s.uncms.fade, buf, tmp) > 0) {
+		flags |= DEC_IS_FADING;
+	}
+	return flags;
+}
+
+unsigned u12c2_dec(struct dec_state *state, float *COP_ATTR_RESTRICT *buf)
+{
+	float VEC_ALIGN_BEST tmp[128];
+	unsigned flags;
+	const unsigned char *data;
+	uint_fast32_t rndstate;
+	struct filter_state s0;
+	struct filter_state s1;
+	unsigned ipos, fpos, i;
+	unsigned rate = state->rate;
+
+	data     = state->s.uncms.data;
+	rndstate = state->s.uncms.rndstate;
+	ipos     = state->ipos;
+	fpos     = state->fpos;
+	s0       = state->s.uncms.resamp[0];
+	s1       = state->s.uncms.resamp[1];
+
+	for (i = 0; i < 2*OUTPUT_SAMPLES; i += 2*FADE_VEC_LEN) {
+
+		/* This macro creates a stereo sample and shifts the left into OL_
+		 * and the right into OR_. This can be called several times to
+		 * fill a vector */
+#define BUILD_SMPL_STEREO(OL_, OR_) \
+		do { \
+			const float * COP_ATTR_RESTRICT coefs_ = SMPL_INTERP[fpos]; \
+			fpos += rate; \
+			ACCUM_DUAL(s0, s1, coefs_, OL_, OR_); \
+			while (fpos >= SMPL_POSITION_SCALE) { \
+				float tf1_, tf2_; \
+				decode2x12(data + 3*ipos, &tf1_, &tf2_); \
+				INSERT_DUAL(s0, s1, &tf1_, &tf2_); \
+				if (COP_HINT_FALSE(ipos >= state->s.uncms.loopend.end_smpl)) { \
+					const struct dec_loop_def *pdef = state->smpl->starts + state->s.uncms.loopend.start_idx; \
+					ipos     = pdef->start_smpl; \
+					rndstate = update_rnd(rndstate); \
+					state->s.uncms.loopend = state->smpl->ends[pdef->first_valid_end + rndstate % (state->smpl->nloop - pdef->first_valid_end)]; \
+				} else { \
+					ipos++; \
+				} \
+				fpos -= SMPL_POSITION_SCALE; \
+			} \
+		} while (0)
+
+		{
+			v4f s0l, s0r, s1l, s1r, s2l, s2r, s3l, s3r;
+			v4f ox1, ox2, ox3, ox4, ox5, ox6, ox7, ox8;
+
+			/* Build first two samples. */
+			BUILD_SMPL_STEREO(s0l, s0r);          /* L0 L0 L0 L0 | R0 R0 R0 R0 */
+			V4F_INTERLEAVE(ox5, ox6, s0l, s0r);   /* L0 R0 L0 R0 | L0 R0 L0 R0 */
+			BUILD_SMPL_STEREO(s1l, s1r);          /* L1 L1 L1 L1 | R1 R1 R1 R1 */
+			V4F_INTERLEAVE(ox7, ox8, s1l, s1r);   /* L1 R1 L1 R1 | L1 R1 L1 R1 */
+			ox1 = v4f_add(ox5, ox6);              /* L0 R0 L0 R0 */
+			ox2 = v4f_add(ox7, ox8);              /* L1 R1 L1 R1 */
+
+			/* Build third and fourth sample and interleave with first. */
+			BUILD_SMPL_STEREO(s2l, s2r);          /* L2 L2 L2 L2 | R2 R2 R2 R2 */
+			V4F_INTERLEAVE(ox5, ox6, s2l, s2r);   /* L2 R2 L2 R2 | L2 R2 L2 R2 */
+			BUILD_SMPL_STEREO(s3l, s3r);          /* L3 L3 L3 L3 | R3 R3 R3 R3 */
+			V4F_INTERLEAVE(ox7, ox8, s3l, s3r);   /* L3 R3 L3 R3 | L3 R3 L3 R3 */
+			ox3 = v4f_add(ox5, ox6);              /* L2 R2 L2 R2 */
+			ox4 = v4f_add(ox7, ox8);              /* L3 R3 L3 R3 */
+#undef BUILD_SMPL_STEREO
+
+			V4F_INTERLEAVE(ox5, ox6, ox1, ox3);   /* L0 L2 R0 R2 | L0 L2 R0 R2 */
+			V4F_INTERLEAVE(ox7, ox8, ox2, ox4);   /* L1 L3 R1 R3 | L1 L3 R1 R3 */
+			ox1 = v4f_add(ox5, ox6);              /* L0 L2 R0 R2 */
+			ox2 = v4f_add(ox7, ox8);              /* L1 L3 R1 R3 */
+
+			/* Interleave and store output. */
+			V4F_ST2INT(tmp + i, ox1, ox2);        /* L0 L1 L2 L3 | R0 R1 R2 R3 */
+		}
+	}
+
+	state->s.uncms.rndstate  = rndstate;
+	state->ipos              = ipos;
+	state->fpos              = fpos;
+	state->s.uncms.resamp[0] = s0;
+	state->s.uncms.resamp[1] = s1;
+
+	flags = 0;
+	if (state->ipos >= state->smpl->starts[state->s.uncms.loopend.start_idx].start_smpl) {
+		flags |= DEC_IS_LOOPING;
+	}
+	if (fade_process2(&state->s.uncms.fade, buf, tmp) > 0) {
 		flags |= DEC_IS_FADING;
 	}
 	return flags;
@@ -173,14 +296,13 @@ static unsigned u16c2_dec(struct dec_state *state, float *COP_ATTR_RESTRICT *buf
 
 static void u16c2_setfade(struct dec_state *state, unsigned target_samples, float gain)
 {
-	fade_configure(&state->s.u16.fade, target_samples, state->smpl->gain * gain);
+	fade_configure(&state->s.uncms.fade, target_samples, state->smpl->gain * gain);
 }
 
-static void u16c2_instantiate(struct dec_state *instance, const struct dec_smpl *sample, uint_fast32_t ipos, uint_fast32_t fpos)
+static COP_ATTR_ALWAYSINLINE void uc2_instantiate(struct dec_state *instance, const struct dec_smpl *sample, uint_fast32_t ipos, uint_fast32_t fpos, unsigned bits)
 {
 	struct filter_state s0;
 	struct filter_state s1;
-	unsigned i;
 	
 	/* TODO: remove this crap */
 	memset(instance, 0, sizeof(*instance));
@@ -190,21 +312,47 @@ static void u16c2_instantiate(struct dec_state *instance, const struct dec_smpl 
 	instance->smpl = sample;
 	instance->fpos = fpos;
 	instance->ipos = ipos;
-	fade_configure(&instance->s.u16.fade, 0, sample->gain);
-	instance->s.u16.data = sample->data;
-	instance->s.u16.loopend = sample->ends[0];
+	fade_configure(&instance->s.uncms.fade, 0, sample->gain);
+	instance->s.uncms.data = sample->data;
+	instance->s.uncms.loopend = sample->ends[0];
 
 	/* FILL FILTER STATE */
-	unsigned first = (ipos > SMPL_INTERP_TAPS) ? (ipos - SMPL_INTERP_TAPS) : 0;
-	for (i = first; i < ipos; i++) {
-		float tf1 = ((int_least16_t *)(sample->data))[2*i+0];
-		float tf2 = ((int_least16_t *)(sample->data))[2*i+1];
-		INSERT_DUAL(s0, s1, &tf1, &tf2);
+	if (bits == 16) {
+		unsigned first = (ipos > SMPL_INTERP_TAPS) ? (ipos - SMPL_INTERP_TAPS) : 0;
+		unsigned i;
+		for (i = first; i < ipos; i++) {
+			float tf1 = ((const int_least16_t *)(sample->data))[2*i+0];
+			float tf2 = ((const int_least16_t *)(sample->data))[2*i+1];
+			INSERT_DUAL(s0, s1, &tf1, &tf2);
+		}
+		instance->setfade         = u16c2_setfade;
+		instance->decode          = u16c2_dec;
+	} else if (bits == 12) {
+		unsigned first = (ipos > SMPL_INTERP_TAPS) ? (ipos - SMPL_INTERP_TAPS) : 0;
+		unsigned i;
+		for (i = first; i < ipos; i++) {
+			float tf1, tf2;
+			decode2x12((((const unsigned char *)sample->data) + 3*i), &tf1, &tf2);
+			INSERT_DUAL(s0, s1, &tf1, &tf2);
+		}
+		instance->setfade         = u16c2_setfade;
+		instance->decode          = u12c2_dec;
+	} else {
+		abort();
 	}
-	instance->s.u16.resamp[0] = s0;
-	instance->s.u16.resamp[1] = s1;
-	instance->setfade         = u16c2_setfade;
-	instance->decode          = u16c2_dec;
+
+	instance->s.uncms.resamp[0] = s0;
+	instance->s.uncms.resamp[1] = s1;
+}
+
+static COP_ATTR_UNUSED void u16c2_instantiate(struct dec_state *instance, const struct dec_smpl *sample, uint_fast32_t ipos, uint_fast32_t fpos)
+{
+	uc2_instantiate(instance, sample, ipos, fpos, 16);
+}
+
+static COP_ATTR_UNUSED void u12c2_instantiate(struct dec_state *instance, const struct dec_smpl *sample, uint_fast32_t ipos, uint_fast32_t fpos)
+{
+	uc2_instantiate(instance, sample, ipos, fpos, 12);
 }
 
 #endif

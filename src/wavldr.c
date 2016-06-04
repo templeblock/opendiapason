@@ -409,14 +409,15 @@ inplace_convolve
 	free(old_data);
 }
 
-static float quantize_boost_interleave16
-	(int_least16_t  *out_buf
+static float quantize_boost_interleave
+	(void           *obuf
 	,float         **in_bufs
 	,unsigned        channels
 	,unsigned        in_start
 	,unsigned        in_length
 	,unsigned        out_length
 	,uint_fast32_t  *dither_seed
+	,unsigned        fmtbits
 	)
 {
 	float maxv, minv;
@@ -431,23 +432,52 @@ static float quantize_boost_interleave16
 			minv = (s < minv) ? s : minv;
 		}
 	}
-	maxv               = ((maxv > -minv) ? maxv : -minv) * (1.0f / (32768.0f * 0.9999f));
+	if (fmtbits == 16) {
+		maxv               = ((maxv > -minv) ? maxv : -minv) * (1.0f / (32768.0f * 0.9999f));
+	} else {
+		maxv               = ((maxv > -minv) ? maxv : -minv) * (1.0f / (2048.0f * 0.9999f));
+	}
 	boost              = 1.0f / maxv;
-	for (i = 0; i < channels; i++) {
+	if (fmtbits == 12 && channels == 2) {
+		unsigned char *out_buf = obuf;
 		unsigned j;
 		for (j = 0; j < in_length; j++) {
-			float s          = in_bufs[i][j+in_start] * boost;
+			float s1         = in_bufs[0][j+in_start] * boost;
+			float s2         = in_bufs[1][j+in_start] * boost;
 			int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
 			int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
-			float dither     = (r1 + r2) * (1.0f / 0x7FFFFFFF);
-			int_fast32_t v   = (int_fast32_t)(dither + s + 32768.0f) - 32768;
-			assert(v >= -32768 && v <= 32767);
-			out_buf[channels*j+i] = (int_least16_t)v;
+			int_fast32_t r3  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
+			int_fast32_t r4  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
+			float d1         = (r1 + r2) * (1.0f / 0x7FFFFFFF);
+			float d2         = (r3 + r4) * (1.0f / 0x7FFFFFFF);
+			int_fast32_t v1  = (int_fast32_t)(d1 + s1 + 2048.0f) - 2048;
+			int_fast32_t v2  = (int_fast32_t)(d2 + s2 + 2048.0f) - 2048;
+			v1 = (v1 > (int)0x7FF) ? 0x7FF : ((v1 < -(int)0x800) ? -(int)0x800 : v1);
+			v2 = (v2 > (int)0x7FF) ? 0x7FF : ((v2 < -(int)0x800) ? -(int)0x800 : v2);
+			encode2x12(out_buf + 3*j, v1, v2);
 		}
 		for (; j < out_length; j++) {
-			out_buf[channels*j+i] = 0;
+			encode2x12(out_buf + 3*j, 0, 0);
+		}
+	} else {
+		int_least16_t *out_buf = obuf;
+		for (i = 0; i < channels; i++) {
+			unsigned j;
+			for (j = 0; j < in_length; j++) {
+				float s          = in_bufs[i][j+in_start] * boost;
+				int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
+				int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
+				float dither     = (r1 + r2) * (1.0f / 0x7FFFFFFF);
+				int_fast32_t v   = (int_fast32_t)(dither + s + 32768.0f) - 32768;
+				assert(v >= -32768 && v <= 32767);
+				out_buf[channels*j+i] = (int_least16_t)v;
+			}
+			for (; j < out_length; j++) {
+				out_buf[channels*j+i] = 0;
+			}
 		}
 	}
+
 	*dither_seed = rseed;
 	return maxv;
 }
@@ -590,6 +620,7 @@ load_smpl_f
 	,unsigned                    prefilt_kern_len
 	,unsigned                    prefilt_real_fft_len
 	,const struct fftset_fft    *prefilt_fft
+	,int                         load_type
 	)
 {
 	struct memory_wave mw;
@@ -777,33 +808,70 @@ load_smpl_f
 	pipe->release.ends[0].end_smpl          = release_length + release_slop - 1;
 	pipe->release.ends[0].start_idx         = 0;
 
-	buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (release_length + release_slop) * mw.channels);
-	pipe->release.gain =
-		quantize_boost_interleave16
-			(buf
-			,mw.data
-			,mw.channels
-			,mw.release_pos
-			,release_length
-			,release_length + release_slop
-			,&rseed
-			);
-	pipe->release.data = buf;
-	pipe->release.instantiate = u16c2_instantiate;
+	if (load_type == 12 && mw.channels == 2) {
+		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (release_length + release_slop + 1) * 3);
+		pipe->release.gain =
+			quantize_boost_interleave
+				(buf
+				,mw.data
+				,2
+				,mw.release_pos
+				,release_length
+				,release_length + release_slop + 1
+				,&rseed
+				,12
+				);
+		pipe->release.data = buf;
+		pipe->release.instantiate = u12c2_instantiate;
 
-	buf = aalloc_alloc(allocator, sizeof(int_least16_t) * dlen * mw.channels);
-	pipe->attack.gain =
-		quantize_boost_interleave16
-			(buf
-			,mw.data
-			,mw.channels
-			,0
-			,dlen
-			,dlen
-			,&rseed
-			);
-	pipe->attack.data = buf;
-	pipe->attack.instantiate = u16c2_instantiate;
+		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (dlen + 1) * 3);
+		pipe->attack.gain =
+			quantize_boost_interleave
+				(buf
+				,mw.data
+				,2
+				,0
+				,dlen
+				,dlen + 1
+				,&rseed
+				,12
+				);
+		pipe->attack.data = buf;
+		pipe->attack.instantiate = u12c2_instantiate;
+	} else if (load_type == 16 && mw.channels == 2) {
+		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (release_length + release_slop + 1) * 2);
+		pipe->release.gain =
+			quantize_boost_interleave
+				(buf
+				,mw.data
+				,2
+				,mw.release_pos
+				,release_length
+				,release_length + release_slop + 1
+				,&rseed
+				,16
+				);
+		pipe->release.data = buf;
+		pipe->release.instantiate = u16c2_instantiate;
+
+		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (dlen + 1) * 2);
+		pipe->attack.gain =
+			quantize_boost_interleave
+				(buf
+				,mw.data
+				,2
+				,0
+				,dlen
+				,dlen + 1
+				,&rseed
+				,16
+				);
+		pipe->attack.data = buf;
+		pipe->attack.instantiate = u16c2_instantiate;
+	} else {
+		abort();
+	}
+
 
 #if OPENDIAPASON_VERBOSE_DEBUG
 	for (i = 0; i < mw.nloop; i++) {
