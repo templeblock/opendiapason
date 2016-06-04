@@ -420,62 +420,78 @@ static float quantize_boost_interleave
 	,unsigned        fmtbits
 	)
 {
-	float maxv, minv;
+	float maxv = 0.0f;
 	uint_fast32_t rseed = *dither_seed;
 	float boost;
-	unsigned i;
-	for (maxv = 0.0f, minv = 0.0f, i = 0; i < channels; i++) {
+
+	if (channels == 2) {
 		unsigned j;
+		float minv = 0.0f;
+
 		for (j = 0; j < in_length; j++) {
-			float s = in_bufs[i][j+in_start];
-			maxv = (s > maxv) ? s : maxv;
-			minv = (s < minv) ? s : minv;
+			float s1 = in_bufs[0][j+in_start];
+			float s2 = in_bufs[1][j+in_start];
+			maxv = (s1 > maxv) ? s1 : maxv;
+			minv = (s1 < minv) ? s1 : minv;
+			maxv = (s2 > maxv) ? s2 : maxv;
+			minv = (s2 < minv) ? s2 : minv;
 		}
-	}
-	if (fmtbits == 16) {
-		maxv               = ((maxv > -minv) ? maxv : -minv) * (1.0f / (32768.0f * 0.9999f));
-	} else {
-		maxv               = ((maxv > -minv) ? maxv : -minv) * (1.0f / (2048.0f * 0.9999f));
-	}
-	boost              = 1.0f / maxv;
-	if (fmtbits == 12 && channels == 2) {
-		unsigned char *out_buf = obuf;
-		unsigned j;
-		for (j = 0; j < in_length; j++) {
-			float s1         = in_bufs[0][j+in_start] * boost;
-			float s2         = in_bufs[1][j+in_start] * boost;
-			int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
-			int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
-			int_fast32_t r3  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
-			int_fast32_t r4  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
-			float d1         = (r1 + r2) * (1.0f / 0x7FFFFFFF);
-			float d2         = (r3 + r4) * (1.0f / 0x7FFFFFFF);
-			int_fast32_t v1  = (int_fast32_t)(d1 + s1 + 2048.0f) - 2048;
-			int_fast32_t v2  = (int_fast32_t)(d2 + s2 + 2048.0f) - 2048;
-			v1 = (v1 > (int)0x7FF) ? 0x7FF : ((v1 < -(int)0x800) ? -(int)0x800 : v1);
-			v2 = (v2 > (int)0x7FF) ? 0x7FF : ((v2 < -(int)0x800) ? -(int)0x800 : v2);
-			encode2x12(out_buf + 3*j, v1, v2);
-		}
-		for (; j < out_length; j++) {
-			encode2x12(out_buf + 3*j, 0, 0);
-		}
-	} else {
-		int_least16_t *out_buf = obuf;
-		for (i = 0; i < channels; i++) {
-			unsigned j;
+
+		maxv += 1.0f;
+		maxv  = (maxv > -minv) ? maxv : -minv;
+
+		if (fmtbits == 12 && channels == 2) {
+			unsigned char *out_buf = obuf;
+			maxv  *= 1.0f / 2048.0f;
+			boost  = 1.0f / maxv;
 			for (j = 0; j < in_length; j++) {
-				float s          = in_bufs[i][j+in_start] * boost;
+				float s1         = in_bufs[0][j+in_start] * boost;
+				float s2         = in_bufs[1][j+in_start] * boost;
 				int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
 				int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
-				float dither     = (r1 + r2) * (1.0f / 0x7FFFFFFF);
-				int_fast32_t v   = (int_fast32_t)(dither + s + 32768.0f) - 32768;
-				assert(v >= -32768 && v <= 32767);
-				out_buf[channels*j+i] = (int_least16_t)v;
+				int_fast32_t r3  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
+				int_fast32_t r4  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
+				float d1         = (r1 + r2) * (1.0f / 0x7FFFFFFF);
+				float d2         = (r3 + r4) * (1.0f / 0x7FFFFFFF);
+				int_fast32_t v1  = (int_fast32_t)(d1 + s1 + 2048.0f) - 2048;
+				int_fast32_t v2  = (int_fast32_t)(d2 + s2 + 2048.0f) - 2048;
+				v1 = (v1 > (int)0x7FF) ? 0x7FF : ((v1 < -(int)0x800) ? -(int)0x800 : v1);
+				v2 = (v2 > (int)0x7FF) ? 0x7FF : ((v2 < -(int)0x800) ? -(int)0x800 : v2);
+				encode2x12(out_buf + 3*j, v1, v2);
 			}
 			for (; j < out_length; j++) {
-				out_buf[channels*j+i] = 0;
+				encode2x12(out_buf + 3*j, 0, 0);
 			}
+		} else if (fmtbits == 16 && channels == 2) {
+			int_least16_t *out_buf = obuf;
+			maxv  *= 1.0f / 32768.0f;
+			boost  = 1.0f / maxv;
+			for (j = 0; j < in_length; j++) {
+				float s1         = in_bufs[0][j+in_start] * boost;
+				float s2         = in_bufs[1][j+in_start] * boost;
+				int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
+				int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
+				int_fast32_t r3  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
+				int_fast32_t r4  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
+				float d1         = (r1 + r2) * (1.0f / 0x7FFFFFFF);
+				float d2         = (r3 + r4) * (1.0f / 0x7FFFFFFF);
+				int_fast32_t v1  = (int_fast32_t)(d1 + s1 + 32768.0f) - 32768;
+				int_fast32_t v2  = (int_fast32_t)(d2 + s2 + 32768.0f) - 32768;
+				v1 = (v1 > (int)0x7FFF) ? 0x7FFF : ((v1 < -(int)0x8000) ? -(int)0x8000 : v1);
+				v2 = (v2 > (int)0x7FFF) ? 0x7FFF : ((v2 < -(int)0x8000) ? -(int)0x8000 : v2);
+				out_buf[2*j+0] = (int_least16_t)v1;
+				out_buf[2*j+1] = (int_least16_t)v2;
+			}
+			for (; j < out_length; j++) {
+				out_buf[2*j+0] = 0;
+				out_buf[2*j+1] = 0;
+			}
+		} else {
+			abort();
 		}
+
+	} else {
+		abort();
 	}
 
 	*dither_seed = rseed;
