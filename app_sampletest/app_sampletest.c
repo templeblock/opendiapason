@@ -23,6 +23,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "cop/cop_thread.h"
+#include "cop/cop_conversions.h"
 #include <math.h>
 
 #include "fftset/fftset.h"
@@ -130,7 +131,7 @@ load_executors
 		const char * err;
 		char namebuf[1024];
 		sprintf(namebuf, "%s/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
-		err = load_smpl_f(&(pipes[i].pd.data), namebuf, mem, fftset, prefilter_data, SMPL_INVERSE_FILTER_LEN, prefilter_conv_len, prefilter_conv, 12);
+		err = load_smpl_f(&(pipes[i].pd.data), namebuf, mem, fftset, prefilter_data, SMPL_INVERSE_FILTER_LEN, prefilter_conv_len, prefilter_conv, 16);
 		if (err != NULL) {
 			printf("WAVE ERR: %s-%s\n", namebuf, err);
 			abort();
@@ -149,6 +150,8 @@ load_executors
 }
 
 struct playeng *engine;
+FILE           *dump_file;
+size_t          dump_file_size;
 
 static
 unsigned
@@ -230,6 +233,27 @@ pa_callback
 	for (samp = 0; samp < frameCount; samp++) {
 		ob[2*samp+0] *= 1; /* 0.25 */
 		ob[2*samp+1] *= 1; /* 0.25 */
+	}
+
+	if (dump_file != NULL && frameCount < 1024) {
+		unsigned char data[3*2*1024];
+
+		for (samp = 0; samp < frameCount*2; samp++) {
+			int_fast32_t r1 = rand();
+			int_fast32_t r2 = rand();
+			float f1 = r1 * (0.5f / RAND_MAX) + r2 * (0.5f / RAND_MAX);
+			int_fast32_t sample = (int_fast32_t)(ob[samp] * (float)0x800000 + f1 + (float)0x800000) - (int_fast32_t)0x800000;
+
+			if (sample > (int_fast32_t)0x7FFFFF)
+				sample = (int_fast32_t)0x7FFFFF;
+			else if (sample < -(int_fast32_t)0x800000)
+				sample = -(int_fast32_t)0x800000;
+
+			cop_st_ule24(data + 3*samp, 0xFFFFFF & (uint_fast32_t)sample);
+		}
+
+		dump_file_size += 3*samp;
+		fwrite(data, 3*samp, 1, dump_file);
 	}
 
 	return paContinue;
@@ -549,14 +573,110 @@ int should_terminate()
 }
 #endif
 
+static int handle_arguments(int argc, char *argv[], PmDeviceID *devid)
+{
+	PmDeviceID midi_devid = -1;
+	argc--;
+	argv++;
+
+	dump_file = NULL;
+	dump_file_size = 44;
+
+	while (argc > 0) {
+
+		if (!strcmp(*argv, "--midiname")) {
+			int nd, i;
+
+			if (argc <= 0) {
+				fprintf(stderr, "give an argument for --midiname");
+				return -1;
+			}
+
+			argc--;
+			argv++;
+			nd = Pm_CountDevices();
+
+			for (i = 0; i < nd; i++) {
+				const PmDeviceInfo* d = Pm_GetDeviceInfo(i);
+				if (d->input && (strstr(d->interf, *argv) != NULL || strstr(d->name, *argv) != NULL)) {
+					if (midi_devid >= 0) {
+						fprintf(stderr, "multiple midi devices match that criteria\n");
+						return -1;
+					}
+					midi_devid = i;
+				}
+			}
+
+			if (midi_devid < 0) {
+				fprintf(stderr, "could not find midi device containing '%s'\n", *argv);
+				return -1;
+			}
+		} else if (!strcmp(*argv, "--midilist")) {
+			const int nd = Pm_CountDevices();
+			int i;
+
+			for (i = 0; i < nd; i++) {
+				const PmDeviceInfo* d = Pm_GetDeviceInfo(i);
+				if (d->input)
+					printf("%d) %s/%s\n", i, d->interf, d->name);
+			}
+
+			if (i == 0)
+				printf("no midi devices!\n");
+
+			return 1;
+		} else if (!strcmp(*argv, "--dumpaudio")) {
+			unsigned char header[44];
+
+			if (argc <= 0) {
+				fprintf(stderr, "give an argument for --midiname\n");
+				return -1;
+			}
+
+			if (dump_file != NULL) {
+				fprintf(stderr, "dump file already open\n");
+				return -1;
+			}
+
+			argc--;
+			argv++;
+
+			dump_file = fopen(*argv, "wb");
+			if (dump_file == NULL) {
+				fprintf(stderr, "could not open '%s' for writing\n", *argv);
+				return -1;
+			}
+
+			memset(header, 0, sizeof(header));
+			fwrite(header, dump_file_size, 1, dump_file);
+		}
+
+		argc--;
+		argv++;
+	}
+
+	*devid = (midi_devid >= 0) ? midi_devid : Pm_GetDefaultInputDeviceID();
+
+	return 0;
+}
+
+static size_t pool_size()
+{
+	size_t sysmem = cop_memory_query_system_memory();
+	if (sysmem > 1024*(size_t)1024*1024) {
+		sysmem -= 256*(size_t)1024*1024;
+	} else {
+		sysmem = 3 * (sysmem / 4);
+	}
+	return sysmem;
+}
 
 int main(int argc, char *argv[])
 {
 	PaError ec;
 	PmError merr;
 	int rv = -1;
-	int start_audio = 1;
-	PmDeviceID midi_devid = -1;
+	PmDeviceID midi_devid;
 
 	printf("OpenDiapason terminal frontend\n");
 	printf("----------------------------------\n");
@@ -587,53 +707,25 @@ int main(int argc, char *argv[])
 	}
 	printf("ok\n");
 
+	rv = handle_arguments(argc, argv, &midi_devid);
+	if (rv != 0) {
+		Pm_Terminate();
+		Pa_Terminate();
+		if (dump_file != NULL) fclose(dump_file);
+		return (rv < 0) ? rv : 0;
+	}
+
 	engine = playeng_init(4096, 2, 4);
 	if (engine == NULL) {
 		Pm_Terminate();
 		Pa_Terminate();
+		if (dump_file != NULL) fclose(dump_file);
 		fprintf(stderr, "couldn't create playback engine. out of memory.\n");
 		return -1;
 	}
 
-	if (argc > 1 && strcmp(argv[1], "--midilist") == 0) {
-		int i;
-		int nd = Pm_CountDevices();
-		for (i = 0; i < nd; i++) {
-			const PmDeviceInfo* d = Pm_GetDeviceInfo(i);
-			if (!d->input)
-				continue;
 
-			printf("%d) %s/%s\n", i, d->interf, d->name);
-		}
-		if (i == 0) {
-			printf("no midi devices!\n");
-		}
-		start_audio = 0;
-	}
-	else if (argc > 2 && strcmp(argv[1], "--midiname") == 0)
 	{
-		int i;
-		int nd = Pm_CountDevices();
-		for (i = 0; i < nd; i++) {
-			const PmDeviceInfo* d = Pm_GetDeviceInfo(i);
-			if (!d->input)
-				continue;
-			if (strstr(d->interf, argv[2]) != NULL || strstr(d->name, argv[2]) != NULL) {
-				if (midi_devid >= 0) {
-					fprintf(stderr, "could not choose between midi devices\n");
-					start_audio = 0;
-				} else {
-					midi_devid = i;
-				}
-			}
-		}
-		if (midi_devid < 0) {
-			fprintf(stderr, "could not find midi device containing '%s'\n", argv[2]);
-			start_audio = 0;
-		}
-	}
-
-	if (start_audio) {
 		unsigned i;
 		struct aalloc               mem;
 		struct fftset               fftset;
@@ -641,13 +733,7 @@ int main(int argc, char *argv[])
 		unsigned                    prefilter_conv_len;
 		float                      *prefilter_data;
 		float                      *prefilter_workbuf;
-		size_t sysmem = cop_memory_query_system_memory();
-
-		if (sysmem > 1024*(size_t)1024*1024) {
-			sysmem -= 256*(size_t)1024*1024;
-		} else {
-			sysmem = 3 * (sysmem / 4);
-		}
+		size_t sysmem = pool_size();
 
 		/* Build the interpolation pre-filter */
 		aalloc_init(&mem, sysmem, 32, 16*1024*1024);
@@ -671,10 +757,44 @@ int main(int argc, char *argv[])
 			loaded_ranks[i] = load_executors(TEST_ENTRY_LIST[i].directory_name, &mem, &fftset, prefilter_data, prefilter_conv_len, prefilter_conv, TEST_ENTRY_LIST[i].first_midi, TEST_ENTRY_LIST[i].nb_pipes, ORGAN_PITCH16, TEST_ENTRY_LIST[i].harmonic16);
 		}
 
-		rv = setup_sound((midi_devid < 0) ? Pm_GetDefaultInputDeviceID() : midi_devid);
+		rv = setup_sound(midi_devid);
 
 		fftset_destroy(&fftset);
 		aalloc_free(&mem);
+	}
+
+	if (dump_file != NULL) {
+		unsigned char header[44];
+
+		header[0] = 'R';
+		header[1] = 'I';
+		header[2] = 'F';
+		header[3] = 'F';
+		cop_st_ule32(header + 4, dump_file_size - 8);
+		header[8] = 'W';
+		header[9] = 'A';
+		header[10] = 'V';
+		header[11] = 'E';
+		header[12] = 'f';
+		header[13] = 'm';
+		header[14] = 't';
+		header[15] = ' ';
+		cop_st_ule32(header + 16, 16);
+		cop_st_ule16(header + 20, 1);
+		cop_st_ule16(header + 22, 2);
+		cop_st_ule32(header + 24, PLAYBACK_SAMPLE_RATE);
+		cop_st_ule32(header + 28, PLAYBACK_SAMPLE_RATE * 2 * 3);
+		cop_st_ule16(header + 32, 2 * 3);
+		cop_st_ule16(header + 34, 24);
+		header[36] = 'd';
+		header[37] = 'a';
+		header[38] = 't';
+		header[39] = 'a';
+		cop_st_ule32(header + 40, dump_file_size - 44);
+
+		fseek(dump_file, 0, SEEK_SET);
+		fwrite(header, 44, 1, dump_file);
+		fclose(dump_file);
 	}
 
 	/* Who cares? */
