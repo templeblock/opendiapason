@@ -139,8 +139,6 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 		 * 12 block align
 		 * 14 bits per sample
 		 * 16 cbsize */
-		unsigned i;
-
 		if (cks.fmtsz < 16)
 			return "invalid format chunk";
 
@@ -155,11 +153,10 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 		if (mw->native_bits != 16 && mw->native_bits != 24)
 			return "can only load 16 or 24 bit PCM wave files";
 
-		mw->data = malloc(sizeof(void *) * mw->channels);
-		for (i = 0; i < mw->channels; i++)
-			mw->data[i] = malloc(sizeof(float) * mw->length);
+		mw->chan_stride = VLF_PAD_LENGTH(mw->length);
+		mw->data        = malloc(sizeof(void *) * mw->channels * mw->chan_stride);
 
-		bufcvt_deinterleave((void **)mw->data, cks.data, mw->length, mw->channels, (mw->native_bits == 24) ? BUFCVT_FMT_SLE24 : BUFCVT_FMT_SLE16, BUFCVT_FMT_FLOAT);
+		bufcvt_deinterleave(mw->data, mw->chan_stride, cks.data, mw->length, mw->channels, (mw->native_bits == 24) ? BUFCVT_FMT_SLE24 : BUFCVT_FMT_SLE16, BUFCVT_FMT_FLOAT);
 	}
 
 
@@ -411,7 +408,8 @@ inplace_convolve
 
 static float quantize_boost_interleave
 	(void           *obuf
-	,float         **in_bufs
+	,float          *in_bufs
+	,size_t          chan_stride
 	,unsigned        channels
 	,unsigned        in_start
 	,unsigned        in_length
@@ -429,8 +427,8 @@ static float quantize_boost_interleave
 		float minv = 0.0f;
 
 		for (j = 0; j < in_length; j++) {
-			float s1 = in_bufs[0][j+in_start];
-			float s2 = in_bufs[1][j+in_start];
+			float s1 = in_bufs[j+in_start];
+			float s2 = in_bufs[chan_stride+j+in_start];
 			maxv = (s1 > maxv) ? s1 : maxv;
 			minv = (s1 < minv) ? s1 : minv;
 			maxv = (s2 > maxv) ? s2 : maxv;
@@ -445,8 +443,8 @@ static float quantize_boost_interleave
 			maxv  *= 1.0f / 2048.0f;
 			boost  = 1.0f / maxv;
 			for (j = 0; j < in_length; j++) {
-				float s1         = in_bufs[0][j+in_start] * boost;
-				float s2         = in_bufs[1][j+in_start] * boost;
+				float s1         = in_bufs[j+in_start] * boost;
+				float s2         = in_bufs[chan_stride+j+in_start] * boost;
 				int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
 				int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
 				int_fast32_t r3  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
@@ -467,8 +465,8 @@ static float quantize_boost_interleave
 			maxv  *= 1.0f / 32768.0f;
 			boost  = 1.0f / maxv;
 			for (j = 0; j < in_length; j++) {
-				float s1         = in_bufs[0][j+in_start] * boost;
-				float s2         = in_bufs[1][j+in_start] * boost;
+				float s1         = in_bufs[j+in_start] * boost;
+				float s2         = in_bufs[chan_stride+j+in_start] * boost;
 				int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
 				int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
 				int_fast32_t r3  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
@@ -545,8 +543,8 @@ apply_prefilter
 	for (ch = 0; ch < mw->channels; ch++) {
 		/* Convolve the attack/sustain segment. */
 		inplace_convolve
-			(mw->data[ch]
-			,mw->data[ch]
+			(mw->data + ch*mw->chan_stride
+			,mw->data + ch*mw->chan_stride
 			,0
 			,susp_start
 			,susp_end+1
@@ -564,13 +562,13 @@ apply_prefilter
 		 * release (we don't really need to do this, it just makes things
 		 * nicer if we dump the memory wave back to a file). */
 		for (i = susp_end + 1; i < rel_start; i++)
-			mw->data[ch][i] = 0.0f;
+			mw->data[ch*mw->chan_stride+i] = 0.0f;
 		/* Convolve the release segment. Don't include all of the pre-ringing
 		 * at the start. i.e. we are shaving some samples away from the start
 		 * of the release. */
 		inplace_convolve
-			(mw->data[ch] + rel_start
-			,mw->data[ch] + rel_start
+			(mw->data + ch*mw->chan_stride + rel_start
+			,mw->data + ch*mw->chan_stride + rel_start
 			,0
 			,0
 			,mw->length - rel_start
@@ -737,14 +735,14 @@ load_smpl_f
 
 		if (mw.channels == 2) {
 			for (i = 0; i <= as_loop_end; i++) {
-				float fl = mw.data[0][i];
-				float fr = mw.data[1][i];
+				float fl = mw.data[i];
+				float fr = mw.data[i+mw.chan_stride];
 				envelope_buf[i] = fl * fl + fr * fr;
 			}
 		} else {
 			assert(mw.channels == 1);
 			for (i = 0; i <= as_loop_end; i++) {
-				float fm = mw.data[0][i];
+				float fm = mw.data[i];
 				envelope_buf[i] = fm * fm;
 			}
 		}
@@ -780,7 +778,7 @@ load_smpl_f
 		for (ch = 0; ch < mw.channels; ch++) {
 			float ch_power = 0.0f;
 			for (i = 0; i < env_width; i++) {
-				float s = mw.data[ch][mw.release_pos + env_width - 1 - i];
+				float s = mw.data[ch*mw.chan_stride + mw.release_pos + env_width - 1 - i];
 				scratch_buf[i] = s * (2.0f / (cor_fft_sz * env_width));
 				ch_power += s * s;
 			}
@@ -789,7 +787,7 @@ load_smpl_f
 			rel_power += ch_power;
 			fftset_fft_conv_get_kernel(fft, kern_buf, scratch_buf);
 			inplace_convolve
-				(mw.data[ch]
+				(mw.data + ch*mw.chan_stride
 				,mse_buf
 				,(ch != 0)
 				,as_loop_start
@@ -830,6 +828,7 @@ load_smpl_f
 			quantize_boost_interleave
 				(buf
 				,mw.data
+				,mw.chan_stride
 				,2
 				,mw.release_pos
 				,release_length
@@ -845,6 +844,7 @@ load_smpl_f
 			quantize_boost_interleave
 				(buf
 				,mw.data
+				,mw.chan_stride
 				,2
 				,0
 				,dlen
@@ -860,6 +860,7 @@ load_smpl_f
 			quantize_boost_interleave
 				(buf
 				,mw.data
+				,mw.chan_stride
 				,2
 				,mw.release_pos
 				,release_length
@@ -875,6 +876,7 @@ load_smpl_f
 			quantize_boost_interleave
 				(buf
 				,mw.data
+				,mw.chan_stride
 				,2
 				,0
 				,dlen
@@ -896,9 +898,6 @@ load_smpl_f
 #endif
 
 	free(mw.loops);
-	for (i = 0; i < mw.channels; i++) {
-		free(mw.data[i]);
-	}
 	free(mw.data);
 
 	return NULL;

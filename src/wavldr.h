@@ -27,7 +27,8 @@
 #include "fftset/fftset.h"
 
 struct memory_wave {
-	float         **data;
+	float          *data;
+	size_t          chan_stride;
 	unsigned long   length;
 	unsigned        channels;
 	unsigned        nloop;

@@ -6,14 +6,14 @@
 #define BUFCVT_FMT_SLE24 (2)
 
 
-void bufcvt_deinterleave(void **dest, const void *src, unsigned length, unsigned nbuf, int infmt, int outfmt)
+void bufcvt_deinterleave(void *dest, size_t dest_stride, const void *src, unsigned length, unsigned nbuf, int infmt, int outfmt)
 {
 	if (infmt == BUFCVT_FMT_SLE16 && outfmt == BUFCVT_FMT_FLOAT)
 	{
 		if (nbuf == 2) {
 			unsigned j;
-			float *out1 = dest[0];
-			float *out2 = dest[1];
+			float *out1 = dest;
+			float *out2 = out1 + dest_stride;
 			for (j = 0; j < length; j++) {
 				int_fast32_t s1;
 				int_fast32_t s2;
@@ -30,7 +30,8 @@ void bufcvt_deinterleave(void **dest, const void *src, unsigned length, unsigned
 			}
 		} else {
 			unsigned i;
-			for (i = 0; i < nbuf; i++) {
+			float *out = dest;
+			for (i = 0; i < nbuf; i++, out += dest_stride) {
 				unsigned j;
 				for (j = 0; j < length; j++) {
 					uint_fast32_t s;
@@ -38,7 +39,7 @@ void bufcvt_deinterleave(void **dest, const void *src, unsigned length, unsigned
 					s =            ((const unsigned char *)src)[2*(i+nbuf*j)+1];
 					s = (s << 8) | ((const unsigned char *)src)[2*(i+nbuf*j)+0];
 					t = (s & 0x8000u)   ? -(int_fast32_t)(((~s) & 0x7FFFu) + 1) : (int_fast32_t)s;
-					((float **)dest)[i][j] = t * (256.0f / (float)0x800000);
+					out[j] = t * (256.0f / (float)0x800000);
 				}
 			}
 		}
@@ -46,7 +47,8 @@ void bufcvt_deinterleave(void **dest, const void *src, unsigned length, unsigned
 	else if (infmt == BUFCVT_FMT_SLE24 && outfmt == BUFCVT_FMT_FLOAT)
 	{
 		unsigned i;
-		for (i = 0; i < nbuf; i++) {
+		float *out = dest;
+		for (i = 0; i < nbuf; i++, out += dest_stride) {
 			unsigned j;
 			for (j = 0; j < length; j++) {
 				uint_fast32_t s;
@@ -55,7 +57,7 @@ void bufcvt_deinterleave(void **dest, const void *src, unsigned length, unsigned
 				s = (s << 8) | ((const unsigned char *)src)[3*(i+nbuf*j)+1];
 				s = (s << 8) | ((const unsigned char *)src)[3*(i+nbuf*j)+0];
 				t = (s & 0x800000u) ? -(int_fast32_t)(((~s) & 0x7FFFFFu) + 1) : (int_fast32_t)s;
-				((float **)dest)[i][j] = t * (1.0f / (float)0x800000);
+				out[j] = t * (1.0f / (float)0x800000);
 			}
 		}
 	}
