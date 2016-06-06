@@ -123,6 +123,12 @@ static const char *load_wave_cks(struct wave_cks *cks, unsigned char *buf, unsig
 const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned long fsz)
 {
 	struct wave_cks cks;
+	unsigned        i, ch;
+	uint_fast32_t   atk_length = 0;
+	unsigned char  *rel_data = NULL;
+	uint_fast32_t   rel_length = 0;
+	size_t          block_align;
+	uint_fast32_t   total_length;
 
 	const char *err = load_wave_cks(&cks, buf, fsz);
 	if (err != NULL)
@@ -148,22 +154,17 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 		mw->native_bits = parse_le16(cks.fmt + 14);
 		mw->channels    = parse_le16(cks.fmt + 2);
 		mw->rate        = parse_le32(cks.fmt + 4);
-		mw->length      = cks.datasz / (mw->channels * ((mw->native_bits + 7) / 8));
 
 		if (mw->native_bits != 16 && mw->native_bits != 24)
 			return "can only load 16 or 24 bit PCM wave files";
 
-		mw->chan_stride = VLF_PAD_LENGTH(mw->length);
-		mw->data        = malloc(sizeof(void *) * mw->channels * mw->chan_stride);
-
-		bufcvt_deinterleave(mw->data, mw->chan_stride, cks.data, mw->length, mw->channels, (mw->native_bits == 24) ? BUFCVT_FMT_SLE24 : BUFCVT_FMT_SLE16, BUFCVT_FMT_FLOAT);
+		block_align  = mw->channels * ((mw->native_bits + 7) / 8);
+		total_length = cks.datasz / block_align;
 	}
 
-
-
 	if (cks.smpl == NULL) {
-		mw->loops = NULL;
-		mw->nloop = 0;
+		mw->loops     = NULL;
+		mw->nloop     = 0;
 		mw->frequency = -1.0;
 	} else if (cks.smplsz >= 36) {
 		/* 0: mfg
@@ -183,7 +184,6 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 		 *   12: end
 		 *   16: frac
 		 *   20: play count */
-		unsigned i;
 		unsigned long spec_data_sz = parse_le32(cks.smpl + 32);
 		double note                = (parse_le32(cks.smpl + 16) / (65536.0 * 65536.0)) + parse_le32(cks.smpl + 12);
 		mw->nloop                  = parse_le32(cks.smpl + 28);
@@ -196,26 +196,26 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 		for (i = 0; i < mw->nloop; i++) {
 			mw->loops[2*i+0] = parse_le32(cks.smpl + 36 + i * 24 + 8);
 			mw->loops[2*i+1] = parse_le32(cks.smpl + 36 + i * 24 + 12);
+			if (mw->loops[2*i+0] > mw->loops[2*i+1] || mw->loops[2*i+1] >= total_length)
+				return "invalid sampler loop";
+			if (mw->loops[2*i+1] >= atk_length)
+				atk_length = mw->loops[2*i+1] + 1;
 		}
 	} else {
 		return "invalid sampler chunk";
 	}
 
-	if (cks.cue == NULL) {
-		mw->release_pos = 0;
-	} else if (cks.cuesz >= 4) {
-		unsigned long nb_cue = parse_le32(cks.cue + 0);
-		unsigned i;
-		int found_rel = 0;
-		unsigned rp = 0;
+	if (cks.cue != NULL) {
+		unsigned long nb_cue;
 		unsigned last_release = 0;
 
+		if (cks.cuesz < 4)
+			return "invalid cue chunk";
 
-		unsigned loopend = 0;
-		for (i = 0; i < mw->nloop; i++) {
-			if (mw->loops[2*i+1] > loopend)
-				loopend = mw->loops[2*i+1];
-		}
+		nb_cue = parse_le32(cks.cue + 0);
+
+		if (cks.cuesz < nb_cue * 24 + 4)
+			return "invalid cue chunk";
 
 		/* 0             nb_cuepoints
 		 * 4 + 24*i + 0  dwName
@@ -226,46 +226,83 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 		 * 4 + 24*i + 20 dwSampleOffset
 		 */
 
-		if (cks.cuesz < nb_cue * 24 + 4)
-			return "invalid cue chunk";
-
 		for (i = 0; i < nb_cue; i++) {
 			/* We ignore the cue ID because too much software incorrectly
 			 * associates it with a loop. We instead look for a cue point that
 			 * is past the end of the last loop. */
 			unsigned long block_start   = parse_le32(cks.cue + 4 + i * 24 + 16);
 			unsigned long sample_offset = parse_le32(cks.cue + 4 + i * 24 + 20);
-			unsigned long relpos = sample_offset + block_start / (mw->channels * ((mw->native_bits + 7) / 8));
+			unsigned long relpos        = sample_offset + block_start / (mw->channels * ((mw->native_bits + 7) / 8));
 
 			if (parse_le32(cks.cue + 4 + i * 24 + 12) != 0)
 				continue;
 			if (parse_le32(cks.cue + 4 + i * 24 + 8) != 0x61746164ul)
 				continue;
-
 			if (relpos > last_release)
 				last_release = relpos;
-
-			if (relpos <= loopend)
-				continue;
-
-			if (found_rel) {
-				if (relpos < rp)
-					rp = relpos;
-			} else {
-				rp = relpos;
-				found_rel = 1;
-			}
 		}
 
-		if (!found_rel) {
-			printf("%d,%d\n", last_release, loopend);
-//			return "no release?";
-			rp = last_release;
+		if (last_release < atk_length) {
+			last_release = atk_length;
+			printf("shortened release as it was positioned inside a loop\n");
 		}
 
-		mw->release_pos = rp;
+		if (last_release >= total_length)
+			return "invalid cue chunk";
+
+		rel_data   = cks.data + last_release*block_align;
+		rel_length = total_length - last_release;
 	} else {
 		return "no cue chunk";
+	}
+
+	{
+		float *buffers;
+		mw->rel_length  = rel_length;
+		mw->atk_length  = atk_length;
+		mw->chan_stride = VLF_PAD_LENGTH(atk_length) + VLF_PAD_LENGTH(rel_length);
+		buffers         = malloc(sizeof(float *) * mw->channels * mw->chan_stride);
+		mw->buffers     = buffers;
+		if (atk_length) {
+			bufcvt_deinterleave
+				(buffers
+				,mw->chan_stride
+				,cks.data
+				,atk_length
+				,mw->channels
+				,(mw->native_bits == 24) ? BUFCVT_FMT_SLE24 : BUFCVT_FMT_SLE16
+				,BUFCVT_FMT_FLOAT
+				);
+			for (ch = 0; ch < mw->channels; ch++) {
+				for (i = atk_length; i < VLF_PAD_LENGTH(atk_length); i++) {
+					buffers[ch*mw->chan_stride+i] = 0.0f;
+				}
+			}
+			mw->atk_data  = buffers;
+			buffers      += VLF_PAD_LENGTH(atk_length);
+		} else {
+			mw->atk_data = NULL;
+		}
+		if (rel_length) {
+			bufcvt_deinterleave
+				(buffers
+				,mw->chan_stride
+				,rel_data
+				,rel_length
+				,mw->channels
+				,(mw->native_bits == 24) ? BUFCVT_FMT_SLE24 : BUFCVT_FMT_SLE16
+				,BUFCVT_FMT_FLOAT
+				);
+			for (ch = 0; ch < mw->channels; ch++) {
+				for (i = rel_length; i < VLF_PAD_LENGTH(rel_length); i++) {
+					buffers[ch*mw->chan_stride+i] = 0.0f;
+				}
+			}
+			mw->rel_data  = buffers;
+			buffers      += VLF_PAD_LENGTH(rel_length);
+		} else {
+			mw->rel_data = NULL;
+		}
 	}
 
 	return NULL;
@@ -411,7 +448,6 @@ static float quantize_boost_interleave
 	,float          *in_bufs
 	,size_t          chan_stride
 	,unsigned        channels
-	,unsigned        in_start
 	,unsigned        in_length
 	,unsigned        out_length
 	,uint_fast32_t  *dither_seed
@@ -427,8 +463,8 @@ static float quantize_boost_interleave
 		float minv = 0.0f;
 
 		for (j = 0; j < in_length; j++) {
-			float s1 = in_bufs[j+in_start];
-			float s2 = in_bufs[chan_stride+j+in_start];
+			float s1 = in_bufs[j];
+			float s2 = in_bufs[chan_stride+j];
 			maxv = (s1 > maxv) ? s1 : maxv;
 			minv = (s1 < minv) ? s1 : minv;
 			maxv = (s2 > maxv) ? s2 : maxv;
@@ -443,8 +479,8 @@ static float quantize_boost_interleave
 			maxv  *= 1.0f / 2048.0f;
 			boost  = 1.0f / maxv;
 			for (j = 0; j < in_length; j++) {
-				float s1         = in_bufs[j+in_start] * boost;
-				float s2         = in_bufs[chan_stride+j+in_start] * boost;
+				float s1         = in_bufs[j] * boost;
+				float s2         = in_bufs[chan_stride+j] * boost;
 				int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
 				int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
 				int_fast32_t r3  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
@@ -465,8 +501,8 @@ static float quantize_boost_interleave
 			maxv  *= 1.0f / 32768.0f;
 			boost  = 1.0f / maxv;
 			for (j = 0; j < in_length; j++) {
-				float s1         = in_bufs[j+in_start] * boost;
-				float s2         = in_bufs[chan_stride+j+in_start] * boost;
+				float s1         = in_bufs[j] * boost;
+				float s2         = in_bufs[chan_stride+j] * boost;
 				int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
 				int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
 				int_fast32_t r3  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
@@ -522,7 +558,6 @@ apply_prefilter
 	(struct memory_wave         *mw
 	,unsigned long               susp_start
 	,unsigned long               susp_end
-	,unsigned long               rel_start
 	,struct aalloc              *allocator
 	,const float                *prefilt_kern
 	,unsigned                    prefilt_kern_len
@@ -535,7 +570,6 @@ apply_prefilter
 	float *inbuf;
 	float *outbuf;
 	unsigned ch;
-	unsigned i;
 	aalloc_push(allocator);
 	inbuf   = aalloc_align_alloc(allocator, sizeof(float) * prefilt_real_fft_len, 64);
 	outbuf  = aalloc_align_alloc(allocator, sizeof(float) * prefilt_real_fft_len, 64);
@@ -543,11 +577,11 @@ apply_prefilter
 	for (ch = 0; ch < mw->channels; ch++) {
 		/* Convolve the attack/sustain segment. */
 		inplace_convolve
-			(/* input */           mw->data + ch*mw->chan_stride
-			,/* output */          mw->data + ch*mw->chan_stride
+			(/* input */           mw->atk_data + ch*mw->chan_stride
+			,/* output */          mw->atk_data + ch*mw->chan_stride
 			,/* sum into output */ 0
 			,/* sustain start */   susp_start
-			,/* total length */    susp_end+1
+			,/* total length */    mw->atk_length
 			,/* pre-read */        prefilt_kern_len / 2 + 1
 			,/* is looped */       1
 			,inbuf
@@ -558,20 +592,16 @@ apply_prefilter
 			,prefilt_real_fft_len
 			,prefilt_fft
 			);
-		/* Zero any crap between the end of the last loop and the start of the
-		 * release (we don't really need to do this, it just makes things
-		 * nicer if we dump the memory wave back to a file). */
-		for (i = susp_end + 1; i < rel_start; i++)
-			mw->data[ch*mw->chan_stride+i] = 0.0f;
+
 		/* Convolve the release segment. Don't include all of the pre-ringing
 		 * at the start. i.e. we are shaving some samples away from the start
 		 * of the release. */
 		inplace_convolve
-			(/* input */           mw->data + ch*mw->chan_stride + rel_start
-			,/* output */          mw->data + ch*mw->chan_stride + rel_start
+			(/* input */           mw->rel_data + ch*mw->chan_stride
+			,/* output */          mw->rel_data + ch*mw->chan_stride
 			,/* sum into output */ 0
 			,/* sustain start */   0
-			,/* total length */    mw->length - rel_start
+			,/* total length */    mw->rel_length
 			,/* pre-read */        prefilt_kern_len / 2 + prefilt_kern_len / 8
 			,/* is looped */       0
 			,inbuf
@@ -640,7 +670,6 @@ load_smpl_f
 	struct memory_wave mw;
 	const char *err;
 	unsigned i;
-	unsigned long dlen;
 	uint_fast32_t rseed = rand();
 	void *buf;
 	/* release has 32 samples of extra zero slop for a fake loop */
@@ -652,7 +681,7 @@ load_smpl_f
 		return err;
 
 	/* Make sure the wave has at least one loop and a release marker. */
-	if (mw.nloop <= 0 || mw.nloop > MAX_LOOP || mw.release_pos == 0)
+	if (mw.nloop <= 0 || mw.nloop > MAX_LOOP || mw.rel_data == NULL || mw.atk_data == NULL)
 		return "no/too-many loops or no release";
 
 	pipe->frequency   = mw.frequency;
@@ -665,10 +694,8 @@ load_smpl_f
 		pipe->attack.ends[i].end_smpl          = mw.loops[2*i+1];
 		pipe->attack.ends[i].start_idx         = i;
 
-		if (pipe->attack.ends[i].end_smpl < pipe->attack.starts[i].start_smpl)
-			return "invalid loop";
-		if (pipe->attack.ends[i].end_smpl >= mw.length)
-			return "invalid loop";
+		assert(pipe->attack.ends[i].end_smpl < mw.atk_length);
+		assert(pipe->attack.ends[i].end_smpl >= pipe->attack.starts[i].start_smpl);
 	}
 
 	/* Filthy bubble sort */
@@ -699,7 +726,6 @@ load_smpl_f
 		(&mw
 		,as_loop_start
 		,as_loop_end
-		,mw.release_pos
 		,allocator
 		,prefilt_kern
 		,prefilt_kern_len
@@ -709,75 +735,69 @@ load_smpl_f
 		);
 #endif
 
-	dlen = pipe->attack.ends[mw.nloop-1].end_smpl + 1;
-
-	unsigned release_length = mw.length - mw.release_pos;
+	assert(pipe->attack.ends[mw.nloop-1].end_smpl + 1 == mw.atk_length);
 
 	pipe->release.nloop                     = 1;
-	pipe->release.starts[0].start_smpl      = release_length;
+	pipe->release.starts[0].start_smpl      = mw.rel_length;
 	pipe->release.starts[0].first_valid_end = 0;
-	pipe->release.ends[0].end_smpl          = release_length + release_slop - 1;
+	pipe->release.ends[0].end_smpl          = mw.rel_length + release_slop - 1;
 	pipe->release.ends[0].start_idx         = 0;
 
 	if (load_type == 12 && mw.channels == 2) {
-		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (release_length + release_slop + 1) * 3);
+		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (mw.rel_length + release_slop + 1) * 3);
 		pipe->release.gain =
 			quantize_boost_interleave
 				(buf
-				,mw.data
+				,mw.rel_data
 				,mw.chan_stride
 				,2
-				,mw.release_pos
-				,release_length
-				,release_length + release_slop + 1
+				,mw.rel_length
+				,mw.rel_length + release_slop + 1
 				,&rseed
 				,12
 				);
 		pipe->release.data = buf;
 		pipe->release.instantiate = u12c2_instantiate;
 
-		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (dlen + 1) * 3);
+		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (mw.atk_length + 1) * 3);
 		pipe->attack.gain =
 			quantize_boost_interleave
 				(buf
-				,mw.data
+				,mw.atk_data
 				,mw.chan_stride
 				,2
-				,0
-				,dlen
-				,dlen + 1
+				,mw.atk_length
+				,mw.atk_length + 1
 				,&rseed
 				,12
 				);
 		pipe->attack.data = buf;
 		pipe->attack.instantiate = u12c2_instantiate;
 	} else if (load_type == 16 && mw.channels == 2) {
-		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (release_length + release_slop + 1) * 2);
+		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (mw.rel_length + release_slop + 1) * 2);
 		pipe->release.gain =
 			quantize_boost_interleave
 				(buf
-				,mw.data
+				,mw.rel_data
 				,mw.chan_stride
 				,2
-				,mw.release_pos
-				,release_length
-				,release_length + release_slop + 1
+				,mw.rel_length
+				,mw.rel_length + release_slop + 1
 				,&rseed
 				,16
 				);
 		pipe->release.data = buf;
 		pipe->release.instantiate = u16c2_instantiate;
 
-		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (dlen + 1) * 2);
+		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (mw.atk_length + 1) * 2);
 		pipe->attack.gain =
 			quantize_boost_interleave
 				(buf
-				,mw.data
+				,mw.atk_data
 				,mw.chan_stride
 				,2
-				,0
-				,dlen
-				,dlen + 1
+				,mw.atk_length
+				,mw.atk_length + 1
 				,&rseed
 				,16
 				);
@@ -815,14 +835,14 @@ load_smpl_f
 
 		if (mw.channels == 2) {
 			for (i = 0; i <= as_loop_end; i++) {
-				float fl = mw.data[i];
-				float fr = mw.data[i+mw.chan_stride];
+				float fl = mw.atk_data[i];
+				float fr = mw.atk_data[i+mw.chan_stride];
 				envelope_buf[i] = fl * fl + fr * fr;
 			}
 		} else {
 			assert(mw.channels == 1);
 			for (i = 0; i <= as_loop_end; i++) {
-				float fm = mw.data[i];
+				float fm = mw.atk_data[i];
 				envelope_buf[i] = fm * fm;
 			}
 		}
@@ -858,7 +878,7 @@ load_smpl_f
 		for (ch = 0; ch < mw.channels; ch++) {
 			float ch_power = 0.0f;
 			for (i = 0; i < env_width; i++) {
-				float s = mw.data[ch*mw.chan_stride + mw.release_pos + env_width - 1 - i];
+				float s = mw.rel_data[ch*mw.chan_stride + env_width - 1 - i];
 				scratch_buf[i] = s * (2.0f / (cor_fft_sz * env_width));
 				ch_power += s * s;
 			}
@@ -867,7 +887,7 @@ load_smpl_f
 			rel_power += ch_power;
 			fftset_fft_conv_get_kernel(fft, kern_buf, scratch_buf);
 			inplace_convolve
-				(mw.data + ch*mw.chan_stride
+				(mw.atk_data + ch*mw.chan_stride
 				,mse_buf
 				,(ch != 0)
 				,as_loop_start
@@ -900,7 +920,7 @@ load_smpl_f
 #endif
 
 	free(mw.loops);
-	free(mw.data);
+	free(mw.buffers);
 
 	return NULL;
 }

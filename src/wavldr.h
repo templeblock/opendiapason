@@ -27,15 +27,28 @@
 #include "fftset/fftset.h"
 
 struct memory_wave {
-	float          *data;
+	float          *buffers;
+	
+	/* Attack and sustain data. May be null. */
+	float          *atk_data;
+	uint_fast32_t   atk_length;
+
+	/* Release data. May be null. */
+	uint_fast32_t   rel_length;
+	float          *rel_data;
+
+	/* Number of elements to stride over to get to the same time value for the
+	 * next channel. */
 	size_t          chan_stride;
-	unsigned long   length;
+
+	/* Format details. */
 	unsigned        channels;
-	unsigned        nloop;
-	unsigned long  *loops;
-	unsigned long   release_pos; /* 0 for no marker */
 	unsigned long   rate;
 	unsigned        native_bits;
+
+	/* Populated by sampler chunk */
+	unsigned        nloop;
+	unsigned long  *loops;
 	float           frequency;   /* < 0.0 for unknown */
 };
 
