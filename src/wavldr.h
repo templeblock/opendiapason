@@ -32,6 +32,7 @@ struct memory_wave {
 	/* Attack and sustain data. May be null. */
 	float          *atk_data;
 	uint_fast32_t   atk_length;
+	uint_fast32_t   atk_end_loop_start;
 
 	/* Release data. May be null. */
 	uint_fast32_t   rel_length;

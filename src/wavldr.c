@@ -125,6 +125,7 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 	struct wave_cks cks;
 	unsigned        i, ch;
 	uint_fast32_t   atk_length = 0;
+	uint_fast32_t   atk_end_loop_start = 0;
 	unsigned char  *rel_data = NULL;
 	uint_fast32_t   rel_length = 0;
 	size_t          block_align;
@@ -184,6 +185,7 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 		 *   12: end
 		 *   16: frac
 		 *   20: play count */
+		unsigned end_loop_idx = 0;
 		unsigned long spec_data_sz = parse_le32(cks.smpl + 32);
 		double note                = (parse_le32(cks.smpl + 16) / (65536.0 * 65536.0)) + parse_le32(cks.smpl + 12);
 		mw->nloop                  = parse_le32(cks.smpl + 28);
@@ -198,8 +200,11 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 			mw->loops[2*i+1] = parse_le32(cks.smpl + 36 + i * 24 + 12);
 			if (mw->loops[2*i+0] > mw->loops[2*i+1] || mw->loops[2*i+1] >= total_length)
 				return "invalid sampler loop";
-			if (mw->loops[2*i+1] >= atk_length)
+			if (mw->loops[2*i+1] >= atk_length) {
 				atk_length = mw->loops[2*i+1] + 1;
+				end_loop_idx = i;
+			}
+			atk_end_loop_start = mw->loops[2*end_loop_idx+0];
 		}
 	} else {
 		return "invalid sampler chunk";
@@ -260,6 +265,7 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 		float *buffers;
 		mw->rel_length  = rel_length;
 		mw->atk_length  = atk_length;
+		mw->atk_end_loop_start = atk_end_loop_start;
 		mw->chan_stride = VLF_PAD_LENGTH(atk_length) + VLF_PAD_LENGTH(rel_length);
 		buffers         = malloc(sizeof(float *) * mw->channels * mw->chan_stride);
 		mw->buffers     = buffers;
@@ -556,8 +562,6 @@ static
 void
 apply_prefilter
 	(struct memory_wave         *mw
-	,unsigned long               susp_start
-	,unsigned long               susp_end
 	,struct aalloc              *allocator
 	,const float                *prefilt_kern
 	,unsigned                    prefilt_kern_len
@@ -580,7 +584,7 @@ apply_prefilter
 			(/* input */           mw->atk_data + ch*mw->chan_stride
 			,/* output */          mw->atk_data + ch*mw->chan_stride
 			,/* sum into output */ 0
-			,/* sustain start */   susp_start
+			,/* sustain start */   mw->atk_end_loop_start
 			,/* total length */    mw->atk_length
 			,/* pre-read */        prefilt_kern_len / 2 + 1
 			,/* is looped */       1
@@ -624,10 +628,10 @@ apply_prefilter
 		sprintf(namebuf, "%s_prefilter_atk.raw", debug_prefix);
 		dbgfile = fopen(namebuf, "wb");
 		if (dbgfile != NULL) {
-			for (i = 0; i < susp_end+1; i++) {
+			for (i = 0; i < mw->atk_length; i++) {
 				short sb[2];
-				float f1 = mw->data[0][i] * 32768 + 0.5;
-				float f2 = mw->data[1][i] * 32768 + 0.5;
+				float f1 = mw->atk_data[i] * 32768 + 0.5;
+				float f2 = mw->atk_data[mw->chan_stride+i] * 32768 + 0.5;
 				sb[0] = (short)((f1 >= 32767) ? 32767 : ((f1 <= -32768) ? -32768 : f1));
 				sb[1] = (short)((f2 >= 32767) ? 32767 : ((f2 <= -32768) ? -32768 : f2));
 				fwrite(sb, 2, 2, dbgfile);
@@ -638,10 +642,10 @@ apply_prefilter
 		sprintf(namebuf, "%s_prefilter_rel.raw", debug_prefix);
 		dbgfile = fopen(namebuf, "wb");
 		if (dbgfile != NULL) {
-			for (i = 0; i < mw->length - rel_start; i++) {
+			for (i = 0; i < mw->rel_length; i++) {
 				short sb[2];
-				float f1 = mw->data[0][rel_start+i] * 32768 + 0.5;
-				float f2 = mw->data[1][rel_start+i] * 32768 + 0.5;
+				float f1 = mw->rel_data[i] * 32768 + 0.5;
+				float f2 = mw->rel_data[mw->chan_stride+i] * 32768 + 0.5;
 				sb[0] = (short)((f1 >= 32767) ? 32767 : ((f1 <= -32768) ? -32768 : f1));
 				sb[1] = (short)((f2 >= 32767) ? 32767 : ((f2 <= -32768) ? -32768 : f2));
 				fwrite(sb, 2, 2, dbgfile);
@@ -652,6 +656,19 @@ apply_prefilter
 #else
 	(void)debug_prefix;
 #endif
+}
+
+static
+const char *
+load_smpl_mws
+	(struct pipe_v1             *pipe
+	,const char                 *filename
+	,struct aalloc              *allocator
+	,struct fftset              *fftset
+	,int                         load_type
+	)
+{
+	return NULL;
 }
 
 const char *
@@ -684,9 +701,19 @@ load_smpl_f
 	if (mw.nloop <= 0 || mw.nloop > MAX_LOOP || mw.rel_data == NULL || mw.atk_data == NULL)
 		return "no/too-many loops or no release";
 
+	/* Prefilter and adjust audio. */
+	apply_prefilter
+		(&mw
+		,allocator
+		,prefilt_kern
+		,prefilt_kern_len
+		,prefilt_real_fft_len
+		,prefilt_fft
+		,filename
+		);
+
 	pipe->frequency   = mw.frequency;
 	pipe->sample_rate = mw.rate;
-
 	pipe->attack.nloop = mw.nloop;
 	for (i = 0; i < mw.nloop; i++) {
 		pipe->attack.starts[i].start_smpl      = mw.loops[2*i+0];
@@ -694,6 +721,7 @@ load_smpl_f
 		pipe->attack.ends[i].end_smpl          = mw.loops[2*i+1];
 		pipe->attack.ends[i].start_idx         = i;
 
+		/* These conditions should be checked when the wave is being loaded. */
 		assert(pipe->attack.ends[i].end_smpl < mw.atk_length);
 		assert(pipe->attack.ends[i].end_smpl >= pipe->attack.starts[i].start_smpl);
 	}
@@ -717,25 +745,8 @@ load_smpl_f
 			pipe->attack.starts[i].first_valid_end++;
 	}
 
-	const unsigned long as_loop_end   = pipe->attack.ends[mw.nloop-1].end_smpl;
-	const unsigned long as_loop_start = pipe->attack.starts[pipe->attack.ends[mw.nloop-1].start_idx].start_smpl;
-
-#if 1
-	/* Prefilter and adjust audio. */
-	apply_prefilter
-		(&mw
-		,as_loop_start
-		,as_loop_end
-		,allocator
-		,prefilt_kern
-		,prefilt_kern_len
-		,prefilt_real_fft_len
-		,prefilt_fft
-		,filename
-		);
-#endif
-
-	assert(pipe->attack.ends[mw.nloop-1].end_smpl + 1 == mw.atk_length);
+	assert(pipe->attack.ends[mw.nloop-1].end_smpl+1 == mw.atk_length);
+	assert(pipe->attack.starts[pipe->attack.ends[mw.nloop-1].start_idx].start_smpl == mw.atk_end_loop_start);
 
 	pipe->release.nloop                     = 1;
 	pipe->release.starts[0].start_smpl      = mw.rel_length;
@@ -826,22 +837,22 @@ load_smpl_f
 		env_width    = (unsigned)((1.0f / mw.frequency) * mw.rate * 2.0f + 0.5f);
 		cor_fft_sz   = fftset_recommend_conv_length(env_width, 512) * 2;
 		fft          = fftset_create_fft(fftset, FFTSET_MODULATION_FREQ_OFFSET_REAL, cor_fft_sz / 2);
-		envelope_buf = aalloc_align_alloc(allocator, sizeof(float) * (as_loop_end+1), 64);
-		mse_buf      = aalloc_align_alloc(allocator, sizeof(float) * (as_loop_end+1), 64);
+		envelope_buf = aalloc_align_alloc(allocator, sizeof(float) * mw.atk_length, 64);
+		mse_buf      = aalloc_align_alloc(allocator, sizeof(float) * mw.atk_length, 64);
 		kern_buf     = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
 		scratch_buf  = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
 		scratch_buf2 = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
 		scratch_buf3 = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
 
 		if (mw.channels == 2) {
-			for (i = 0; i <= as_loop_end; i++) {
+			for (i = 0; i < mw.atk_length; i++) {
 				float fl = mw.atk_data[i];
 				float fr = mw.atk_data[i+mw.chan_stride];
 				envelope_buf[i] = fl * fl + fr * fr;
 			}
 		} else {
 			assert(mw.channels == 1);
-			for (i = 0; i <= as_loop_end; i++) {
+			for (i = 0; i < mw.atk_length; i++) {
 				float fm = mw.atk_data[i];
 				envelope_buf[i] = fm * fm;
 			}
@@ -860,8 +871,8 @@ load_smpl_f
 			(envelope_buf
 			,envelope_buf
 			,0
-			,as_loop_start
-			,(as_loop_end+1)
+			,mw.atk_end_loop_start
+			,mw.atk_length
 			,env_width-1
 			,1
 			,scratch_buf
@@ -890,8 +901,8 @@ load_smpl_f
 				(mw.atk_data + ch*mw.chan_stride
 				,mse_buf
 				,(ch != 0)
-				,as_loop_start
-				,(as_loop_end+1)
+				,mw.atk_end_loop_start
+				,mw.atk_length
 				,env_width-1
 				,1
 				,scratch_buf
@@ -906,7 +917,7 @@ load_smpl_f
 
 		rel_power /= env_width;
 
-		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, (as_loop_end+1), (1.0f / mw.frequency) * mw.rate, filename);
+		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, mw.atk_length, (1.0f / mw.frequency) * mw.rate, filename);
 
 		aalloc_pop(allocator);
 	}
