@@ -543,13 +543,13 @@ apply_prefilter
 	for (ch = 0; ch < mw->channels; ch++) {
 		/* Convolve the attack/sustain segment. */
 		inplace_convolve
-			(mw->data + ch*mw->chan_stride
-			,mw->data + ch*mw->chan_stride
-			,0
-			,susp_start
-			,susp_end+1
-			,prefilt_kern_len / 2 + 1
-			,1
+			(/* input */           mw->data + ch*mw->chan_stride
+			,/* output */          mw->data + ch*mw->chan_stride
+			,/* sum into output */ 0
+			,/* sustain start */   susp_start
+			,/* total length */    susp_end+1
+			,/* pre-read */        prefilt_kern_len / 2 + 1
+			,/* is looped */       1
 			,inbuf
 			,outbuf
 			,scratch
@@ -567,13 +567,13 @@ apply_prefilter
 		 * at the start. i.e. we are shaving some samples away from the start
 		 * of the release. */
 		inplace_convolve
-			(mw->data + ch*mw->chan_stride + rel_start
-			,mw->data + ch*mw->chan_stride + rel_start
-			,0
-			,0
-			,mw->length - rel_start
-			,prefilt_kern_len / 2 + prefilt_kern_len / 8
-			,0
+			(/* input */           mw->data + ch*mw->chan_stride + rel_start
+			,/* output */          mw->data + ch*mw->chan_stride + rel_start
+			,/* sum into output */ 0
+			,/* sustain start */   0
+			,/* total length */    mw->length - rel_start
+			,/* pre-read */        prefilt_kern_len / 2 + prefilt_kern_len / 8
+			,/* is looped */       0
 			,inbuf
 			,outbuf
 			,scratch
@@ -646,14 +646,16 @@ load_smpl_f
 	/* release has 32 samples of extra zero slop for a fake loop */
 	const unsigned release_slop   = 32;
 
+	/* Load the wave file. */
 	err = mw_load_from_file(&mw, filename);
 	if (err != NULL)
 		return err;
 
+	/* Make sure the wave has at least one loop and a release marker. */
 	if (mw.nloop <= 0 || mw.nloop > MAX_LOOP || mw.release_pos == 0)
 		return "no/too-many loops or no release";
 
-	pipe->frequency = mw.frequency;
+	pipe->frequency   = mw.frequency;
 	pipe->sample_rate = mw.rate;
 
 	pipe->attack.nloop = mw.nloop;
@@ -706,6 +708,84 @@ load_smpl_f
 		,filename
 		);
 #endif
+
+	dlen = pipe->attack.ends[mw.nloop-1].end_smpl + 1;
+
+	unsigned release_length = mw.length - mw.release_pos;
+
+	pipe->release.nloop                     = 1;
+	pipe->release.starts[0].start_smpl      = release_length;
+	pipe->release.starts[0].first_valid_end = 0;
+	pipe->release.ends[0].end_smpl          = release_length + release_slop - 1;
+	pipe->release.ends[0].start_idx         = 0;
+
+	if (load_type == 12 && mw.channels == 2) {
+		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (release_length + release_slop + 1) * 3);
+		pipe->release.gain =
+			quantize_boost_interleave
+				(buf
+				,mw.data
+				,mw.chan_stride
+				,2
+				,mw.release_pos
+				,release_length
+				,release_length + release_slop + 1
+				,&rseed
+				,12
+				);
+		pipe->release.data = buf;
+		pipe->release.instantiate = u12c2_instantiate;
+
+		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (dlen + 1) * 3);
+		pipe->attack.gain =
+			quantize_boost_interleave
+				(buf
+				,mw.data
+				,mw.chan_stride
+				,2
+				,0
+				,dlen
+				,dlen + 1
+				,&rseed
+				,12
+				);
+		pipe->attack.data = buf;
+		pipe->attack.instantiate = u12c2_instantiate;
+	} else if (load_type == 16 && mw.channels == 2) {
+		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (release_length + release_slop + 1) * 2);
+		pipe->release.gain =
+			quantize_boost_interleave
+				(buf
+				,mw.data
+				,mw.chan_stride
+				,2
+				,mw.release_pos
+				,release_length
+				,release_length + release_slop + 1
+				,&rseed
+				,16
+				);
+		pipe->release.data = buf;
+		pipe->release.instantiate = u16c2_instantiate;
+
+		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (dlen + 1) * 2);
+		pipe->attack.gain =
+			quantize_boost_interleave
+				(buf
+				,mw.data
+				,mw.chan_stride
+				,2
+				,0
+				,dlen
+				,dlen + 1
+				,&rseed
+				,16
+				);
+		pipe->attack.data = buf;
+		pipe->attack.instantiate = u16c2_instantiate;
+	} else {
+		abort();
+	}
 
 #if 1
 	{
@@ -811,84 +891,6 @@ load_smpl_f
 		aalloc_pop(allocator);
 	}
 #endif
-
-	dlen = pipe->attack.ends[mw.nloop-1].end_smpl + 1;
-
-	unsigned release_length = mw.length - mw.release_pos;
-
-	pipe->release.nloop                     = 1;
-	pipe->release.starts[0].start_smpl      = release_length;
-	pipe->release.starts[0].first_valid_end = 0;
-	pipe->release.ends[0].end_smpl          = release_length + release_slop - 1;
-	pipe->release.ends[0].start_idx         = 0;
-
-	if (load_type == 12 && mw.channels == 2) {
-		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (release_length + release_slop + 1) * 3);
-		pipe->release.gain =
-			quantize_boost_interleave
-				(buf
-				,mw.data
-				,mw.chan_stride
-				,2
-				,mw.release_pos
-				,release_length
-				,release_length + release_slop + 1
-				,&rseed
-				,12
-				);
-		pipe->release.data = buf;
-		pipe->release.instantiate = u12c2_instantiate;
-
-		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (dlen + 1) * 3);
-		pipe->attack.gain =
-			quantize_boost_interleave
-				(buf
-				,mw.data
-				,mw.chan_stride
-				,2
-				,0
-				,dlen
-				,dlen + 1
-				,&rseed
-				,12
-				);
-		pipe->attack.data = buf;
-		pipe->attack.instantiate = u12c2_instantiate;
-	} else if (load_type == 16 && mw.channels == 2) {
-		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (release_length + release_slop + 1) * 2);
-		pipe->release.gain =
-			quantize_boost_interleave
-				(buf
-				,mw.data
-				,mw.chan_stride
-				,2
-				,mw.release_pos
-				,release_length
-				,release_length + release_slop + 1
-				,&rseed
-				,16
-				);
-		pipe->release.data = buf;
-		pipe->release.instantiate = u16c2_instantiate;
-
-		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (dlen + 1) * 2);
-		pipe->attack.gain =
-			quantize_boost_interleave
-				(buf
-				,mw.data
-				,mw.chan_stride
-				,2
-				,0
-				,dlen
-				,dlen + 1
-				,&rseed
-				,16
-				);
-		pipe->attack.data = buf;
-		pipe->attack.instantiate = u16c2_instantiate;
-	} else {
-		abort();
-	}
 
 
 #if OPENDIAPASON_VERBOSE_DEBUG
