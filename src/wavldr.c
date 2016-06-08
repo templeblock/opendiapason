@@ -658,30 +658,17 @@ apply_prefilter
 #endif
 }
 
-static
 const char *
-load_smpl_mws
+load_smpl_comp
 	(struct pipe_v1             *pipe
-	,const char                 *filename
-	,struct aalloc              *allocator
-	,struct fftset              *fftset
-	,int                         load_type
-	)
-{
-	return NULL;
-}
-
-const char *
-load_smpl_f
-	(struct pipe_v1             *pipe
-	,const char                 *filename
+	,const struct smpl_comp     *components
+	,unsigned                    nb_components
 	,struct aalloc              *allocator
 	,struct fftset              *fftset
 	,const float                *prefilt_kern
 	,unsigned                    prefilt_kern_len
 	,unsigned                    prefilt_real_fft_len
 	,const struct fftset_fft    *prefilt_fft
-	,int                         load_type
 	)
 {
 	struct memory_wave mw;
@@ -692,8 +679,10 @@ load_smpl_f
 	/* release has 32 samples of extra zero slop for a fake loop */
 	const unsigned release_slop   = 32;
 
+	assert(nb_components == 1 /* TODO!!! */);
+
 	/* Load the wave file. */
-	err = mw_load_from_file(&mw, filename);
+	err = mw_load_from_file(&mw, components[0].filename);
 	if (err != NULL)
 		return err;
 
@@ -709,7 +698,7 @@ load_smpl_f
 		,prefilt_kern_len
 		,prefilt_real_fft_len
 		,prefilt_fft
-		,filename
+		,components[0].filename
 		);
 
 	pipe->frequency   = mw.frequency;
@@ -754,7 +743,7 @@ load_smpl_f
 	pipe->release.ends[0].end_smpl          = mw.rel_length + release_slop - 1;
 	pipe->release.ends[0].start_idx         = 0;
 
-	if (load_type == 12 && mw.channels == 2) {
+	if (components[0].load_format == 12 && mw.channels == 2) {
 		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (mw.rel_length + release_slop + 1) * 3);
 		pipe->release.gain =
 			quantize_boost_interleave
@@ -784,7 +773,7 @@ load_smpl_f
 				);
 		pipe->attack.data = buf;
 		pipe->attack.instantiate = u12c2_instantiate;
-	} else if (load_type == 16 && mw.channels == 2) {
+	} else if (components[0].load_format == 16 && mw.channels == 2) {
 		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (mw.rel_length + release_slop + 1) * 2);
 		pipe->release.gain =
 			quantize_boost_interleave
@@ -917,7 +906,7 @@ load_smpl_f
 
 		rel_power /= env_width;
 
-		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, mw.atk_length, (1.0f / mw.frequency) * mw.rate, filename);
+		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, mw.atk_length, (1.0f / mw.frequency) * mw.rate, components[0].filename);
 
 		aalloc_pop(allocator);
 	}
@@ -936,4 +925,35 @@ load_smpl_f
 	return NULL;
 }
 
-
+/* This is really just a compatibility function now. To be deleted when more
+ * things start using the other loader. */
+const char *
+load_smpl_f
+	(struct pipe_v1             *pipe
+	,const char                 *filename
+	,struct aalloc              *allocator
+	,struct fftset              *fftset
+	,const float                *prefilt_kern
+	,unsigned                    prefilt_kern_len
+	,unsigned                    prefilt_real_fft_len
+	,const struct fftset_fft    *prefilt_fft
+	,int                         load_type
+	)
+{
+	struct smpl_comp cmp;
+	cmp.filename    = filename;
+	cmp.load_flags  = SMPL_COMP_LOADFLAG_AS | SMPL_COMP_LOADFLAG_R;
+	cmp.load_format = load_type;
+	return 
+		load_smpl_comp
+			(pipe
+			,&cmp
+			,1
+			,allocator
+			,fftset
+			,prefilt_kern
+			,prefilt_kern_len
+			,prefilt_real_fft_len
+			,prefilt_fft
+			);
+}

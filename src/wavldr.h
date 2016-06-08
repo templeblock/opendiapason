@@ -26,6 +26,21 @@
 #include "cop/cop_alloc.h"
 #include "fftset/fftset.h"
 
+#define SMPL_COMP_LOADFLAG_AUTO (0)
+#define SMPL_COMP_LOADFLAG_AS   (1)
+#define SMPL_COMP_LOADFLAG_R    (2)
+
+
+struct smpl_comp {
+	const char *filename;
+
+	/* Either SMPL_COMP_LOADFLAG_AUTO or a set of
+	 * SMPL_COMP_LOADFLAG_* flags or'ed together. */
+	unsigned    load_flags;
+
+	int         load_format;
+};
+
 struct memory_wave {
 	float          *buffers;
 	
@@ -61,6 +76,18 @@ struct pipe_v1 {
 	unsigned long   sample_rate;
 };
 
+const char *
+load_smpl_comp
+	(struct pipe_v1             *pipe
+	,const struct smpl_comp     *components
+	,unsigned                    nb_components
+	,struct aalloc              *allocator
+	,struct fftset              *fftset
+	,const float                *prefilt_kern
+	,unsigned                    prefilt_kern_len
+	,unsigned                    prefilt_real_fft_len
+	,const struct fftset_fft    *prefilt_fft
+	);
 
 const char *
 load_smpl_f
