@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include "decode_least16x2.h"
 #include "wavldr.h"
+#include "wav_dumper.h"
 
 struct wave_cks {
 	unsigned long  datasz;
@@ -622,35 +623,18 @@ apply_prefilter
 #if OPENDIAPASON_VERBOSE_DEBUG
 	if (debug_prefix != NULL && mw->channels == 2) {
 		char      namebuf[1024];
-		FILE     *dbgfile;
-		unsigned  i;
+		struct wav_dumper dump;
 
-		sprintf(namebuf, "%s_prefilter_atk.raw", debug_prefix);
-		dbgfile = fopen(namebuf, "wb");
-		if (dbgfile != NULL) {
-			for (i = 0; i < mw->atk_length; i++) {
-				short sb[2];
-				float f1 = mw->atk_data[i] * 32768 + 0.5;
-				float f2 = mw->atk_data[mw->chan_stride+i] * 32768 + 0.5;
-				sb[0] = (short)((f1 >= 32767) ? 32767 : ((f1 <= -32768) ? -32768 : f1));
-				sb[1] = (short)((f2 >= 32767) ? 32767 : ((f2 <= -32768) ? -32768 : f2));
-				fwrite(sb, 2, 2, dbgfile);
-			}
-			fclose(dbgfile);
+		sprintf(namebuf, "%s_prefilter_atk.wav", debug_prefix);
+		if (wav_dumper_begin(&dump, namebuf, 2, 24, mw->rate) == 0) {
+			(void)wav_dumper_write_from_floats(&dump, mw->atk_data, mw->atk_length, 1, mw->chan_stride);
+			wav_dumper_end(&dump);
 		}
 
-		sprintf(namebuf, "%s_prefilter_rel.raw", debug_prefix);
-		dbgfile = fopen(namebuf, "wb");
-		if (dbgfile != NULL) {
-			for (i = 0; i < mw->rel_length; i++) {
-				short sb[2];
-				float f1 = mw->rel_data[i] * 32768 + 0.5;
-				float f2 = mw->rel_data[mw->chan_stride+i] * 32768 + 0.5;
-				sb[0] = (short)((f1 >= 32767) ? 32767 : ((f1 <= -32768) ? -32768 : f1));
-				sb[1] = (short)((f2 >= 32767) ? 32767 : ((f2 <= -32768) ? -32768 : f2));
-				fwrite(sb, 2, 2, dbgfile);
-			}
-			fclose(dbgfile);
+		sprintf(namebuf, "%s_prefilter_rel.wav", debug_prefix);
+		if (wav_dumper_begin(&dump, namebuf, 2, 24, mw->rate) == 0) {
+			(void)wav_dumper_write_from_floats(&dump, mw->rel_data, mw->rel_length, 1, mw->chan_stride);
+			wav_dumper_end(&dump);
 		}
 	}
 #else

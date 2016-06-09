@@ -1,4 +1,4 @@
-add_library(od_audioengine STATIC wavldr.c reltable.c playeng.c)
+add_library(od_audioengine STATIC wavldr.c wavldr.h reltable.c reltable.h playeng.c playeng.h wav_dumper.c wav_dumper.h)
 target_link_libraries(od_audioengine fftset)
 target_include_directories(od_audioengine PUBLIC "../..")
 
