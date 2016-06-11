@@ -332,33 +332,7 @@ reltable_build
 	unsigned skip = (unsigned)fmax(1.0, period - lf/2);
 	float    rel_scale = 1.0 / rel_power;
 
-#if OPENDIAPASON_VERBOSE_DEBUG
-	if (debug_prefix != NULL && strlen(debug_prefix) < 1024 - 50) {
-		char      namebuf[1024];
-		FILE     *dbgfile;
-		unsigned  i;
-		sprintf(namebuf, "%s_reltable_inputs.raw", debug_prefix);
-		printf("analysing sample '%s'\n", debug_prefix);
-		dbgfile = fopen(namebuf, "wb");
-		if (dbgfile != NULL) {
-			for (i = 0; i < error_vec_len; i++) {
-				short sb[2];
-				float rg = corr_vec[i] * rel_scale;
-				float f1 = sqrtf(fabsf(error_vec[i])) * 32768.0f + 0.5f;
-				float f2 = sqrtf(fabsf(error_vec[i] + rel_power * rg * rg - 2.0f * corr_vec[i] * rg)) * 32768.0f + 0.5f;
-
-
-				sb[0] = (f1 >= 32767.0f) ? 32767 : ((f1 <= -32768) ? -32768 : f1);
-				sb[1] = (f2 >= 32767.0f) ? 32767 : ((f2 <= -32768) ? -32768 : f2);
-				fwrite(sb, 2, 2, dbgfile);
-			}
-			fclose(dbgfile);
-		}
-	}
-#else
 	(void)debug_prefix;
-#endif
-
 
 	/* Find best release alignment position. */
 	for (i = 0; i < error_vec_len; i++) {

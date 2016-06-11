@@ -804,18 +804,19 @@ load_smpl_comp
 		float *kern_buf;
 		float rel_power;
 		unsigned ch;
+		size_t buf_stride = VLF_PAD_LENGTH(mw.atk_length);
 
 		aalloc_push(allocator);
 
 		env_width    = (unsigned)((1.0f / mw.frequency) * mw.rate * 2.0f + 0.5f);
 		cor_fft_sz   = fftset_recommend_conv_length(env_width, 512) * 2;
 		fft          = fftset_create_fft(fftset, FFTSET_MODULATION_FREQ_OFFSET_REAL, cor_fft_sz / 2);
-		envelope_buf = aalloc_align_alloc(allocator, sizeof(float) * mw.atk_length, 64);
-		mse_buf      = aalloc_align_alloc(allocator, sizeof(float) * mw.atk_length, 64);
+		envelope_buf = aalloc_align_alloc(allocator, sizeof(float) * (buf_stride * 2), 64);
 		kern_buf     = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
 		scratch_buf  = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
 		scratch_buf2 = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
 		scratch_buf3 = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
+		mse_buf      = envelope_buf + buf_stride;
 
 		if (mw.channels == 2) {
 			for (i = 0; i < mw.atk_length; i++) {
@@ -889,6 +890,18 @@ load_smpl_comp
 		}
 
 		rel_power /= env_width;
+
+#if OPENDIAPASON_VERBOSE_DEBUG
+		if (strlen(components[0].filename) < 1024 - 50) {
+			char      namebuf[1024];
+			struct wav_dumper dump;
+			sprintf(namebuf, "%s_reltable_inputs.wav", components[0].filename);
+			if (wav_dumper_begin(&dump, namebuf, 2, 24, mw.rate) == 0) {
+				(void)wav_dumper_write_from_floats(&dump, envelope_buf, mw.atk_length, 1, buf_stride);
+				wav_dumper_end(&dump);
+			}
+		}
+#endif
 
 		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, mw.atk_length, (1.0f / mw.frequency) * mw.rate, components[0].filename);
 
