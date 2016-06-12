@@ -36,6 +36,8 @@ struct wave_cks {
 	unsigned char *fmt;
 	unsigned long  cuesz;
 	unsigned char *cue;
+	unsigned long  adtlsz;
+	unsigned char *adtl;
 };
 
 static int fcc_are_different(const char *f1, const char *f2)
@@ -106,6 +108,9 @@ static const char *load_wave_cks(struct wave_cks *cks, unsigned char *buf, unsig
 		} else if (!fcc_are_different((char *)buf, "fmt ")) {
 			cks->fmt    = buf + 8;
 			cks->fmtsz  = cksz;
+		} else if (!fcc_are_different((char *)buf, "LIST") && cksz >= 4 && !fcc_are_different((char *)buf + 8, "adtl")) {
+			cks->adtl    = buf + 12;
+			cks->adtlsz  = cksz - 4;
 		}
 
 		cksz += (cksz & 1); /* pad byte */
@@ -121,16 +126,164 @@ static const char *load_wave_cks(struct wave_cks *cks, unsigned char *buf, unsig
 
 #include "bufcvt.h"
 
-const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned long fsz)
+static const char *setup_as(struct as_data *as, unsigned char *smpl, size_t smpl_sz, uint_fast32_t rate, uint_fast32_t total_length, unsigned load_format)
+{
+	unsigned end_loop_idx;
+	unsigned long spec_data_sz;
+	double note;
+	unsigned i;
+
+	as->data        = NULL;
+	as->next        = NULL;
+	as->load_format = load_format;
+	as->period      = 0.0f;
+	as->nloop       = 0;
+	as->length      = 0;
+
+	if (smpl == NULL)
+		return NULL;
+
+	if (smpl_sz < 36)
+		return "invalid sampler chunk";
+
+	/* 0: mfg
+	 * 4: product
+	 * 8: period
+	 * 12: unity note
+	 * 16: pitch frac
+	 * 20: smpte fmt
+	 * 24: smpte offset
+	 * 28: num loops
+	 * 32: specific data sz */
+
+	/* loop:
+	 *   0: ident
+	 *   4: type
+	 *   8: start
+	 *   12: end
+	 *   16: frac
+	 *   20: play count */
+	end_loop_idx  = 0;
+	spec_data_sz  = parse_le32(smpl + 32);
+	note          = (parse_le32(smpl + 16) / (65536.0 * 65536.0)) + parse_le32(smpl + 12);
+	as->nloop     = parse_le32(smpl + 28);
+	as->period    = rate / (440.0f * powf(2.0f, (note - 69.0f) / 12.0f));
+
+	if (as->nloop > MAX_LOOP)
+		return "too many loops";
+
+	if (smpl_sz < 36 + as->nloop * 24 + spec_data_sz)
+		return "invalid sampler chunk";
+
+	if (as->nloop == 0)
+		return NULL;
+
+	for (i = 0; i < as->nloop; i++) {
+		as->loops[2*i+0] = parse_le32(smpl + 36 + i * 24 + 8);
+		as->loops[2*i+1] = parse_le32(smpl + 36 + i * 24 + 12);
+		if (as->loops[2*i+0] > as->loops[2*i+1] || as->loops[2*i+1] >= total_length) {
+			as->length = 0;
+			return "invalid sampler loop";
+		}
+		if (as->loops[2*i+1] >= as->length) {
+			as->length = as->loops[2*i+1] + 1;
+			end_loop_idx = i;
+		}
+		as->atk_end_loop_start = as->loops[2*end_loop_idx+0];
+	}
+
+	return NULL;
+}
+
+static const char *setup_rel(struct rel_data *rel, const unsigned char *cue, size_t cue_sz, const unsigned char *adtl, size_t adtl_sz, uint_fast32_t as_len, size_t block_align, uint_fast32_t total_length, unsigned load_format)
+{
+	uint_fast32_t last_rel_pos = 0;
+
+	rel->data = NULL;
+	rel->next = NULL;
+	rel->load_format = load_format;
+	rel->position = 0;
+	rel->length = 0;
+
+	if (cue != NULL) {
+		uint_fast32_t nb_cue;
+		uint_fast32_t i;
+
+		if (cue_sz < 4)
+			return "invalid cue chunk";
+		nb_cue = parse_le32(cue + 0);
+		if (cue_sz < nb_cue * 24 + 4)
+			return "invalid cue chunk";
+
+		/* 0             nb_cuepoints
+		 * 4 + 24*i + 0  dwName
+		 * 4 + 24*i + 4  dwPosition
+		 * 4 + 24*i + 8  fccChunk
+		 * 4 + 24*i + 12 dwChunkStart
+		 * 4 + 24*i + 16 dwBlockStart
+		 * 4 + 24*i + 20 dwSampleOffset
+		 */
+
+		for (i = 0; i < nb_cue; i++) {
+			/* We ignore the cue ID because too much software incorrectly
+			 * associates it with a loop. We instead look for a cue point that
+			 * is past the end of the last loop. */
+			uint_fast32_t cueid         = parse_le32(cue + 4 + i * 24 + 0);
+			uint_fast32_t block_start   = parse_le32(cue + 4 + i * 24 + 16);
+			uint_fast32_t sample_offset = parse_le32(cue + 4 + i * 24 + 20);
+			uint_fast32_t relpos        = sample_offset + block_start / block_align;
+			size_t        adpos;
+			int           isloop = 0;
+
+			if (parse_le32(cue + 4 + i * 24 + 12) != 0)
+				continue;
+			if (parse_le32(cue + 4 + i * 24 + 8) != 0x61746164ul)
+				continue;
+
+			for (adpos = 0; adpos + 12 <= adtl_sz; ) {
+				uint_fast32_t fccsz = parse_le32(adtl + adpos + 4);
+				if (fccsz >= 20) {
+					uint_fast32_t dur = parse_le32(adtl + adpos + 12);
+					if (!fcc_are_different((char *)adtl + adpos, "ltxt") && parse_le32(adtl + adpos + 8) == cueid && dur > 0) {
+						isloop = 1;
+						break;
+					}
+				}
+				adpos += fccsz + 8;
+			}
+
+			if (isloop)
+				continue;
+
+			if (relpos > last_rel_pos)
+				last_rel_pos = relpos;
+		}
+	}
+
+	if (last_rel_pos == 0 && as_len)
+		return NULL;
+
+	if (as_len && last_rel_pos && last_rel_pos < as_len) {
+		last_rel_pos = as_len;
+		printf("shortened release as it was positioned inside a loop\n");
+	}
+
+	if (last_rel_pos >= total_length)
+		return "invalid cue chunk";
+
+	rel->position = last_rel_pos;
+	rel->length   = total_length - last_rel_pos;
+
+	return NULL;
+}
+
+const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned long fsz, unsigned load_format)
 {
 	struct wave_cks cks;
 	unsigned        i, ch;
-	uint_fast32_t   atk_length = 0;
-	uint_fast32_t   atk_end_loop_start = 0;
-	unsigned char  *rel_data = NULL;
-	uint_fast32_t   rel_length = 0;
 	size_t          block_align;
 	uint_fast32_t   total_length;
+	float          *buffers;
 
 	const char *err = load_wave_cks(&cks, buf, fsz);
 	if (err != NULL)
@@ -138,9 +291,6 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 
 	if (cks.data == NULL || cks.fmt == NULL)
 		return "wave file missing format or data chunk";
-
-	mw->as.next = NULL;
-	mw->rel.next = NULL;
 
 	{
 		/* 0 fmt_tag
@@ -167,165 +317,71 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 		total_length = cks.datasz / block_align;
 	}
 
-	if (cks.smpl == NULL) {
-		mw->as.nloop     = 0;
-		mw->as.period    = 0.0;
-		mw->rel.period   = 0.0;
-	} else if (cks.smplsz >= 36) {
-		/* 0: mfg
-		 * 4: product
-		 * 8: period
-		 * 12: unity note
-		 * 16: pitch frac
-		 * 20: smpte fmt
-		 * 24: smpte offset
-		 * 28: num loops
-		 * 32: specific data sz */
+	err = setup_as(&mw->as, cks.smpl, cks.smplsz, mw->rate, total_length, load_format);
+	if (err != NULL)
+		return err;
 
-		/* loop:
-		 *   0: ident
-		 *   4: type
-		 *   8: start
-		 *   12: end
-		 *   16: frac
-		 *   20: play count */
-		unsigned end_loop_idx = 0;
-		unsigned long spec_data_sz = parse_le32(cks.smpl + 32);
-		double note                = (parse_le32(cks.smpl + 16) / (65536.0 * 65536.0)) + parse_le32(cks.smpl + 12);
-		mw->as.nloop               = parse_le32(cks.smpl + 28);
-		mw->as.period              = mw->rate / (440.0f * powf(2.0f, (note - 69.0f) / 12.0f));
-		mw->rel.period             = mw->as.period;
+	err = setup_rel(&mw->rel, cks.cue, cks.cuesz, cks.adtl, cks.adtlsz, mw->as.length, block_align, total_length, load_format);
+	if (err != NULL)
+		return err;
 
-		if (mw->as.nloop > MAX_LOOP)
-			return "too many loops";
+	mw->rel.period             = mw->as.period;
 
-		if (cks.smplsz < 36 + mw->as.nloop * 24 + spec_data_sz)
-			return "invalid sampler chunk";
+	mw->chan_stride =
+		(mw->as.length ? VLF_PAD_LENGTH(mw->as.length) : 0) +
+		(mw->rel.length ? VLF_PAD_LENGTH(mw->rel.length) : 0);
+	mw->as.chan_stride = mw->chan_stride;
+	mw->rel.chan_stride = mw->chan_stride;
 
-		for (i = 0; i < mw->as.nloop; i++) {
-			mw->as.loops[2*i+0] = parse_le32(cks.smpl + 36 + i * 24 + 8);
-			mw->as.loops[2*i+1] = parse_le32(cks.smpl + 36 + i * 24 + 12);
-			if (mw->as.loops[2*i+0] > mw->as.loops[2*i+1] || mw->as.loops[2*i+1] >= total_length)
-				return "invalid sampler loop";
-			if (mw->as.loops[2*i+1] >= atk_length) {
-				atk_length = mw->as.loops[2*i+1] + 1;
-				end_loop_idx = i;
+	buffers         = malloc(sizeof(float *) * mw->channels * mw->chan_stride);
+	mw->buffers     = buffers;
+
+	if (mw->as.length) {
+		bufcvt_deinterleave
+			(buffers
+			,mw->chan_stride
+			,cks.data
+			,mw->as.length
+			,mw->channels
+			,(mw->native_bits == 24) ? BUFCVT_FMT_SLE24 : BUFCVT_FMT_SLE16
+			,BUFCVT_FMT_FLOAT
+			);
+		for (ch = 0; ch < mw->channels; ch++) {
+			for (i = mw->as.length; i < VLF_PAD_LENGTH(mw->as.length); i++) {
+				buffers[ch*mw->chan_stride+i] = 0.0f;
 			}
-			atk_end_loop_start = mw->as.loops[2*end_loop_idx+0];
 		}
+		mw->as.data  = buffers;
+		buffers      += VLF_PAD_LENGTH(mw->as.length);
 	} else {
-		return "invalid sampler chunk";
+		mw->as.data = NULL;
 	}
 
-	if (cks.cue != NULL) {
-		unsigned long nb_cue;
-		unsigned last_release = 0;
-
-		if (cks.cuesz < 4)
-			return "invalid cue chunk";
-
-		nb_cue = parse_le32(cks.cue + 0);
-
-		if (cks.cuesz < nb_cue * 24 + 4)
-			return "invalid cue chunk";
-
-		/* 0             nb_cuepoints
-		 * 4 + 24*i + 0  dwName
-		 * 4 + 24*i + 4  dwPosition
-		 * 4 + 24*i + 8  fccChunk
-		 * 4 + 24*i + 12 dwChunkStart
-		 * 4 + 24*i + 16 dwBlockStart
-		 * 4 + 24*i + 20 dwSampleOffset
-		 */
-
-		for (i = 0; i < nb_cue; i++) {
-			/* We ignore the cue ID because too much software incorrectly
-			 * associates it with a loop. We instead look for a cue point that
-			 * is past the end of the last loop. */
-			unsigned long block_start   = parse_le32(cks.cue + 4 + i * 24 + 16);
-			unsigned long sample_offset = parse_le32(cks.cue + 4 + i * 24 + 20);
-			unsigned long relpos        = sample_offset + block_start / (mw->channels * ((mw->native_bits + 7) / 8));
-
-			if (parse_le32(cks.cue + 4 + i * 24 + 12) != 0)
-				continue;
-			if (parse_le32(cks.cue + 4 + i * 24 + 8) != 0x61746164ul)
-				continue;
-			if (relpos > last_release)
-				last_release = relpos;
+	if (mw->rel.length) {
+		bufcvt_deinterleave
+			(buffers
+			,mw->chan_stride
+			,cks.data + mw->rel.position*block_align
+			,mw->rel.length
+			,mw->channels
+			,(mw->native_bits == 24) ? BUFCVT_FMT_SLE24 : BUFCVT_FMT_SLE16
+			,BUFCVT_FMT_FLOAT
+			);
+		for (ch = 0; ch < mw->channels; ch++) {
+			for (i = mw->rel.length; i < VLF_PAD_LENGTH(mw->rel.length); i++) {
+				buffers[ch*mw->chan_stride+i] = 0.0f;
+			}
 		}
-
-		if (last_release < atk_length) {
-			last_release = atk_length;
-			printf("shortened release as it was positioned inside a loop\n");
-		}
-
-		if (last_release >= total_length)
-			return "invalid cue chunk";
-
-		rel_data   = cks.data + last_release*block_align;
-		rel_length = total_length - last_release;
+		mw->rel.data  = buffers;
+		buffers      += VLF_PAD_LENGTH(mw->rel.length);
 	} else {
-		return "no cue chunk";
-	}
-
-	{
-		float *buffers;
-		mw->rel.length  = rel_length;
-		mw->rel.position = 0;
-		mw->as.length   = atk_length;
-		mw->as.atk_end_loop_start = atk_end_loop_start;
-		mw->chan_stride = VLF_PAD_LENGTH(atk_length) + VLF_PAD_LENGTH(rel_length);
-		mw->as.chan_stride = mw->chan_stride;
-		mw->rel.chan_stride = mw->chan_stride;
-
-		buffers         = malloc(sizeof(float *) * mw->channels * mw->chan_stride);
-		mw->buffers     = buffers;
-		if (atk_length) {
-			bufcvt_deinterleave
-				(buffers
-				,mw->chan_stride
-				,cks.data
-				,atk_length
-				,mw->channels
-				,(mw->native_bits == 24) ? BUFCVT_FMT_SLE24 : BUFCVT_FMT_SLE16
-				,BUFCVT_FMT_FLOAT
-				);
-			for (ch = 0; ch < mw->channels; ch++) {
-				for (i = atk_length; i < VLF_PAD_LENGTH(atk_length); i++) {
-					buffers[ch*mw->chan_stride+i] = 0.0f;
-				}
-			}
-			mw->as.data  = buffers;
-			buffers      += VLF_PAD_LENGTH(atk_length);
-		} else {
-			mw->as.data = NULL;
-		}
-		if (rel_length) {
-			bufcvt_deinterleave
-				(buffers
-				,mw->chan_stride
-				,rel_data
-				,rel_length
-				,mw->channels
-				,(mw->native_bits == 24) ? BUFCVT_FMT_SLE24 : BUFCVT_FMT_SLE16
-				,BUFCVT_FMT_FLOAT
-				);
-			for (ch = 0; ch < mw->channels; ch++) {
-				for (i = rel_length; i < VLF_PAD_LENGTH(rel_length); i++) {
-					buffers[ch*mw->chan_stride+i] = 0.0f;
-				}
-			}
-			mw->rel.data  = buffers;
-			buffers      += VLF_PAD_LENGTH(rel_length);
-		} else {
-			mw->rel.data = NULL;
-		}
+		mw->rel.data = NULL;
 	}
 
 	return NULL;
 }
 
-const char *mw_load_from_file(struct memory_wave *mw, const char *fname)
+const char *mw_load_from_file(struct memory_wave *mw, const char *fname, unsigned load_format)
 {
 	const char *err = NULL;
 	FILE *f = fopen(fname, "rb");
@@ -337,7 +393,7 @@ const char *mw_load_from_file(struct memory_wave *mw, const char *fname)
 					unsigned char *fbuf = malloc(fsz);
 					if (fbuf != NULL) {
 						if (fread(fbuf, 1, fsz, f) == fsz) {
-							err = load_smpl_mem(mw, fbuf, fsz);
+							err = load_smpl_mem(mw, fbuf, fsz, load_format);
 						} else {
 							err = "failed to read file";
 						}
@@ -935,42 +991,84 @@ load_smpl_comp
 	,const struct fftset_fft    *prefilt_fft
 	)
 {
-	struct memory_wave mw;
-	const char *err;
+	struct memory_wave *mw;
+	const char *err = NULL;
+	unsigned i;
 
-	assert(nb_components == 1 /* TODO!!! */);
+	assert(nb_components);
 
-	/* Load the wave file. */
-	err = mw_load_from_file(&mw, components[0].filename);
-	if (err != NULL)
+	mw = malloc(sizeof(*mw) * nb_components);
+	if (mw == NULL)
+		return "out of memory";
+
+	/* Load contributing samples. */
+	for (i = 0; i < nb_components; i++) {
+		err = mw_load_from_file(mw + i, components[i].filename, components[i].load_format);
+		if (err != NULL)
+			break;
+	}
+	if (err != NULL) {
+		while (i--)
+			free(mw[i].buffers);
 		return err;
+	}
 
-	mw.as.load_format = components[0].load_format;
-	mw.rel.load_format = components[0].load_format;
+	/* Combine the segments. */
+	{
+		unsigned last_attack = 0;
+		unsigned last_release = 0;
+		for (i = 1; i < nb_components && err == NULL; i++) {
+			if (mw[i].channels != mw[0].channels) {
+				err = "mixed channel formats for sample";
+				break;
+			}
+			if (mw[i].as.data != NULL) {
+				if (mw[last_attack].as.data == NULL) {
+					mw[last_attack].as = mw[i].as;
+				} else {
+					mw[last_attack].as.next = &(mw[i].as);
+					last_attack = i;
+				}
+			}
+			if (mw[i].rel.data != NULL) {
+				if (mw[last_release].rel.data == NULL) {
+					mw[last_release].rel = mw[i].rel;
+				} else {
+					mw[last_release].rel.next = &(mw[i].rel);
+					last_release = i;
+				}
+			}
+		}
+	}
 
 	/* Make sure the wave has at least one loop and a release marker. */
-	if (mw.as.nloop <= 0 || mw.as.nloop > MAX_LOOP || mw.rel.data == NULL || mw.as.data == NULL)
-		return "no/too-many loops or no release";
+	if (err == NULL) {
+		if (mw[0].as.nloop <= 0 || mw[0].as.nloop > MAX_LOOP || mw[0].rel.data == NULL || mw[0].as.data == NULL)
+			err = "no/too-many loops or no release";
+	}
 
-	err =
-		load_smpl_lists
-			(pipe
-			,&mw.as
-			,&mw.rel
-			,mw.channels
-			,mw.rate
-			,allocator
-			,fftset
-			,prefilt_kern
-			,prefilt_kern_len
-			,prefilt_real_fft_len
-			,prefilt_fft
-			,components[0].filename
-			);
+	if (err == NULL) {
+		err =
+			load_smpl_lists
+				(pipe
+				,&(mw[0].as)
+				,&(mw[0].rel)
+				,mw[0].channels
+				,mw[0].rate
+				,allocator
+				,fftset
+				,prefilt_kern
+				,prefilt_kern_len
+				,prefilt_real_fft_len
+				,prefilt_fft
+				,components[0].filename
+				);
+	}
 
-	free(mw.buffers);
+	for (i = 0; i < nb_components; i++)
+		free(mw[i].buffers);
 
-	return NULL;
+	return err;
 }
 
 /* This is really just a compatibility function now. To be deleted when more
