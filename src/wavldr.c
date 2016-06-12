@@ -139,6 +139,9 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 	if (cks.data == NULL || cks.fmt == NULL)
 		return "wave file missing format or data chunk";
 
+	mw->as.next = NULL;
+	mw->rel.next = NULL;
+
 	{
 		/* 0 fmt_tag
 		 * 2 channels
@@ -569,7 +572,9 @@ static float quantize_boost_interleave
 static
 void
 apply_prefilter
-	(struct memory_wave         *mw
+	(struct as_data             *as
+	,struct rel_data            *rel
+	,unsigned                    channels
 	,struct aalloc              *allocator
 	,const float                *prefilt_kern
 	,unsigned                    prefilt_kern_len
@@ -586,14 +591,14 @@ apply_prefilter
 	inbuf   = aalloc_align_alloc(allocator, sizeof(float) * prefilt_real_fft_len, 64);
 	outbuf  = aalloc_align_alloc(allocator, sizeof(float) * prefilt_real_fft_len, 64);
 	scratch = aalloc_align_alloc(allocator, sizeof(float) * prefilt_real_fft_len, 64);
-	for (ch = 0; ch < mw->channels; ch++) {
+	for (ch = 0; ch < channels; ch++) {
 		/* Convolve the attack/sustain segment. */
 		inplace_convolve
-			(/* input */           mw->as.data + ch*mw->chan_stride
-			,/* output */          mw->as.data + ch*mw->chan_stride
+			(/* input */           as->data + ch*as->chan_stride
+			,/* output */          as->data + ch*as->chan_stride
 			,/* sum into output */ 0
-			,/* sustain start */   mw->as.atk_end_loop_start
-			,/* total length */    mw->as.length
+			,/* sustain start */   as->atk_end_loop_start
+			,/* total length */    as->length
 			,/* pre-read */        prefilt_kern_len / 2 + 1
 			,/* is looped */       1
 			,inbuf
@@ -609,11 +614,11 @@ apply_prefilter
 		 * at the start. i.e. we are shaving some samples away from the start
 		 * of the release. */
 		inplace_convolve
-			(/* input */           mw->rel.data + ch*mw->chan_stride
-			,/* output */          mw->rel.data + ch*mw->chan_stride
+			(/* input */           rel->data + ch*rel->chan_stride
+			,/* output */          rel->data + ch*rel->chan_stride
 			,/* sum into output */ 0
 			,/* sustain start */   0
-			,/* total length */    mw->rel.length
+			,/* total length */    rel->length
 			,/* pre-read */        prefilt_kern_len / 2 + prefilt_kern_len / 8
 			,/* is looped */       0
 			,inbuf
@@ -650,66 +655,57 @@ apply_prefilter
 }
 
 const char *
-load_smpl_comp
+load_smpl_lists
 	(struct pipe_v1             *pipe
-	,const struct smpl_comp     *components
-	,unsigned                    nb_components
+	,struct as_data             *as_bits
+	,struct rel_data            *rel_bits
+	,unsigned                    channels
+	,uint_fast32_t               norm_rate
 	,struct aalloc              *allocator
 	,struct fftset              *fftset
 	,const float                *prefilt_kern
 	,unsigned                    prefilt_kern_len
 	,unsigned                    prefilt_real_fft_len
 	,const struct fftset_fft    *prefilt_fft
+	,const char                 *file_ref
 	)
 {
-	struct memory_wave mw;
-	const char *err;
-	unsigned i;
-	uint_fast32_t rseed = rand();
-	void *buf;
 	/* release has 32 samples of extra zero slop for a fake loop */
 	const unsigned release_slop   = 32;
-
-	assert(nb_components == 1 /* TODO!!! */);
-
-	/* Load the wave file. */
-	err = mw_load_from_file(&mw, components[0].filename);
-	if (err != NULL)
-		return err;
-
-	/* Make sure the wave has at least one loop and a release marker. */
-	if (mw.as.nloop <= 0 || mw.as.nloop > MAX_LOOP || mw.rel.data == NULL || mw.as.data == NULL)
-		return "no/too-many loops or no release";
+	uint_fast32_t rseed = rand();
+	unsigned i;
 
 	/* Prefilter and adjust audio. */
 	apply_prefilter
-		(&mw
+		(as_bits
+		,rel_bits
+		,channels
 		,allocator
 		,prefilt_kern
 		,prefilt_kern_len
 		,prefilt_real_fft_len
 		,prefilt_fft
-		,components[0].filename
+		,file_ref
 		);
 
-	pipe->frequency   = mw.rate / mw.as.period;
-	pipe->sample_rate = mw.rate;
-	pipe->attack.nloop = mw.as.nloop;
-	for (i = 0; i < mw.as.nloop; i++) {
-		pipe->attack.starts[i].start_smpl      = mw.as.loops[2*i+0];
+	pipe->frequency   = norm_rate / as_bits->period;
+	pipe->sample_rate = norm_rate;
+	pipe->attack.nloop = as_bits->nloop;
+	for (i = 0; i < as_bits->nloop; i++) {
+		pipe->attack.starts[i].start_smpl      = as_bits->loops[2*i+0];
 		pipe->attack.starts[i].first_valid_end = 0;
-		pipe->attack.ends[i].end_smpl          = mw.as.loops[2*i+1];
+		pipe->attack.ends[i].end_smpl          = as_bits->loops[2*i+1];
 		pipe->attack.ends[i].start_idx         = i;
 
 		/* These conditions should be checked when the wave is being loaded. */
-		assert(pipe->attack.ends[i].end_smpl < mw.as.length);
+		assert(pipe->attack.ends[i].end_smpl < as_bits->length);
 		assert(pipe->attack.ends[i].end_smpl >= pipe->attack.starts[i].start_smpl);
 	}
 
 	/* Filthy bubble sort */
-	for (i = 0; i < mw.as.nloop; i++) {
+	for (i = 0; i < as_bits->nloop; i++) {
 		unsigned j;
-		for (j = i + 1; j < mw.as.nloop; j++) {
+		for (j = i + 1; j < as_bits->nloop; j++) {
 			if (pipe->attack.ends[j].end_smpl < pipe->attack.ends[i].end_smpl) {
 				struct dec_loop_end tmp = pipe->attack.ends[j];
 				pipe->attack.ends[j] = pipe->attack.ends[i];
@@ -719,76 +715,76 @@ load_smpl_comp
 	}
 
 	/* Compute first valid end indices */
-	for (i = 0; i < mw.as.nloop; i++) {
+	for (i = 0; i < as_bits->nloop; i++) {
 		unsigned loop_start = pipe->attack.starts[i].start_smpl;
 		while (pipe->attack.ends[pipe->attack.starts[i].first_valid_end].end_smpl <= loop_start)
 			pipe->attack.starts[i].first_valid_end++;
 	}
 
-	assert(pipe->attack.ends[mw.as.nloop-1].end_smpl+1 == mw.as.length);
-	assert(pipe->attack.starts[pipe->attack.ends[mw.as.nloop-1].start_idx].start_smpl == mw.as.atk_end_loop_start);
+	assert(pipe->attack.ends[as_bits->nloop-1].end_smpl+1 == as_bits->length);
+	assert(pipe->attack.starts[pipe->attack.ends[as_bits->nloop-1].start_idx].start_smpl == as_bits->atk_end_loop_start);
 
 	pipe->release.nloop                     = 1;
-	pipe->release.starts[0].start_smpl      = mw.rel.length;
+	pipe->release.starts[0].start_smpl      = rel_bits->length;
 	pipe->release.starts[0].first_valid_end = 0;
-	pipe->release.ends[0].end_smpl          = mw.rel.length + release_slop - 1;
+	pipe->release.ends[0].end_smpl          = rel_bits->length + release_slop - 1;
 	pipe->release.ends[0].start_idx         = 0;
 
-	if (components[0].load_format == 12 && mw.channels == 2) {
-		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (mw.rel.length + release_slop + 1) * 3);
+	if (rel_bits->load_format == 12 && channels == 2) {
+		void *buf = aalloc_alloc(allocator, sizeof(unsigned char) * (rel_bits->length + release_slop + 1) * 3);
 		pipe->release.gain =
 			quantize_boost_interleave
 				(buf
-				,mw.rel.data
-				,mw.chan_stride
+				,rel_bits->data
+				,rel_bits->chan_stride
 				,2
-				,mw.rel.length
-				,mw.rel.length + release_slop + 1
+				,rel_bits->length
+				,rel_bits->length + release_slop + 1
 				,&rseed
 				,12
 				);
 		pipe->release.data = buf;
 		pipe->release.instantiate = u12c2_instantiate;
 
-		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (mw.as.length + 1) * 3);
+		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (as_bits->length + 1) * 3);
 		pipe->attack.gain =
 			quantize_boost_interleave
 				(buf
-				,mw.as.data
-				,mw.chan_stride
+				,as_bits->data
+				,as_bits->chan_stride
 				,2
-				,mw.as.length
-				,mw.as.length + 1
+				,as_bits->length
+				,as_bits->length + 1
 				,&rseed
 				,12
 				);
 		pipe->attack.data = buf;
 		pipe->attack.instantiate = u12c2_instantiate;
-	} else if (components[0].load_format == 16 && mw.channels == 2) {
-		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (mw.rel.length + release_slop + 1) * 2);
+	} else if (rel_bits->load_format == 16 && channels == 2) {
+		void *buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (rel_bits->length + release_slop + 1) * 2);
 		pipe->release.gain =
 			quantize_boost_interleave
 				(buf
-				,mw.rel.data
-				,mw.chan_stride
+				,rel_bits->data
+				,rel_bits->chan_stride
 				,2
-				,mw.rel.length
-				,mw.rel.length + release_slop + 1
+				,rel_bits->length
+				,rel_bits->length + release_slop + 1
 				,&rseed
 				,16
 				);
 		pipe->release.data = buf;
 		pipe->release.instantiate = u16c2_instantiate;
 
-		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (mw.as.length + 1) * 2);
+		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (as_bits->length + 1) * 2);
 		pipe->attack.gain =
 			quantize_boost_interleave
 				(buf
-				,mw.as.data
-				,mw.chan_stride
+				,as_bits->data
+				,as_bits->chan_stride
 				,2
-				,mw.as.length
-				,mw.as.length + 1
+				,as_bits->length
+				,as_bits->length + 1
 				,&rseed
 				,16
 				);
@@ -811,11 +807,11 @@ load_smpl_comp
 		float *kern_buf;
 		float rel_power;
 		unsigned ch;
-		size_t buf_stride = VLF_PAD_LENGTH(mw.as.length);
+		size_t buf_stride = VLF_PAD_LENGTH(as_bits->length);
 
 		aalloc_push(allocator);
 
-		env_width    = (unsigned)(mw.as.period * 2.0f + 0.5f);
+		env_width    = (unsigned)(as_bits->period * 2.0f + 0.5f);
 		cor_fft_sz   = fftset_recommend_conv_length(env_width, 512) * 2;
 		fft          = fftset_create_fft(fftset, FFTSET_MODULATION_FREQ_OFFSET_REAL, cor_fft_sz / 2);
 		envelope_buf = aalloc_align_alloc(allocator, sizeof(float) * (buf_stride * 2), 64);
@@ -825,16 +821,16 @@ load_smpl_comp
 		scratch_buf3 = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
 		mse_buf      = envelope_buf + buf_stride;
 
-		if (mw.channels == 2) {
-			for (i = 0; i < mw.as.length; i++) {
-				float fl = mw.as.data[i];
-				float fr = mw.as.data[i+mw.chan_stride];
+		if (channels == 2) {
+			for (i = 0; i < as_bits->length; i++) {
+				float fl = as_bits->data[i];
+				float fr = as_bits->data[i+as_bits->chan_stride];
 				envelope_buf[i] = fl * fl + fr * fr;
 			}
 		} else {
-			assert(mw.channels == 1);
-			for (i = 0; i < mw.as.length; i++) {
-				float fm = mw.as.data[i];
+			assert(channels == 1);
+			for (i = 0; i < as_bits->length; i++) {
+				float fm = as_bits->data[i];
 				envelope_buf[i] = fm * fm;
 			}
 		}
@@ -852,8 +848,8 @@ load_smpl_comp
 			(envelope_buf
 			,envelope_buf
 			,0
-			,mw.as.atk_end_loop_start
-			,mw.as.length
+			,as_bits->atk_end_loop_start
+			,as_bits->length
 			,env_width-1
 			,1
 			,scratch_buf
@@ -867,10 +863,10 @@ load_smpl_comp
 
 		/* Build the cross correlation kernel. */
 		rel_power = 0.0f;
-		for (ch = 0; ch < mw.channels; ch++) {
+		for (ch = 0; ch < channels; ch++) {
 			float ch_power = 0.0f;
 			for (i = 0; i < env_width; i++) {
-				float s = mw.rel.data[ch*mw.chan_stride + env_width - 1 - i];
+				float s = rel_bits->data[ch*rel_bits->chan_stride + env_width - 1 - i];
 				scratch_buf[i] = s * (2.0f / (cor_fft_sz * env_width));
 				ch_power += s * s;
 			}
@@ -879,11 +875,11 @@ load_smpl_comp
 			rel_power += ch_power;
 			fftset_fft_conv_get_kernel(fft, kern_buf, scratch_buf);
 			inplace_convolve
-				(mw.as.data + ch*mw.chan_stride
+				(as_bits->data + ch*as_bits->chan_stride
 				,mse_buf
 				,(ch != 0)
-				,mw.as.atk_end_loop_start
-				,mw.as.length
+				,as_bits->atk_end_loop_start
+				,as_bits->length
 				,env_width-1
 				,1
 				,scratch_buf
@@ -903,14 +899,14 @@ load_smpl_comp
 			char      namebuf[1024];
 			struct wav_dumper dump;
 			sprintf(namebuf, "%s_reltable_inputs.wav", components[0].filename);
-			if (wav_dumper_begin(&dump, namebuf, 2, 24, mw.rate) == 0) {
+			if (wav_dumper_begin(&dump, namebuf, 2, 24, norm_rate) == 0) {
 				(void)wav_dumper_write_from_floats(&dump, envelope_buf, mw.as.length, 1, buf_stride);
 				wav_dumper_end(&dump);
 			}
 		}
 #endif
 
-		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, mw.as.length, mw.as.period, components[0].filename);
+		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, as_bits->length, as_bits->period, file_ref);
 
 		aalloc_pop(allocator);
 	}
@@ -922,6 +918,55 @@ load_smpl_comp
 		printf("loop %u) %u,%u,%u\n", i, pipe->attack.starts[pipe->attack.ends[i].start_idx].first_valid_end, pipe->attack.starts[pipe->attack.ends[i].start_idx].start_smpl , pipe->attack.ends[i].end_smpl);
 	}
 #endif
+
+	return NULL;
+}
+
+const char *
+load_smpl_comp
+	(struct pipe_v1             *pipe
+	,const struct smpl_comp     *components
+	,unsigned                    nb_components
+	,struct aalloc              *allocator
+	,struct fftset              *fftset
+	,const float                *prefilt_kern
+	,unsigned                    prefilt_kern_len
+	,unsigned                    prefilt_real_fft_len
+	,const struct fftset_fft    *prefilt_fft
+	)
+{
+	struct memory_wave mw;
+	const char *err;
+
+	assert(nb_components == 1 /* TODO!!! */);
+
+	/* Load the wave file. */
+	err = mw_load_from_file(&mw, components[0].filename);
+	if (err != NULL)
+		return err;
+
+	mw.as.load_format = components[0].load_format;
+	mw.rel.load_format = components[0].load_format;
+
+	/* Make sure the wave has at least one loop and a release marker. */
+	if (mw.as.nloop <= 0 || mw.as.nloop > MAX_LOOP || mw.rel.data == NULL || mw.as.data == NULL)
+		return "no/too-many loops or no release";
+
+	err =
+		load_smpl_lists
+			(pipe
+			,&mw.as
+			,&mw.rel
+			,mw.channels
+			,mw.rate
+			,allocator
+			,fftset
+			,prefilt_kern
+			,prefilt_kern_len
+			,prefilt_real_fft_len
+			,prefilt_fft
+			,components[0].filename
+			);
 
 	free(mw.buffers);
 

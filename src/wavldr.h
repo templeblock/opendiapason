@@ -47,6 +47,8 @@ struct rel_data {
 
 	float            period;   /* in samples. 0.0 = unknown. */
 
+	int              load_format;
+
 	uint_fast32_t    position;
 
 	struct rel_data *next;
@@ -59,6 +61,8 @@ struct as_data {
 	uint_fast32_t    length;
 
 	float            period;   /* in samples. 0.0 = unknown. */
+
+	int              load_format;
 
 	uint_fast32_t    atk_end_loop_start;
 
