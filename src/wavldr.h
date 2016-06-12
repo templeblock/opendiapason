@@ -30,7 +30,6 @@
 #define SMPL_COMP_LOADFLAG_AS   (1)
 #define SMPL_COMP_LOADFLAG_R    (2)
 
-
 struct smpl_comp {
 	const char *filename;
 
@@ -41,31 +40,52 @@ struct smpl_comp {
 	int         load_format;
 };
 
-struct memory_wave {
-	float          *buffers;
-	
-	/* Attack and sustain data. May be null. */
-	float          *atk_data;
-	uint_fast32_t   atk_length;
-	uint_fast32_t   atk_end_loop_start;
+struct rel_data {
+	float           *data;
+	size_t           chan_stride;
+	uint_fast32_t    length;
 
-	/* Release data. May be null. */
-	uint_fast32_t   rel_length;
-	float          *rel_data;
+	float            period;   /* in samples. 0.0 = unknown. */
+
+	uint_fast32_t    position;
+
+	struct rel_data *next;
+};
+
+struct as_data {
+	/* Attack and sustain data. May be null. */
+	float           *data;
+	size_t           chan_stride;
+	uint_fast32_t    length;
+
+	float            period;   /* in samples. 0.0 = unknown. */
+
+	uint_fast32_t    atk_end_loop_start;
+
+	/* Populated by sampler chunk */
+	unsigned         nloop;
+	uint_fast32_t    loops[2*MAX_LOOP];
+
+	struct as_data  *next;
+};
+
+struct memory_wave {
+	float           *buffers; /* channels*chan_stride elements long */
+
+	/* Format details. */
+	unsigned         channels;
+	unsigned         native_bits;
+	uint_fast32_t    rate;
 
 	/* Number of elements to stride over to get to the same time value for the
 	 * next channel. */
-	size_t          chan_stride;
+	size_t           chan_stride;
 
-	/* Format details. */
-	unsigned        channels;
-	unsigned long   rate;
-	unsigned        native_bits;
+	/* Attack sustain data. Set as.data_ptr to indicate there is no attack/sustain segment. */
+	struct as_data   as;
 
-	/* Populated by sampler chunk */
-	unsigned        nloop;
-	unsigned long  *loops;
-	float           frequency;   /* < 0.0 for unknown */
+	/* Release data. Set rel.data_ptr to indicate there is no release. */
+	struct rel_data  rel;
 };
 
 struct pipe_v1 {

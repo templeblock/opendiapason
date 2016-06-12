@@ -165,9 +165,9 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 	}
 
 	if (cks.smpl == NULL) {
-		mw->loops     = NULL;
-		mw->nloop     = 0;
-		mw->frequency = -1.0;
+		mw->as.nloop     = 0;
+		mw->as.period    = 0.0;
+		mw->rel.period   = 0.0;
 	} else if (cks.smplsz >= 36) {
 		/* 0: mfg
 		 * 4: product
@@ -189,23 +189,26 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 		unsigned end_loop_idx = 0;
 		unsigned long spec_data_sz = parse_le32(cks.smpl + 32);
 		double note                = (parse_le32(cks.smpl + 16) / (65536.0 * 65536.0)) + parse_le32(cks.smpl + 12);
-		mw->nloop                  = parse_le32(cks.smpl + 28);
-		mw->frequency              = 440.0f * powf(2.0f, (note - 69.0f) / 12.0f);
+		mw->as.nloop               = parse_le32(cks.smpl + 28);
+		mw->as.period              = mw->rate / (440.0f * powf(2.0f, (note - 69.0f) / 12.0f));
+		mw->rel.period             = mw->as.period;
 
-		if (cks.smplsz < 36 + mw->nloop * 24 + spec_data_sz)
+		if (mw->as.nloop > MAX_LOOP)
+			return "too many loops";
+
+		if (cks.smplsz < 36 + mw->as.nloop * 24 + spec_data_sz)
 			return "invalid sampler chunk";
 
-		mw->loops = malloc(mw->nloop * 2 * sizeof(mw->loops[0]));
-		for (i = 0; i < mw->nloop; i++) {
-			mw->loops[2*i+0] = parse_le32(cks.smpl + 36 + i * 24 + 8);
-			mw->loops[2*i+1] = parse_le32(cks.smpl + 36 + i * 24 + 12);
-			if (mw->loops[2*i+0] > mw->loops[2*i+1] || mw->loops[2*i+1] >= total_length)
+		for (i = 0; i < mw->as.nloop; i++) {
+			mw->as.loops[2*i+0] = parse_le32(cks.smpl + 36 + i * 24 + 8);
+			mw->as.loops[2*i+1] = parse_le32(cks.smpl + 36 + i * 24 + 12);
+			if (mw->as.loops[2*i+0] > mw->as.loops[2*i+1] || mw->as.loops[2*i+1] >= total_length)
 				return "invalid sampler loop";
-			if (mw->loops[2*i+1] >= atk_length) {
-				atk_length = mw->loops[2*i+1] + 1;
+			if (mw->as.loops[2*i+1] >= atk_length) {
+				atk_length = mw->as.loops[2*i+1] + 1;
 				end_loop_idx = i;
 			}
-			atk_end_loop_start = mw->loops[2*end_loop_idx+0];
+			atk_end_loop_start = mw->as.loops[2*end_loop_idx+0];
 		}
 	} else {
 		return "invalid sampler chunk";
@@ -264,10 +267,14 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 
 	{
 		float *buffers;
-		mw->rel_length  = rel_length;
-		mw->atk_length  = atk_length;
-		mw->atk_end_loop_start = atk_end_loop_start;
+		mw->rel.length  = rel_length;
+		mw->rel.position = 0;
+		mw->as.length   = atk_length;
+		mw->as.atk_end_loop_start = atk_end_loop_start;
 		mw->chan_stride = VLF_PAD_LENGTH(atk_length) + VLF_PAD_LENGTH(rel_length);
+		mw->as.chan_stride = mw->chan_stride;
+		mw->rel.chan_stride = mw->chan_stride;
+
 		buffers         = malloc(sizeof(float *) * mw->channels * mw->chan_stride);
 		mw->buffers     = buffers;
 		if (atk_length) {
@@ -285,10 +292,10 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 					buffers[ch*mw->chan_stride+i] = 0.0f;
 				}
 			}
-			mw->atk_data  = buffers;
+			mw->as.data  = buffers;
 			buffers      += VLF_PAD_LENGTH(atk_length);
 		} else {
-			mw->atk_data = NULL;
+			mw->as.data = NULL;
 		}
 		if (rel_length) {
 			bufcvt_deinterleave
@@ -305,10 +312,10 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 					buffers[ch*mw->chan_stride+i] = 0.0f;
 				}
 			}
-			mw->rel_data  = buffers;
+			mw->rel.data  = buffers;
 			buffers      += VLF_PAD_LENGTH(rel_length);
 		} else {
-			mw->rel_data = NULL;
+			mw->rel.data = NULL;
 		}
 	}
 
@@ -582,11 +589,11 @@ apply_prefilter
 	for (ch = 0; ch < mw->channels; ch++) {
 		/* Convolve the attack/sustain segment. */
 		inplace_convolve
-			(/* input */           mw->atk_data + ch*mw->chan_stride
-			,/* output */          mw->atk_data + ch*mw->chan_stride
+			(/* input */           mw->as.data + ch*mw->chan_stride
+			,/* output */          mw->as.data + ch*mw->chan_stride
 			,/* sum into output */ 0
-			,/* sustain start */   mw->atk_end_loop_start
-			,/* total length */    mw->atk_length
+			,/* sustain start */   mw->as.atk_end_loop_start
+			,/* total length */    mw->as.length
 			,/* pre-read */        prefilt_kern_len / 2 + 1
 			,/* is looped */       1
 			,inbuf
@@ -602,11 +609,11 @@ apply_prefilter
 		 * at the start. i.e. we are shaving some samples away from the start
 		 * of the release. */
 		inplace_convolve
-			(/* input */           mw->rel_data + ch*mw->chan_stride
-			,/* output */          mw->rel_data + ch*mw->chan_stride
+			(/* input */           mw->rel.data + ch*mw->chan_stride
+			,/* output */          mw->rel.data + ch*mw->chan_stride
 			,/* sum into output */ 0
 			,/* sustain start */   0
-			,/* total length */    mw->rel_length
+			,/* total length */    mw->rel.length
 			,/* pre-read */        prefilt_kern_len / 2 + prefilt_kern_len / 8
 			,/* is looped */       0
 			,inbuf
@@ -627,13 +634,13 @@ apply_prefilter
 
 		sprintf(namebuf, "%s_prefilter_atk.wav", debug_prefix);
 		if (wav_dumper_begin(&dump, namebuf, 2, 24, mw->rate) == 0) {
-			(void)wav_dumper_write_from_floats(&dump, mw->atk_data, mw->atk_length, 1, mw->chan_stride);
+			(void)wav_dumper_write_from_floats(&dump, mw->as.data, mw->as.length, 1, mw->chan_stride);
 			wav_dumper_end(&dump);
 		}
 
 		sprintf(namebuf, "%s_prefilter_rel.wav", debug_prefix);
 		if (wav_dumper_begin(&dump, namebuf, 2, 24, mw->rate) == 0) {
-			(void)wav_dumper_write_from_floats(&dump, mw->rel_data, mw->rel_length, 1, mw->chan_stride);
+			(void)wav_dumper_write_from_floats(&dump, mw->rel.data, mw->rel.length, 1, mw->chan_stride);
 			wav_dumper_end(&dump);
 		}
 	}
@@ -671,7 +678,7 @@ load_smpl_comp
 		return err;
 
 	/* Make sure the wave has at least one loop and a release marker. */
-	if (mw.nloop <= 0 || mw.nloop > MAX_LOOP || mw.rel_data == NULL || mw.atk_data == NULL)
+	if (mw.as.nloop <= 0 || mw.as.nloop > MAX_LOOP || mw.rel.data == NULL || mw.as.data == NULL)
 		return "no/too-many loops or no release";
 
 	/* Prefilter and adjust audio. */
@@ -685,24 +692,24 @@ load_smpl_comp
 		,components[0].filename
 		);
 
-	pipe->frequency   = mw.frequency;
+	pipe->frequency   = mw.rate / mw.as.period;
 	pipe->sample_rate = mw.rate;
-	pipe->attack.nloop = mw.nloop;
-	for (i = 0; i < mw.nloop; i++) {
-		pipe->attack.starts[i].start_smpl      = mw.loops[2*i+0];
+	pipe->attack.nloop = mw.as.nloop;
+	for (i = 0; i < mw.as.nloop; i++) {
+		pipe->attack.starts[i].start_smpl      = mw.as.loops[2*i+0];
 		pipe->attack.starts[i].first_valid_end = 0;
-		pipe->attack.ends[i].end_smpl          = mw.loops[2*i+1];
+		pipe->attack.ends[i].end_smpl          = mw.as.loops[2*i+1];
 		pipe->attack.ends[i].start_idx         = i;
 
 		/* These conditions should be checked when the wave is being loaded. */
-		assert(pipe->attack.ends[i].end_smpl < mw.atk_length);
+		assert(pipe->attack.ends[i].end_smpl < mw.as.length);
 		assert(pipe->attack.ends[i].end_smpl >= pipe->attack.starts[i].start_smpl);
 	}
 
 	/* Filthy bubble sort */
-	for (i = 0; i < mw.nloop; i++) {
+	for (i = 0; i < mw.as.nloop; i++) {
 		unsigned j;
-		for (j = i + 1; j < mw.nloop; j++) {
+		for (j = i + 1; j < mw.as.nloop; j++) {
 			if (pipe->attack.ends[j].end_smpl < pipe->attack.ends[i].end_smpl) {
 				struct dec_loop_end tmp = pipe->attack.ends[j];
 				pipe->attack.ends[j] = pipe->attack.ends[i];
@@ -712,76 +719,76 @@ load_smpl_comp
 	}
 
 	/* Compute first valid end indices */
-	for (i = 0; i < mw.nloop; i++) {
+	for (i = 0; i < mw.as.nloop; i++) {
 		unsigned loop_start = pipe->attack.starts[i].start_smpl;
 		while (pipe->attack.ends[pipe->attack.starts[i].first_valid_end].end_smpl <= loop_start)
 			pipe->attack.starts[i].first_valid_end++;
 	}
 
-	assert(pipe->attack.ends[mw.nloop-1].end_smpl+1 == mw.atk_length);
-	assert(pipe->attack.starts[pipe->attack.ends[mw.nloop-1].start_idx].start_smpl == mw.atk_end_loop_start);
+	assert(pipe->attack.ends[mw.as.nloop-1].end_smpl+1 == mw.as.length);
+	assert(pipe->attack.starts[pipe->attack.ends[mw.as.nloop-1].start_idx].start_smpl == mw.as.atk_end_loop_start);
 
 	pipe->release.nloop                     = 1;
-	pipe->release.starts[0].start_smpl      = mw.rel_length;
+	pipe->release.starts[0].start_smpl      = mw.rel.length;
 	pipe->release.starts[0].first_valid_end = 0;
-	pipe->release.ends[0].end_smpl          = mw.rel_length + release_slop - 1;
+	pipe->release.ends[0].end_smpl          = mw.rel.length + release_slop - 1;
 	pipe->release.ends[0].start_idx         = 0;
 
 	if (components[0].load_format == 12 && mw.channels == 2) {
-		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (mw.rel_length + release_slop + 1) * 3);
+		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (mw.rel.length + release_slop + 1) * 3);
 		pipe->release.gain =
 			quantize_boost_interleave
 				(buf
-				,mw.rel_data
+				,mw.rel.data
 				,mw.chan_stride
 				,2
-				,mw.rel_length
-				,mw.rel_length + release_slop + 1
+				,mw.rel.length
+				,mw.rel.length + release_slop + 1
 				,&rseed
 				,12
 				);
 		pipe->release.data = buf;
 		pipe->release.instantiate = u12c2_instantiate;
 
-		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (mw.atk_length + 1) * 3);
+		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (mw.as.length + 1) * 3);
 		pipe->attack.gain =
 			quantize_boost_interleave
 				(buf
-				,mw.atk_data
+				,mw.as.data
 				,mw.chan_stride
 				,2
-				,mw.atk_length
-				,mw.atk_length + 1
+				,mw.as.length
+				,mw.as.length + 1
 				,&rseed
 				,12
 				);
 		pipe->attack.data = buf;
 		pipe->attack.instantiate = u12c2_instantiate;
 	} else if (components[0].load_format == 16 && mw.channels == 2) {
-		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (mw.rel_length + release_slop + 1) * 2);
+		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (mw.rel.length + release_slop + 1) * 2);
 		pipe->release.gain =
 			quantize_boost_interleave
 				(buf
-				,mw.rel_data
+				,mw.rel.data
 				,mw.chan_stride
 				,2
-				,mw.rel_length
-				,mw.rel_length + release_slop + 1
+				,mw.rel.length
+				,mw.rel.length + release_slop + 1
 				,&rseed
 				,16
 				);
 		pipe->release.data = buf;
 		pipe->release.instantiate = u16c2_instantiate;
 
-		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (mw.atk_length + 1) * 2);
+		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (mw.as.length + 1) * 2);
 		pipe->attack.gain =
 			quantize_boost_interleave
 				(buf
-				,mw.atk_data
+				,mw.as.data
 				,mw.chan_stride
 				,2
-				,mw.atk_length
-				,mw.atk_length + 1
+				,mw.as.length
+				,mw.as.length + 1
 				,&rseed
 				,16
 				);
@@ -804,11 +811,11 @@ load_smpl_comp
 		float *kern_buf;
 		float rel_power;
 		unsigned ch;
-		size_t buf_stride = VLF_PAD_LENGTH(mw.atk_length);
+		size_t buf_stride = VLF_PAD_LENGTH(mw.as.length);
 
 		aalloc_push(allocator);
 
-		env_width    = (unsigned)((1.0f / mw.frequency) * mw.rate * 2.0f + 0.5f);
+		env_width    = (unsigned)(mw.as.period * 2.0f + 0.5f);
 		cor_fft_sz   = fftset_recommend_conv_length(env_width, 512) * 2;
 		fft          = fftset_create_fft(fftset, FFTSET_MODULATION_FREQ_OFFSET_REAL, cor_fft_sz / 2);
 		envelope_buf = aalloc_align_alloc(allocator, sizeof(float) * (buf_stride * 2), 64);
@@ -819,15 +826,15 @@ load_smpl_comp
 		mse_buf      = envelope_buf + buf_stride;
 
 		if (mw.channels == 2) {
-			for (i = 0; i < mw.atk_length; i++) {
-				float fl = mw.atk_data[i];
-				float fr = mw.atk_data[i+mw.chan_stride];
+			for (i = 0; i < mw.as.length; i++) {
+				float fl = mw.as.data[i];
+				float fr = mw.as.data[i+mw.chan_stride];
 				envelope_buf[i] = fl * fl + fr * fr;
 			}
 		} else {
 			assert(mw.channels == 1);
-			for (i = 0; i < mw.atk_length; i++) {
-				float fm = mw.atk_data[i];
+			for (i = 0; i < mw.as.length; i++) {
+				float fm = mw.as.data[i];
 				envelope_buf[i] = fm * fm;
 			}
 		}
@@ -845,8 +852,8 @@ load_smpl_comp
 			(envelope_buf
 			,envelope_buf
 			,0
-			,mw.atk_end_loop_start
-			,mw.atk_length
+			,mw.as.atk_end_loop_start
+			,mw.as.length
 			,env_width-1
 			,1
 			,scratch_buf
@@ -863,7 +870,7 @@ load_smpl_comp
 		for (ch = 0; ch < mw.channels; ch++) {
 			float ch_power = 0.0f;
 			for (i = 0; i < env_width; i++) {
-				float s = mw.rel_data[ch*mw.chan_stride + env_width - 1 - i];
+				float s = mw.rel.data[ch*mw.chan_stride + env_width - 1 - i];
 				scratch_buf[i] = s * (2.0f / (cor_fft_sz * env_width));
 				ch_power += s * s;
 			}
@@ -872,11 +879,11 @@ load_smpl_comp
 			rel_power += ch_power;
 			fftset_fft_conv_get_kernel(fft, kern_buf, scratch_buf);
 			inplace_convolve
-				(mw.atk_data + ch*mw.chan_stride
+				(mw.as.data + ch*mw.chan_stride
 				,mse_buf
 				,(ch != 0)
-				,mw.atk_end_loop_start
-				,mw.atk_length
+				,mw.as.atk_end_loop_start
+				,mw.as.length
 				,env_width-1
 				,1
 				,scratch_buf
@@ -897,13 +904,13 @@ load_smpl_comp
 			struct wav_dumper dump;
 			sprintf(namebuf, "%s_reltable_inputs.wav", components[0].filename);
 			if (wav_dumper_begin(&dump, namebuf, 2, 24, mw.rate) == 0) {
-				(void)wav_dumper_write_from_floats(&dump, envelope_buf, mw.atk_length, 1, buf_stride);
+				(void)wav_dumper_write_from_floats(&dump, envelope_buf, mw.as.length, 1, buf_stride);
 				wav_dumper_end(&dump);
 			}
 		}
 #endif
 
-		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, mw.atk_length, (1.0f / mw.frequency) * mw.rate, components[0].filename);
+		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, mw.as.length, mw.as.period, components[0].filename);
 
 		aalloc_pop(allocator);
 	}
@@ -911,12 +918,11 @@ load_smpl_comp
 
 
 #if OPENDIAPASON_VERBOSE_DEBUG
-	for (i = 0; i < mw.nloop; i++) {
+	for (i = 0; i < mw.as.nloop; i++) {
 		printf("loop %u) %u,%u,%u\n", i, pipe->attack.starts[pipe->attack.ends[i].start_idx].first_valid_end, pipe->attack.starts[pipe->attack.ends[i].start_idx].start_smpl , pipe->attack.ends[i].end_smpl);
 	}
 #endif
 
-	free(mw.loops);
 	free(mw.buffers);
 
 	return NULL;
