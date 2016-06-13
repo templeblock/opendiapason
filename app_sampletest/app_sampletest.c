@@ -87,7 +87,18 @@ static const struct test_load_entry TEST_ENTRY_LIST[] =
 //,	{"Prestant4",      36, 53, GT | PED, 4}
 //,	{"Doublette2",     36, 53, GT | PED, 6}
 //,	{"Pleinjeu3",      36, 53, GT | PED, 2}
-	{"I Bordun 16",         36, 53, PED | GT,  1, 'a'}
+	{"II Clarinette 8",     36, 53, SW,        2, '1'}
+,	{"II Cromorne 8",       36, 53, SW,        2, '2'}
+,	{"II Salicional 8",     36, 53, SW,        2, '3'}
+,	{"II Dolce 4",          36, 53, SW,        4, '4'}
+,	{"I Trompette 8",       36, 53, PED | GT,  2, 'a'}
+,	{"I Montre 8",          36, 53, PED | GT,  2, 's'}
+,	{"I Prestant 4",        36, 53, PED | GT,  4, 'd'}
+,	{"I Doublette 2",       36, 53, PED | GT,  8, 'f'}
+,	{"P Contrebasse 16",    36, 27, PED,       1, 'x'}
+,	{"P Soubasse 16",       36, 27, PED,       1, 'c'}
+,	{"P Violoncelle 8",     36, 27, PED,       2, 'v'}
+,	{"P Bombarde 16",       36, 27, PED,       1, 'z'}/*	{"I Bordun 16",         36, 53, PED | GT,  1, 'a'}
 ,	{"I Principal 8",       36, 53, PED | GT,  2, 's'}
 ,	{"I Octave 4",          36, 53, PED | GT,  4, 'd'}
 ,	{"I Quinte 2 23",       36, 53, GT,        6, 'f'}
@@ -101,7 +112,7 @@ static const struct test_load_entry TEST_ENTRY_LIST[] =
 ,	{"II Viola di Gamba 8", 36, 53, SW,        2, '1'}
 ,	{"II Gedact 8",         36, 53, SW,        2, '2'}
 ,	{"II Geigen-principal 8", 36, 53, SW,      2, '3'}
-,	{"II Praestant 4",      36, 53, SW,        4, '4'}
+,	{"II Praestant 4",      36, 53, SW,        4, '4'}*/
 };
 
 #define NUM_TEST_ENTRY_LIST (sizeof(TEST_ENTRY_LIST) / sizeof(TEST_ENTRY_LIST[0]))
@@ -127,19 +138,44 @@ load_executors
 		float target_freq;
 		static const char *NAMES[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 		const char * err;
-		char namebuf[1024];
-		sprintf(namebuf, "%s/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
-		err = load_smpl_f(&(pipes[i].pd.data), namebuf, mem, fftset, prefilter, 16);
+		char namebuf[128];
+		char namebuf2[128];
+		char namebuf3[128];
+		char namebuf4[128];
+		struct smpl_comp bits[4];
+
+		sprintf(namebuf,  "%s/A0/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
+		sprintf(namebuf2, "%s/R0/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
+		sprintf(namebuf3, "%s/R1/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
+		sprintf(namebuf4, "%s/R2/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
+		bits[0].filename = namebuf;
+		bits[1].filename = namebuf2;
+		bits[2].filename = namebuf3;
+		bits[3].filename = namebuf4;
+		bits[0].load_format = 16;
+		bits[1].load_format = 16;
+		bits[2].load_format = 16;
+		bits[3].load_format = 16;
+		bits[0].load_flags = SMPL_COMP_LOADFLAG_AS;
+		bits[1].load_flags = SMPL_COMP_LOADFLAG_R;
+		bits[2].load_flags = SMPL_COMP_LOADFLAG_R;
+		bits[3].load_flags = SMPL_COMP_LOADFLAG_R;
+
+		err = load_smpl_comp(&(pipes[i].pd.data), bits, 2, mem, fftset, prefilter);
+
 		if (err != NULL) {
 			printf("WAVE ERR: %s-%s\n", namebuf, err);
 			abort();
 		}
+
 		target_freq = organ_pitch16 * harmonic16 * pow(2.0, (i + first_midi - 36) / 12.0);
 		pipe_freq   = pipes[i].pd.data.frequency;
+
 		pipes[i].pd.rate = (target_freq * pipes[i].pd.data.sample_rate) * SMPL_POSITION_SCALE / (PLAYBACK_SAMPLE_RATE * pipe_freq) + 0.5;
 		pipes[i].instance = NULL;
 		pipes[i].nb_insts = 0;
 		pipes[i].enabled = 0;
+
 #if OPENDIAPASON_VERBOSE_DEBUG
 		printf("%s:%d FREQUENCIES: %f,%f,%u\n", path, i, target_freq, pipe_freq, pipes[i].pd.rate);
 #endif
