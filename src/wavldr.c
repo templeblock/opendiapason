@@ -554,8 +554,6 @@ apply_prefilter
 		for (ch = 0; ch < channels; ch++) {
 			odfilter_run_inplace
 				(/* input */           as->data + ch*as->chan_stride
-				,/* output */          as->data + ch*as->chan_stride
-				,/* sum into output */ 0
 				,/* sustain start */   as->atk_end_loop_start
 				,/* total length */    as->length
 				,/* pre-read */        SMPL_INVERSE_FILTER_LEN / 2 + 1
@@ -591,8 +589,6 @@ apply_prefilter
 		for (ch = 0; ch < channels; ch++) {
 			odfilter_run_inplace
 				(/* input */           rel->data + ch*rel->chan_stride
-				,/* output */          rel->data + ch*rel->chan_stride
-				,/* sum into output */ 0
 				,/* sustain start */   0
 				,/* total length */    rel->length
 				,/* pre-read */        SMPL_INVERSE_FILTER_LEN / 2 + SMPL_INVERSE_FILTER_LEN / 8
@@ -851,8 +847,6 @@ load_smpl_lists
 		/* Get the envelope */
 		odfilter_run_inplace
 			(envelope_buf
-			,envelope_buf
-			,0
 			,as_bits->atk_end_loop_start
 			,as_bits->length
 			,env_width-1
@@ -877,7 +871,7 @@ load_smpl_lists
 			rel_power += ch_power;
 			fftset_fft_conv_get_kernel(fft, kern_buf, scratch_buf);
 
-			odfilter_run_inplace
+			odfilter_run
 				(as_bits->data + ch*as_bits->chan_stride
 				,mse_buf
 				,(ch != 0)

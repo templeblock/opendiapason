@@ -43,8 +43,8 @@ int odfilter_interp_prefilter_init(struct odfilter *pf, struct aalloc *allocobj,
 	return 0;
 }
 
-void odfilter_run_inplace
-	(const float                *data
+void odfilter_run
+	(const float                *input
 	,float                      *output
 	,int                         add_to_output
 	,unsigned long               susp_start
@@ -57,16 +57,9 @@ void odfilter_run_inplace
 	,const struct odfilter      *filter
 	)
 {
-	unsigned max_in = filter->conv_len - filter->kern_len + 1;
-	float *old_data = malloc(sizeof(float) * length);
+	const unsigned max_in = filter->conv_len - filter->kern_len + 1;
 	unsigned input_read;
 	unsigned input_pos;
-
-	if (old_data == NULL)
-		abort();
-
-	/* Copy input buffer to temp buffer. */
-	memcpy(old_data, data, sizeof(float) * length);
 
 	/* Zero output buffer. */
 	if (!add_to_output) {
@@ -95,7 +88,7 @@ void odfilter_run_inplace
 
 				/* Read it. */
 				for (j = 0; j < max_read; j++)
-					sc1[j + op] = old_data[j + input_pos];
+					sc1[j + op] = input[j + input_pos];
 
 				/* Increment offsets. */
 				input_pos += max_read;
@@ -109,7 +102,7 @@ void odfilter_run_inplace
 			for (; op < filter->conv_len; op++)
 				sc1[op] = 0.0f;
 		} else {
-			for (j = 0; j < max_in && input_read+j < length; j++) sc1[j] = old_data[input_read+j];
+			for (j = 0; j < max_in && input_read+j < length; j++) sc1[j] = input[input_read+j];
 			for (; j < filter->conv_len;            j++)      sc1[j] = 0.0f;
 		}
 
@@ -132,7 +125,42 @@ void odfilter_run_inplace
 			break;
 
 		input_read += max_in;
-	};
+	}
+}
+
+void odfilter_run_inplace
+	(float                      *data
+	,unsigned long               susp_start
+	,unsigned long               length
+	,unsigned                    pre_read
+	,int                         is_looped
+	,float                      *sc1
+	,float                      *sc2
+	,float                      *sc3
+	,const struct odfilter      *filter
+	)
+{
+	float *old_data = malloc(sizeof(float) * length);
+
+	if (old_data == NULL)
+		abort();
+
+	/* Copy input buffer to temp buffer. */
+	memcpy(old_data, data, sizeof(float) * length);
+
+	odfilter_run
+		(old_data
+		,data
+		,0
+		,susp_start
+		,length
+		,pre_read
+		,is_looped
+		,sc1
+		,sc2
+		,sc3
+		,filter
+		);
 
 	free(old_data);
 }
