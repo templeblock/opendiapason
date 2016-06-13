@@ -417,105 +417,6 @@ const char *mw_load_from_file(struct memory_wave *mw, const char *fname, unsigne
 	return err;
 }
 
-static
-void
-inplace_convolve
-	(const float                *data
-	,float                      *output
-	,int                         add_to_output
-	,unsigned long               susp_start
-	,unsigned long               length
-	,unsigned                    pre_read
-	,int                         is_looped
-	,float                      *sc1
-	,float                      *sc2
-	,float                      *sc3
-	,const float                *prefilt_kern
-	,unsigned                    prefilt_kern_len
-	,unsigned                    prefilt_real_fft_len
-	,const struct fftset_fft    *prefilt_fft
-	)
-{
-	unsigned max_in = prefilt_real_fft_len - prefilt_kern_len + 1;
-	float *old_data = malloc(sizeof(float) * length);
-	unsigned input_read;
-	unsigned input_pos;
-
-	if (old_data == NULL)
-		abort();
-
-	/* Copy input buffer to temp buffer. */
-	memcpy(old_data, data, sizeof(float) * length);
-
-	/* Zero output buffer. */
-	if (!add_to_output) {
-		memset(output, 0, sizeof(float) * length);
-	}
-
-	/* Run trivial overlap add convolution */
-	input_read = 0;
-	input_pos = 0;
-	while (1) {
-		unsigned j = 0;
-		int output_pos = (int)input_read-(int)pre_read;
-
-		/* Build input buffer */
-		if (is_looped) {
-			unsigned op = 0;
-			while (op < max_in) {
-				unsigned max_read;
-
-				/* How much can we read before we hit the end of the buffer? */
-				max_read = length - input_pos;
-
-				/* How much SHOULD we read? */
-				if (max_read + op > max_in)
-					max_read = max_in - op;
-
-				/* Read it. */
-				for (j = 0; j < max_read; j++)
-					sc1[j + op] = old_data[j + input_pos];
-
-				/* Increment offsets. */
-				input_pos += max_read;
-				op        += max_read;
-
-				/* If we read to the end of the buffer, move to the sustain
-				 * start. */
-				if (input_pos == length)
-					input_pos = susp_start;
-			}
-			for (; op < prefilt_real_fft_len; op++)
-				sc1[op] = 0.0f;
-		} else {
-			for (j = 0; j < max_in && input_read+j < length; j++) sc1[j] = old_data[input_read+j];
-			for (; j < prefilt_real_fft_len;            j++)      sc1[j] = 0.0f;
-		}
-
-		/* Convolve! */
-		fftset_fft_conv(prefilt_fft, sc2, sc1, prefilt_kern, sc3);
-
-		/* Sc2 contains the convolved buffer. */
-		for (j = 0; j < prefilt_real_fft_len; j++) {
-			int x = output_pos+(int)j;
-			if (x < 0)
-				continue;
-			/* Cast is safe because we check earlier for negative. */
-			if ((unsigned)x >= length)
-				break;
-			output[x] += sc2[j];
-		}
-
-		/* added nothing to output buffer! */
-		if (j == 0)
-			break;
-
-		input_read += max_in;
-	};
-
-	free(old_data);
-}
-
 static float quantize_boost_interleave
 	(void           *obuf
 	,float          *in_bufs
@@ -651,7 +552,7 @@ apply_prefilter
 	idx = 0;
 	while (as != NULL) {
 		for (ch = 0; ch < channels; ch++) {
-			inplace_convolve
+			odfilter_run_inplace
 				(/* input */           as->data + ch*as->chan_stride
 				,/* output */          as->data + ch*as->chan_stride
 				,/* sum into output */ 0
@@ -662,10 +563,7 @@ apply_prefilter
 				,inbuf
 				,outbuf
 				,scratch
-				,prefilter->kernel
-				,SMPL_INVERSE_FILTER_LEN
-				,prefilter->conv_len
-				,prefilter->conv
+				,prefilter
 				);
 		}
 
@@ -691,7 +589,7 @@ apply_prefilter
 	idx = 0;
 	while (rel != NULL) {
 		for (ch = 0; ch < channels; ch++) {
-			inplace_convolve
+			odfilter_run_inplace
 				(/* input */           rel->data + ch*rel->chan_stride
 				,/* output */          rel->data + ch*rel->chan_stride
 				,/* sum into output */ 0
@@ -702,10 +600,7 @@ apply_prefilter
 				,inbuf
 				,outbuf
 				,scratch
-				,prefilter->kernel
-				,SMPL_INVERSE_FILTER_LEN
-				,prefilter->conv_len
-				,prefilter->conv
+				,prefilter
 			);
 		}
 
@@ -910,6 +805,7 @@ load_smpl_lists
 		float *kern_buf;
 		float rel_power;
 		unsigned ch;
+		struct odfilter filt;
 		size_t buf_stride = VLF_PAD_LENGTH(as_bits->length);
 
 		aalloc_push(allocator);
@@ -946,8 +842,14 @@ load_smpl_lists
 			,kern_buf
 			,scratch_buf
 			);
+
+		filt.kernel   = kern_buf;
+		filt.conv     = fft;
+		filt.conv_len = cor_fft_sz;
+		filt.kern_len = env_width;
+
 		/* Get the envelope */
-		inplace_convolve
+		odfilter_run_inplace
 			(envelope_buf
 			,envelope_buf
 			,0
@@ -958,10 +860,7 @@ load_smpl_lists
 			,scratch_buf
 			,scratch_buf2
 			,scratch_buf3
-			,kern_buf
-			,env_width
-			,cor_fft_sz
-			,fft
+			,&filt
 			);
 
 		/* Build the cross correlation kernel. */
@@ -977,7 +876,8 @@ load_smpl_lists
 				scratch_buf[i] = 0.0f;
 			rel_power += ch_power;
 			fftset_fft_conv_get_kernel(fft, kern_buf, scratch_buf);
-			inplace_convolve
+
+			odfilter_run_inplace
 				(as_bits->data + ch*as_bits->chan_stride
 				,mse_buf
 				,(ch != 0)
@@ -988,10 +888,7 @@ load_smpl_lists
 				,scratch_buf
 				,scratch_buf2
 				,scratch_buf3
-				,kern_buf
-				,env_width
-				,cor_fft_sz
-				,fft
+				,&filt
 				);
 		}
 
