@@ -31,10 +31,14 @@ I follow a convention in my repositories that anything buildable as an applicati
 
 ### Windows
 
-On Windows, things are a little bit trickier. I am using MS Visual Studio 2015 Community Edition (as Visual Studio seems like the right thing to do on Windows). You will need to get and build portaudio and portmidi (there is some tricky-ness here) and you will need to build a 64-bit binary... this is mainly to do with not finding vector types in 32-bit so the FFT will not build - there is probably a way to get around this but I haven't bothered to look into it. If you do, please update this readme. :)
+On Windows, things are a little bit (actually, a lot) trickier. I am using MS Visual Studio 2015 Community Edition (as Visual Studio seems like the right thing to do on Windows). You will need to get and build portaudio and portmidi (there is some tricky-ness here) and you will need to build a 64-bit binary... this is mainly to do with not finding vector types in 32-bit so the FFT will not build - there is probably a way to get around this but I haven't bothered to look into it. If you do, please update this readme. :)
+
+I found building portaudio much simpler than portmidi. The Visual Studio solution bundled with portaudio appears to work, but nothing worked with portmidi. If you are looking for guidance here, the first thing I did was hack out JNI support. Once that is gone, things appear to build ok.
 
 You will need to specify the locations of where cmake should search for the portaudio/midi headers. My cmake scripts will look for the variables PORTAUDIO_INCLUDEDIR, PORTAUDIO_LIBDIR to search, so the command line will end up looking something like this:
 
 `cmake .. -G "Visual Studio 14 2015 Win64" -DPORTAUDIO_LIBDIR=C:\things\portaudiobin\Release -DPORTAUDIO_INCLUDEDIR=C:\things\port2\include`
 
-You will also need to copy the built portaudio library into the build directory in order to run the binary.
+You will also need to copy the built portaudio dynamic library into the build directory in order to run the binary.
+
+As a side-note, I've found that the latency on Windows 10 fluctuates a bit at run-time. I have no idea what clown-business is going on here, but it seems to perform worse than every other platform I am building on. You may also need to increase the latency slightly to get acceptable performance.
