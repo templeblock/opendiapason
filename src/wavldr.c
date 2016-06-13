@@ -746,6 +746,24 @@ load_smpl_lists
 	,const char                 *file_ref
 	)
 {
+	/* What this function needs to do (but doesn't at the moment):
+	 *
+	 * 1) prefilter all the releases. (these could immediately be quantised
+	 *    into the releases for the sample at this point...)
+	 * 2) for each AS segment:
+	 *    a) get a buffer of N samples (where N is about the period of the
+	 *       sample) using the interpolation filter to make the rate align
+	 *       with the rate of the AS sample. This allows releases to be tuned
+	 *       individually from attacks. Because the releases were pre-filtered
+	 *       the frequency response of the interpolated data is extremely
+	 *       close to the currently unfiltered response of the AS sample.
+	 *    b) Get the envelope of the unfiltered AS sample, sum the power of
+	 *       the small release block, and find the correlation of the releases
+	 *       to the AS sample. This allows us to compute the MSE buffers which
+	 *       are required to align the release properly.
+	 *    c) Compute release alignment tables using the data collected in "b".
+	 *    d) Prefilter the AS data and quantise it into the sample. */
+
 	/* release has 32 samples of extra zero slop for a fake loop */
 	const unsigned release_slop   = 32;
 	uint_fast32_t rseed = rand();

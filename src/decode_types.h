@@ -23,7 +23,7 @@
 
 #include <stdint.h>
 #include "cop/cop_vec.h"
-#include "interp_data.inc"
+#include "interpdata.h"
 
 #if SMPL_INTERP_TAPS != 8
 #error "only support 8-tap interpolation filters."

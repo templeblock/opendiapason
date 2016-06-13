@@ -54,10 +54,10 @@
  * TODO: Get rid of the stupid compressor and use a target curve to create
  *       the inverse response. */
 
-#define SMPL_POSITION_SCALE  (16384)
-#define SMPL_INTERP_TAPS     (8)
+#include "opendiapason/src/interpdata.h"
+
 #define FILTER_LEN           (SMPL_POSITION_SCALE * SMPL_INTERP_TAPS)
-#define INVERSE_FILTER_LEN   (192)
+#define INVERSE_FILTER_LEN   (SMPL_INVERSE_FILTER_LEN + 1)
 
 static double filter[FILTER_LEN];
 
@@ -217,12 +217,8 @@ int main(int argc, char *argv[])
 		plot_combined_filter[i] = plot_interp_filter[i] + plot_inverse_filter[i];
 	}
 
-	printf("/* The filter is symmetric and of odd order and introduces a latency of\n");
-	printf(" * (INVERSE_FILTER_LEN-1)/2. */\n");
-	printf("#define SMPL_INVERSE_FILTER_LEN (%uu)\n", INVERSE_FILTER_LEN-1);
-	printf("#define SMPL_POSITION_SCALE     (%uu)\n", SMPL_POSITION_SCALE);
-	printf("#define SMPL_INTERP_TAPS        (%uu)\n", SMPL_INTERP_TAPS);
-	printf("static const float SMPL_INVERSE_COEFS[SMPL_INVERSE_FILTER_LEN+1] =\n");
+	printf("#include \"interpdata.h\"\n");
+	printf("const float SMPL_INVERSE_COEFS[SMPL_INVERSE_FILTER_LEN+1] =\n");
 	for (i = 0; i < INVERSE_FILTER_LEN; i++) {
 		if (i == 0)
 			printf("{");
@@ -260,7 +256,7 @@ int main(int argc, char *argv[])
 		printf("/* %f-%f,%f-%f,(%f,%f) */\n", n1min, n1max, sqrt(n2min), sqrt(n2max), n1max - n1min, sqrt(n2max) - sqrt(n2min));
 	}
 
-	printf("static const float SMPL_INTERP[%uu][%uu] =\n", SMPL_POSITION_SCALE, SMPL_INTERP_TAPS);
+	printf("const float SMPL_INTERP[%uu][%uu] =\n", SMPL_POSITION_SCALE, SMPL_INTERP_TAPS);
 	for (i = 0; i < SMPL_POSITION_SCALE; i++) {
 		unsigned j;
 		if (i == 0)

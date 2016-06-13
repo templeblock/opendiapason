@@ -1,9 +1,5 @@
-/* The filter is symmetric and of odd order and introduces a latency of
- * (INVERSE_FILTER_LEN-1)/2. */
-#define SMPL_INVERSE_FILTER_LEN (191u)
-#define SMPL_POSITION_SCALE     (16384u)
-#define SMPL_INTERP_TAPS        (8u)
-static const float SMPL_INVERSE_COEFS[SMPL_INVERSE_FILTER_LEN+1] =
+#include "interpdata.h"
+const float SMPL_INVERSE_COEFS[SMPL_INVERSE_FILTER_LEN+1] =
 {+0.0000000000e+00f
 ,-6.8585599422e-09f
 ,+2.0912962029e-08f
@@ -198,7 +194,7 @@ static const float SMPL_INVERSE_COEFS[SMPL_INVERSE_FILTER_LEN+1] =
 ,-6.8585599422e-09f
 };
 /* 0.999854-1.000176,0.759967-0.759968,(0.000322,0.000001) */
-static const float SMPL_INTERP[16384u][8u] =
+const float SMPL_INTERP[16384u][8u] =
 {   {-4.083259e-02f,-6.549284e-02f,+2.919331e-01f,+6.286388e-01f,+2.919331e-01f,-6.549284e-02f,-4.083259e-02f,+0.000000e+00f}
 ,   {-4.082759e-02f,-6.550042e-02f,+2.919016e-01f,+6.286388e-01f,+2.919646e-01f,-6.548525e-02f,-4.083759e-02f,+3.216132e-04f}
 ,   {-4.082260e-02f,-6.550801e-02f,+2.918701e-01f,+6.286388e-01f,+2.919961e-01f,-6.547767e-02f,-4.084258e-02f,+3.213932e-04f}
