@@ -633,10 +633,7 @@ apply_prefilter
 	,unsigned                    channels
 	,uint_fast32_t               rate
 	,struct aalloc              *allocator
-	,const float                *prefilt_kern
-	,unsigned                    prefilt_kern_len
-	,unsigned                    prefilt_real_fft_len
-	,const struct fftset_fft    *prefilt_fft
+	,const struct odfilter      *prefilter
 	,const char                 *debug_prefix
 	)
 {
@@ -646,9 +643,9 @@ apply_prefilter
 	unsigned ch;
 	unsigned idx;
 	aalloc_push(allocator);
-	inbuf   = aalloc_align_alloc(allocator, sizeof(float) * prefilt_real_fft_len, 64);
-	outbuf  = aalloc_align_alloc(allocator, sizeof(float) * prefilt_real_fft_len, 64);
-	scratch = aalloc_align_alloc(allocator, sizeof(float) * prefilt_real_fft_len, 64);
+	inbuf   = aalloc_align_alloc(allocator, sizeof(float) * prefilter->conv_len, 64);
+	outbuf  = aalloc_align_alloc(allocator, sizeof(float) * prefilter->conv_len, 64);
+	scratch = aalloc_align_alloc(allocator, sizeof(float) * prefilter->conv_len, 64);
 
 	/* Convolve the attack/sustain segments. */
 	idx = 0;
@@ -660,15 +657,15 @@ apply_prefilter
 				,/* sum into output */ 0
 				,/* sustain start */   as->atk_end_loop_start
 				,/* total length */    as->length
-				,/* pre-read */        prefilt_kern_len / 2 + 1
+				,/* pre-read */        SMPL_INVERSE_FILTER_LEN / 2 + 1
 				,/* is looped */       1
 				,inbuf
 				,outbuf
 				,scratch
-				,prefilt_kern
-				,prefilt_kern_len
-				,prefilt_real_fft_len
-				,prefilt_fft
+				,prefilter->kernel
+				,SMPL_INVERSE_FILTER_LEN
+				,prefilter->conv_len
+				,prefilter->conv
 				);
 		}
 
@@ -700,15 +697,15 @@ apply_prefilter
 				,/* sum into output */ 0
 				,/* sustain start */   0
 				,/* total length */    rel->length
-				,/* pre-read */        prefilt_kern_len / 2 + prefilt_kern_len / 8
+				,/* pre-read */        SMPL_INVERSE_FILTER_LEN / 2 + SMPL_INVERSE_FILTER_LEN / 8
 				,/* is looped */       0
 				,inbuf
 				,outbuf
 				,scratch
-				,prefilt_kern
-				,prefilt_kern_len
-				,prefilt_real_fft_len
-				,prefilt_fft
+				,prefilter->kernel
+				,SMPL_INVERSE_FILTER_LEN
+				,prefilter->conv_len
+				,prefilter->conv
 			);
 		}
 
@@ -739,10 +736,7 @@ load_smpl_lists
 	,uint_fast32_t               norm_rate
 	,struct aalloc              *allocator
 	,struct fftset              *fftset
-	,const float                *prefilt_kern
-	,unsigned                    prefilt_kern_len
-	,unsigned                    prefilt_real_fft_len
-	,const struct fftset_fft    *prefilt_fft
+	,const struct odfilter      *prefilter
 	,const char                 *file_ref
 	)
 {
@@ -793,10 +787,7 @@ load_smpl_lists
 		,channels
 		,norm_rate
 		,allocator
-		,prefilt_kern
-		,prefilt_kern_len
-		,prefilt_real_fft_len
-		,prefilt_fft
+		,prefilter
 		,file_ref
 		);
 
@@ -1041,10 +1032,7 @@ load_smpl_comp
 	,unsigned                    nb_components
 	,struct aalloc              *allocator
 	,struct fftset              *fftset
-	,const float                *prefilt_kern
-	,unsigned                    prefilt_kern_len
-	,unsigned                    prefilt_real_fft_len
-	,const struct fftset_fft    *prefilt_fft
+	,const struct odfilter      *prefilter
 	)
 {
 	struct memory_wave *mw;
@@ -1113,10 +1101,7 @@ load_smpl_comp
 				,mw[0].rate
 				,allocator
 				,fftset
-				,prefilt_kern
-				,prefilt_kern_len
-				,prefilt_real_fft_len
-				,prefilt_fft
+				,prefilter
 				,components[0].filename
 				);
 	}
@@ -1135,10 +1120,7 @@ load_smpl_f
 	,const char                 *filename
 	,struct aalloc              *allocator
 	,struct fftset              *fftset
-	,const float                *prefilt_kern
-	,unsigned                    prefilt_kern_len
-	,unsigned                    prefilt_real_fft_len
-	,const struct fftset_fft    *prefilt_fft
+	,const struct odfilter      *prefilter
 	,int                         load_type
 	)
 {
@@ -1153,9 +1135,6 @@ load_smpl_f
 			,1
 			,allocator
 			,fftset
-			,prefilt_kern
-			,prefilt_kern_len
-			,prefilt_real_fft_len
-			,prefilt_fft
+			,prefilter
 			);
 }

@@ -25,6 +25,7 @@
 #include "reltable.h"
 #include "cop/cop_alloc.h"
 #include "fftset/fftset.h"
+#include "filterutils.h"
 
 #define SMPL_COMP_LOADFLAG_AUTO (0)
 #define SMPL_COMP_LOADFLAG_AS   (1)
@@ -107,10 +108,7 @@ load_smpl_comp
 	,unsigned                    nb_components
 	,struct aalloc              *allocator
 	,struct fftset              *fftset
-	,const float                *prefilt_kern
-	,unsigned                    prefilt_kern_len
-	,unsigned                    prefilt_real_fft_len
-	,const struct fftset_fft    *prefilt_fft
+	,const struct odfilter      *prefilter
 	);
 
 const char *
@@ -119,10 +117,7 @@ load_smpl_f
 	,const char                 *filename
 	,struct aalloc              *allocator
 	,struct fftset              *fftset
-	,const float                *prefilt_kern
-	,unsigned                    prefilt_kern_len
-	,unsigned                    prefilt_real_fft_len
-	,const struct fftset_fft    *prefilt_fft
+	,const struct odfilter      *prefilter
 	,int                         load_type
 	);
 

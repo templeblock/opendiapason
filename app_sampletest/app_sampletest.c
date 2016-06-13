@@ -113,9 +113,7 @@ load_executors
 	(const char              *path
 	,struct aalloc           *mem
 	,struct fftset           *fftset
-	,const float             *prefilter_data
-	,unsigned                 prefilter_conv_len
-	,const struct fftset_fft *prefilter_conv
+	,const struct odfilter   *prefilter
 	,unsigned                 first_midi
 	,unsigned                 nb_pipes
 	,double                   organ_pitch16
@@ -131,7 +129,7 @@ load_executors
 		const char * err;
 		char namebuf[1024];
 		sprintf(namebuf, "%s/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
-		err = load_smpl_f(&(pipes[i].pd.data), namebuf, mem, fftset, prefilter_data, SMPL_INVERSE_FILTER_LEN, prefilter_conv_len, prefilter_conv, 16);
+		err = load_smpl_f(&(pipes[i].pd.data), namebuf, mem, fftset, prefilter, 16);
 		if (err != NULL) {
 			printf("WAVE ERR: %s-%s\n", namebuf, err);
 			abort();
@@ -726,35 +724,22 @@ int main(int argc, char *argv[])
 
 
 	{
-		unsigned i;
-		struct aalloc               mem;
-		struct fftset               fftset;
-		const struct fftset_fft    *prefilter_conv;
-		unsigned                    prefilter_conv_len;
-		float                      *prefilter_data;
-		float                      *prefilter_workbuf;
+		unsigned        i;
+		struct aalloc   mem;
+		struct fftset   fftset;
+		struct odfilter prefilter;
 		size_t sysmem = pool_size();
 
 		/* Build the interpolation pre-filter */
 		aalloc_init(&mem, sysmem, 32, 16*1024*1024);
 		fftset_init(&fftset);
-		prefilter_conv_len = fftset_recommend_conv_length(SMPL_INVERSE_FILTER_LEN, 4*SMPL_INVERSE_FILTER_LEN) * 2;
-		prefilter_conv     = fftset_create_fft(&fftset, FFTSET_MODULATION_FREQ_OFFSET_REAL, prefilter_conv_len / 2);
-		prefilter_data     = aalloc_align_alloc(&mem, prefilter_conv_len * sizeof(float), 64);
-		aalloc_push(&mem);
-		prefilter_workbuf  = aalloc_align_alloc(&mem, prefilter_conv_len * sizeof(float), 64);
-		for (i = 0; i < SMPL_INVERSE_FILTER_LEN; i++) {
-			prefilter_workbuf[i] = SMPL_INVERSE_COEFS[i] * (2.0 / prefilter_conv_len);
-		}
-		for (; i < prefilter_conv_len; i++) {
-			prefilter_workbuf[i] = 0.0f;
-		}
-		fftset_fft_conv_get_kernel(prefilter_conv, prefilter_data, prefilter_workbuf);
-		aalloc_pop(&mem);
+
+		/*TODO */
+		(void)odfilter_interp_prefilter_init(&prefilter, &mem, &fftset);
 
 		for (i = 0; i < NUM_TEST_ENTRY_LIST; i++) {
 			printf("loading '%s'\n", TEST_ENTRY_LIST[i].directory_name);
-			loaded_ranks[i] = load_executors(TEST_ENTRY_LIST[i].directory_name, &mem, &fftset, prefilter_data, prefilter_conv_len, prefilter_conv, TEST_ENTRY_LIST[i].first_midi, TEST_ENTRY_LIST[i].nb_pipes, ORGAN_PITCH16, TEST_ENTRY_LIST[i].harmonic16);
+			loaded_ranks[i] = load_executors(TEST_ENTRY_LIST[i].directory_name, &mem, &fftset, &prefilter, TEST_ENTRY_LIST[i].first_midi, TEST_ENTRY_LIST[i].nb_pipes, ORGAN_PITCH16, TEST_ENTRY_LIST[i].harmonic16);
 		}
 
 		rv = setup_sound(midi_devid);

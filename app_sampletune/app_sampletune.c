@@ -8,6 +8,7 @@
 #include "portaudio.h"
 #include "opendiapason/src/wavldr.h"
 #include "opendiapason/src/playeng.h"
+#include "opendiapason/src/filterutils.h"
 #include <math.h>
 
 #define DUMP_TUNING_SESSION "out.raw"
@@ -66,9 +67,7 @@ load_executors
 	(const char                 *path
 	,struct aalloc              *mem
 	,struct fftset              *fftset
-	,const float                *prefilter_data
-	,unsigned                    prefilter_conv_len
-	,const struct fftset_fft    *prefilter_conv
+	,const struct odfilter      *prefilter
 	,unsigned                    first_midi
 	,unsigned                    nb_pipes
 	,unsigned                    rank_harmonic64
@@ -102,7 +101,7 @@ load_executors
 			bits[2].load_flags = SMPL_COMP_LOADFLAG_R;
 			bits[3].load_flags = SMPL_COMP_LOADFLAG_R;
 
-			err = load_smpl_comp(&(pipes[i].pd.data), bits, 4, mem, fftset, prefilter_data, SMPL_INVERSE_FILTER_LEN, prefilter_conv_len, prefilter_conv);
+			err = load_smpl_comp(&(pipes[i].pd.data), bits, 4, mem, fftset, prefilter);
 
 			if (err != NULL) {
 				printf("WAVE ERR: %s-%s\n", namebuf, err);
@@ -648,28 +647,16 @@ int main(int argc, char *argv[])
 	aalloc_init(&mem, sysmem, 32, 16*1024*1024);
 
 	{
-		struct fftset               fftset;
-		const struct fftset_fft    *prefilter_conv;
-		unsigned                    prefilter_conv_len;
-		float                      *prefilter_data;
-		float                      *prefilter_workbuf;
+		struct fftset    fftset;
+		struct odfilter  prefilter;
 
 		/* Build the interpolation pre-filter */
 		fftset_init(&fftset);
-		prefilter_conv_len = fftset_recommend_conv_length(SMPL_INVERSE_FILTER_LEN, 4*SMPL_INVERSE_FILTER_LEN) * 2;
-		prefilter_conv     = fftset_create_fft(&fftset, FFTSET_MODULATION_FREQ_OFFSET_REAL, prefilter_conv_len / 2);
-		prefilter_data     = aalloc_align_alloc(&mem, prefilter_conv_len * sizeof(float), 64);
-		aalloc_push(&mem);
-		prefilter_workbuf  = aalloc_align_alloc(&mem, prefilter_conv_len * sizeof(float), 64);
-		for (i = 0; i < SMPL_INVERSE_FILTER_LEN; i++) {
-			prefilter_workbuf[i] = SMPL_INVERSE_COEFS[i] * (2.0 / prefilter_conv_len);
-		}
-		for (; i < prefilter_conv_len; i++) {
-			prefilter_workbuf[i] = 0.0f;
-		}
-		fftset_fft_conv_get_kernel(prefilter_conv, prefilter_data, prefilter_workbuf);
-		aalloc_pop(&mem);
-		at_pipes = load_executors(".", &mem, &fftset, prefilter_data, prefilter_conv_len, prefilter_conv, at_first_midi, 1+at_last_midi-at_first_midi, at_rank_harmonic64);
+
+		/*TODO */
+		(void)odfilter_interp_prefilter_init(&prefilter, &mem, &fftset);
+
+		at_pipes = load_executors(".", &mem, &fftset, &prefilter, at_first_midi, 1+at_last_midi-at_first_midi, at_rank_harmonic64);
 		pipe_frequencies = malloc(sizeof(pipe_frequencies[0]) * (1+at_last_midi-at_first_midi));
 		old_pipe_frequencies = malloc(sizeof(pipe_frequencies[0]) * (1+at_last_midi-at_first_midi));
 		for (i = 0; i < 1+at_last_midi-at_first_midi; i++) {
