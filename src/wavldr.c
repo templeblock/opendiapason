@@ -40,39 +40,21 @@ struct wave_cks {
 	unsigned char *adtl;
 };
 
-static int fcc_are_different(const char *f1, const char *f2)
-{
-	return (f1[0] == 0 || f1[0] != f2[0] || f1[1] == 0 || f1[1] != f2[1] ||
-	        f1[2] == 0 || f1[2] != f2[2] || f1[3] == 0 || f1[3] != f2[3]);
-}
-
-static unsigned long parse_le32(const void *buf)
-{
-	const unsigned char *b = buf;
-	return
-		(((unsigned long)b[3]) << 24) |
-		(((unsigned long)b[2]) << 16) |
-		(((unsigned long)b[1]) << 8) |
-		(((unsigned long)b[0]) << 0);
-}
-
-
-static unsigned parse_le16(const void *buf)
-{
-	const unsigned char *b = buf;
-	return
-		(((unsigned)b[1]) << 8) |
-		(((unsigned)b[0]) << 0);
-}
+#define MAKE_FOURCC(a, b, c, d) \
+	(   (uint_fast32_t)(a) \
+	|   (((uint_fast32_t)(b)) << 8) \
+	|   (((uint_fast32_t)(c)) << 16) \
+	|   (((uint_fast32_t)(d)) << 24) \
+	)
 
 static const char *load_wave_cks(struct wave_cks *cks, unsigned char *buf, unsigned long bufsz)
 {
 	{
 		unsigned long sz;
 		if (   bufsz < 12
-		   ||  fcc_are_different((char *)buf, "RIFF")
-		   ||  ((sz = parse_le32(buf + 4)) < 4)
-		   ||  fcc_are_different((char *)(buf + 8), "WAVE")
+		   ||  cop_ld_ule32(buf) != MAKE_FOURCC('R', 'I', 'F', 'F')
+		   ||  ((sz = cop_ld_ule32(buf + 4)) < 4)
+		   ||  cop_ld_ule32(buf + 8) != MAKE_FOURCC('W', 'A', 'V', 'E')
 		   )
 			return "not a wave file";
 
@@ -92,25 +74,33 @@ static const char *load_wave_cks(struct wave_cks *cks, unsigned char *buf, unsig
 		unsigned long cksz;
 
 		bufsz  -= 8;
-		cksz = parse_le32(buf + 4);
+		cksz = cop_ld_ule32(buf + 4);
 		if (cksz > bufsz)
 			cksz = bufsz;
 
-		if (!fcc_are_different((char *)buf, "data")) {
-			cks->data   = buf + 8;
-			cks->datasz = cksz;
-		} else if (!fcc_are_different((char *)buf, "cue ")) {
-			cks->cue    = buf + 8;
-			cks->cuesz  = cksz;
-		} else if (!fcc_are_different((char *)buf, "smpl")) {
-			cks->smpl   = buf + 8;
-			cks->smplsz = cksz;
-		} else if (!fcc_are_different((char *)buf, "fmt ")) {
-			cks->fmt    = buf + 8;
-			cks->fmtsz  = cksz;
-		} else if (!fcc_are_different((char *)buf, "LIST") && cksz >= 4 && !fcc_are_different((char *)buf + 8, "adtl")) {
-			cks->adtl    = buf + 12;
-			cks->adtlsz  = cksz - 4;
+		switch (cop_ld_ule32(buf)) {
+			case MAKE_FOURCC('d', 'a', 't', 'a'):
+				cks->data   = buf + 8;
+				cks->datasz = cksz;
+				break;
+			case MAKE_FOURCC('c', 'u', 'e', ' '):
+				cks->cue    = buf + 8;
+				cks->cuesz  = cksz;
+				break;
+			case MAKE_FOURCC('s', 'm', 'p', 'l'):
+				cks->smpl   = buf + 8;
+				cks->smplsz = cksz;
+				break;
+			case MAKE_FOURCC('f', 'm', 't', ' '):
+				cks->fmt    = buf + 8;
+				cks->fmtsz  = cksz;
+				break;
+			case MAKE_FOURCC('L', 'I', 'S', 'T'):
+				if (cksz >= 4 && cop_ld_ule32(buf + 8) == MAKE_FOURCC('a', 'd', 't', 'l')) {
+					cks->adtl    = buf + 12;
+					cks->adtlsz  = cksz - 4;
+				}
+				break;
 		}
 
 		cksz += (cksz & 1); /* pad byte */
@@ -164,9 +154,9 @@ static const char *setup_as(struct as_data *as, unsigned char *smpl, size_t smpl
 	 *   16: frac
 	 *   20: play count */
 	end_loop_idx  = 0;
-	spec_data_sz  = parse_le32(smpl + 32);
-	note          = (parse_le32(smpl + 16) / (65536.0 * 65536.0)) + parse_le32(smpl + 12);
-	as->nloop     = parse_le32(smpl + 28);
+	spec_data_sz  = cop_ld_ule32(smpl + 32);
+	note          = (cop_ld_ule32(smpl + 16) / (65536.0 * 65536.0)) + cop_ld_ule32(smpl + 12);
+	as->nloop     = cop_ld_ule32(smpl + 28);
 	as->period    = rate / (440.0f * powf(2.0f, (note - 69.0f) / 12.0f));
 
 	if (as->nloop > MAX_LOOP)
@@ -179,8 +169,8 @@ static const char *setup_as(struct as_data *as, unsigned char *smpl, size_t smpl
 		return NULL;
 
 	for (i = 0; i < as->nloop; i++) {
-		as->loops[2*i+0] = parse_le32(smpl + 36 + i * 24 + 8);
-		as->loops[2*i+1] = parse_le32(smpl + 36 + i * 24 + 12);
+		as->loops[2*i+0] = cop_ld_ule32(smpl + 36 + i * 24 + 8);
+		as->loops[2*i+1] = cop_ld_ule32(smpl + 36 + i * 24 + 12);
 		if (as->loops[2*i+0] > as->loops[2*i+1] || as->loops[2*i+1] >= total_length) {
 			as->length = 0;
 			return "invalid sampler loop";
@@ -211,7 +201,7 @@ static const char *setup_rel(struct rel_data *rel, const unsigned char *cue, siz
 
 		if (cue_sz < 4)
 			return "invalid cue chunk";
-		nb_cue = parse_le32(cue + 0);
+		nb_cue = cop_ld_ule32(cue + 0);
 		if (cue_sz < nb_cue * 24 + 4)
 			return "invalid cue chunk";
 
@@ -228,23 +218,23 @@ static const char *setup_rel(struct rel_data *rel, const unsigned char *cue, siz
 			/* We ignore the cue ID because too much software incorrectly
 			 * associates it with a loop. We instead look for a cue point that
 			 * is past the end of the last loop. */
-			uint_fast32_t cueid         = parse_le32(cue + 4 + i * 24 + 0);
-			uint_fast32_t block_start   = parse_le32(cue + 4 + i * 24 + 16);
-			uint_fast32_t sample_offset = parse_le32(cue + 4 + i * 24 + 20);
+			uint_fast32_t cueid         = cop_ld_ule32(cue + 4 + i * 24 + 0);
+			uint_fast32_t block_start   = cop_ld_ule32(cue + 4 + i * 24 + 16);
+			uint_fast32_t sample_offset = cop_ld_ule32(cue + 4 + i * 24 + 20);
 			uint_fast32_t relpos        = sample_offset + block_start / block_align;
 			size_t        adpos;
 			int           isloop = 0;
 
-			if (parse_le32(cue + 4 + i * 24 + 12) != 0)
+			if (cop_ld_ule32(cue + 4 + i * 24 + 12) != 0)
 				continue;
-			if (parse_le32(cue + 4 + i * 24 + 8) != 0x61746164ul)
+			if (cop_ld_ule32(cue + 4 + i * 24 + 8) != 0x61746164ul)
 				continue;
 
 			for (adpos = 0; adpos + 12 <= adtl_sz; ) {
-				uint_fast32_t fccsz = parse_le32(adtl + adpos + 4);
+				uint_fast32_t fccsz = cop_ld_ule32(adtl + adpos + 4);
 				if (fccsz >= 20) {
-					uint_fast32_t dur = parse_le32(adtl + adpos + 12);
-					if (!fcc_are_different((char *)adtl + adpos, "ltxt") && parse_le32(adtl + adpos + 8) == cueid && dur > 0) {
+					uint_fast32_t dur = cop_ld_ule32(adtl + adpos + 12);
+					if (cop_ld_ule32(adtl + adpos) == MAKE_FOURCC('l', 't', 'x', 't') && cop_ld_ule32(adtl + adpos + 8) == cueid && dur > 0) {
 						isloop = 1;
 						break;
 					}
@@ -303,12 +293,12 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned l
 		if (cks.fmtsz < 16)
 			return "invalid format chunk";
 
-		if (parse_le16(cks.fmt + 0) != 1)
+		if (cop_ld_ule16(cks.fmt + 0) != 1)
 			return "can only read PCM wave files";
 
-		mw->native_bits = parse_le16(cks.fmt + 14);
-		mw->channels    = parse_le16(cks.fmt + 2);
-		mw->rate        = parse_le32(cks.fmt + 4);
+		mw->native_bits = cop_ld_ule16(cks.fmt + 14);
+		mw->channels    = cop_ld_ule16(cks.fmt + 2);
+		mw->rate        = cop_ld_ule32(cks.fmt + 4);
 
 		if (mw->native_bits != 16 && mw->native_bits != 24)
 			return "can only load 16 or 24 bit PCM wave files";
