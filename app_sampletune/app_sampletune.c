@@ -81,18 +81,28 @@ load_executors
 			const char * err;
 			char namebuf[128];
 			char namebuf2[128];
-			struct smpl_comp bits[2];
+			char namebuf3[128];
+			char namebuf4[128];
+			struct smpl_comp bits[4];
 
-			sprintf(namebuf, "%s/A0/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
+			sprintf(namebuf,  "%s/A0/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
 			sprintf(namebuf2, "%s/R0/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
+			sprintf(namebuf3, "%s/R1/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
+			sprintf(namebuf4, "%s/R2/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
 			bits[0].filename = namebuf;
 			bits[1].filename = namebuf2;
+			bits[2].filename = namebuf3;
+			bits[3].filename = namebuf4;
 			bits[0].load_format = 16;
 			bits[1].load_format = 16;
+			bits[2].load_format = 16;
+			bits[3].load_format = 16;
 			bits[0].load_flags = SMPL_COMP_LOADFLAG_AS;
 			bits[1].load_flags = SMPL_COMP_LOADFLAG_R;
+			bits[2].load_flags = SMPL_COMP_LOADFLAG_R;
+			bits[3].load_flags = SMPL_COMP_LOADFLAG_R;
 
-			err = load_smpl_comp(&(pipes[i].pd.data), bits, 2, mem, fftset, prefilter_data, SMPL_INVERSE_FILTER_LEN, prefilter_conv_len, prefilter_conv);
+			err = load_smpl_comp(&(pipes[i].pd.data), bits, 4, mem, fftset, prefilter_data, SMPL_INVERSE_FILTER_LEN, prefilter_conv_len, prefilter_conv);
 
 			if (err != NULL) {
 				printf("WAVE ERR: %s-%s\n", namebuf, err);

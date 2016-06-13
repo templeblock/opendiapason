@@ -631,6 +631,7 @@ apply_prefilter
 	(struct as_data             *as
 	,struct rel_data            *rel
 	,unsigned                    channels
+	,uint_fast32_t               rate
 	,struct aalloc              *allocator
 	,const float                *prefilt_kern
 	,unsigned                    prefilt_kern_len
@@ -643,71 +644,90 @@ apply_prefilter
 	float *inbuf;
 	float *outbuf;
 	unsigned ch;
+	unsigned idx;
 	aalloc_push(allocator);
 	inbuf   = aalloc_align_alloc(allocator, sizeof(float) * prefilt_real_fft_len, 64);
 	outbuf  = aalloc_align_alloc(allocator, sizeof(float) * prefilt_real_fft_len, 64);
 	scratch = aalloc_align_alloc(allocator, sizeof(float) * prefilt_real_fft_len, 64);
-	for (ch = 0; ch < channels; ch++) {
-		/* Convolve the attack/sustain segment. */
-		inplace_convolve
-			(/* input */           as->data + ch*as->chan_stride
-			,/* output */          as->data + ch*as->chan_stride
-			,/* sum into output */ 0
-			,/* sustain start */   as->atk_end_loop_start
-			,/* total length */    as->length
-			,/* pre-read */        prefilt_kern_len / 2 + 1
-			,/* is looped */       1
-			,inbuf
-			,outbuf
-			,scratch
-			,prefilt_kern
-			,prefilt_kern_len
-			,prefilt_real_fft_len
-			,prefilt_fft
-			);
 
-		/* Convolve the release segment. Don't include all of the pre-ringing
-		 * at the start. i.e. we are shaving some samples away from the start
-		 * of the release. */
-		inplace_convolve
-			(/* input */           rel->data + ch*rel->chan_stride
-			,/* output */          rel->data + ch*rel->chan_stride
-			,/* sum into output */ 0
-			,/* sustain start */   0
-			,/* total length */    rel->length
-			,/* pre-read */        prefilt_kern_len / 2 + prefilt_kern_len / 8
-			,/* is looped */       0
-			,inbuf
-			,outbuf
-			,scratch
-			,prefilt_kern
-			,prefilt_kern_len
-			,prefilt_real_fft_len
-			,prefilt_fft
-			);
-	}
-	aalloc_pop(allocator);
+	/* Convolve the attack/sustain segments. */
+	idx = 0;
+	while (as != NULL) {
+		for (ch = 0; ch < channels; ch++) {
+			inplace_convolve
+				(/* input */           as->data + ch*as->chan_stride
+				,/* output */          as->data + ch*as->chan_stride
+				,/* sum into output */ 0
+				,/* sustain start */   as->atk_end_loop_start
+				,/* total length */    as->length
+				,/* pre-read */        prefilt_kern_len / 2 + 1
+				,/* is looped */       1
+				,inbuf
+				,outbuf
+				,scratch
+				,prefilt_kern
+				,prefilt_kern_len
+				,prefilt_real_fft_len
+				,prefilt_fft
+				);
+		}
 
 #if OPENDIAPASON_VERBOSE_DEBUG
-	if (debug_prefix != NULL && mw->channels == 2) {
-		char      namebuf[1024];
-		struct wav_dumper dump;
-
-		sprintf(namebuf, "%s_prefilter_atk.wav", debug_prefix);
-		if (wav_dumper_begin(&dump, namebuf, 2, 24, mw->rate) == 0) {
-			(void)wav_dumper_write_from_floats(&dump, mw->as.data, mw->as.length, 1, mw->chan_stride);
-			wav_dumper_end(&dump);
+		if (debug_prefix != NULL) {
+			char              namebuf[1024];
+			struct wav_dumper dump;
+			sprintf(namebuf, "%s_prefilter_atk%02d.wav", debug_prefix, idx);
+			if (wav_dumper_begin(&dump, namebuf, channels, 24, rate) == 0) {
+				(void)wav_dumper_write_from_floats(&dump, as->data, as->length, 1, as->chan_stride);
+				wav_dumper_end(&dump);
+			}
 		}
-
-		sprintf(namebuf, "%s_prefilter_rel.wav", debug_prefix);
-		if (wav_dumper_begin(&dump, namebuf, 2, 24, mw->rate) == 0) {
-			(void)wav_dumper_write_from_floats(&dump, mw->rel.data, mw->rel.length, 1, mw->chan_stride);
-			wav_dumper_end(&dump);
-		}
-	}
-#else
-	(void)debug_prefix;
 #endif
+
+		as = as->next;
+		idx++;
+	}
+
+	/* Convolve the release segments. Don't include all of the pre-ringing
+	 * at the start. i.e. we are shaving some samples away from the start
+	 * of the release. */
+	idx = 0;
+	while (rel != NULL) {
+		for (ch = 0; ch < channels; ch++) {
+			inplace_convolve
+				(/* input */           rel->data + ch*rel->chan_stride
+				,/* output */          rel->data + ch*rel->chan_stride
+				,/* sum into output */ 0
+				,/* sustain start */   0
+				,/* total length */    rel->length
+				,/* pre-read */        prefilt_kern_len / 2 + prefilt_kern_len / 8
+				,/* is looped */       0
+				,inbuf
+				,outbuf
+				,scratch
+				,prefilt_kern
+				,prefilt_kern_len
+				,prefilt_real_fft_len
+				,prefilt_fft
+			);
+		}
+
+#if OPENDIAPASON_VERBOSE_DEBUG
+		if (debug_prefix != NULL) {
+			char              namebuf[1024];
+			struct wav_dumper dump;
+			sprintf(namebuf, "%s_prefilter_rel%02d.wav", debug_prefix, idx);
+			if (wav_dumper_begin(&dump, namebuf, 2, 24, rate) == 0) {
+				(void)wav_dumper_write_from_floats(&dump, rel->data, rel->length, 1, rel->chan_stride);
+				wav_dumper_end(&dump);
+			}
+		}
+#endif
+
+		rel = rel->next;
+		idx++;
+	}
+	aalloc_pop(allocator);
 }
 
 const char *
@@ -731,11 +751,29 @@ load_smpl_lists
 	uint_fast32_t rseed = rand();
 	unsigned i;
 
+	{
+		struct as_data *tmp;
+		struct rel_data *tmp2;
+
+		for (i = 0, tmp = as_bits; tmp != NULL; i++, tmp = tmp->next);
+		if (i != 1) {
+			fprintf(stderr, "sample contained %d attack/sustain blocks. the max is 1.\n", i);
+			abort();
+		}
+
+		for (i = 0, tmp2 = rel_bits; tmp2 != NULL; i++, tmp2 = tmp2->next);
+		if (i != 1) {
+			fprintf(stderr, "sample contained %d release blocks. the max is 1.\n", i);
+//			abort();
+		}
+	}
+
 	/* Prefilter and adjust audio. */
 	apply_prefilter
 		(as_bits
 		,rel_bits
 		,channels
+		,norm_rate
 		,allocator
 		,prefilt_kern
 		,prefilt_kern_len
@@ -951,12 +989,12 @@ load_smpl_lists
 		rel_power /= env_width;
 
 #if OPENDIAPASON_VERBOSE_DEBUG
-		if (strlen(components[0].filename) < 1024 - 50) {
+		if (strlen(file_ref) < 1024 - 50) {
 			char      namebuf[1024];
 			struct wav_dumper dump;
-			sprintf(namebuf, "%s_reltable_inputs.wav", components[0].filename);
+			sprintf(namebuf, "%s_reltable_inputs.wav", file_ref);
 			if (wav_dumper_begin(&dump, namebuf, 2, 24, norm_rate) == 0) {
-				(void)wav_dumper_write_from_floats(&dump, envelope_buf, mw.as.length, 1, buf_stride);
+				(void)wav_dumper_write_from_floats(&dump, envelope_buf, as_bits->length, 1, buf_stride);
 				wav_dumper_end(&dump);
 			}
 		}
@@ -970,7 +1008,7 @@ load_smpl_lists
 
 
 #if OPENDIAPASON_VERBOSE_DEBUG
-	for (i = 0; i < mw.as.nloop; i++) {
+	for (i = 0; i < as_bits->nloop; i++) {
 		printf("loop %u) %u,%u,%u\n", i, pipe->attack.starts[pipe->attack.ends[i].start_idx].first_valid_end, pipe->attack.starts[pipe->attack.ends[i].start_idx].start_smpl , pipe->attack.ends[i].end_smpl);
 	}
 #endif
