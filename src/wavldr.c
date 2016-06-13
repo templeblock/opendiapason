@@ -28,15 +28,15 @@
 #include "wav_dumper.h"
 
 struct wave_cks {
-	unsigned long  datasz;
+	uint_fast32_t  datasz;
 	unsigned char *data;
-	unsigned long  smplsz;
+	uint_fast32_t  smplsz;
 	unsigned char *smpl;
-	unsigned long  fmtsz;
+	uint_fast32_t  fmtsz;
 	unsigned char *fmt;
-	unsigned long  cuesz;
+	uint_fast32_t  cuesz;
 	unsigned char *cue;
-	unsigned long  adtlsz;
+	uint_fast32_t  adtlsz;
 	unsigned char *adtl;
 };
 
@@ -47,10 +47,10 @@ struct wave_cks {
 	|   (((uint_fast32_t)(d)) << 24) \
 	)
 
-static const char *load_wave_cks(struct wave_cks *cks, unsigned char *buf, unsigned long bufsz)
+static const char *load_wave_cks(struct wave_cks *cks, unsigned char *buf, size_t bufsz)
 {
 	{
-		unsigned long sz;
+		uint_fast32_t sz;
 		if (   bufsz < 12
 		   ||  cop_ld_ule32(buf) != MAKE_FOURCC('R', 'I', 'F', 'F')
 		   ||  ((sz = cop_ld_ule32(buf + 4)) < 4)
@@ -71,7 +71,7 @@ static const char *load_wave_cks(struct wave_cks *cks, unsigned char *buf, unsig
 	memset(cks, 0, sizeof(*cks));
 
 	while (bufsz > 8) {
-		unsigned long cksz;
+		uint_fast32_t cksz;
 
 		bufsz  -= 8;
 		cksz = cop_ld_ule32(buf + 4);
@@ -119,7 +119,7 @@ static const char *load_wave_cks(struct wave_cks *cks, unsigned char *buf, unsig
 static const char *setup_as(struct as_data *as, unsigned char *smpl, size_t smpl_sz, uint_fast32_t rate, uint_fast32_t total_length, unsigned load_format)
 {
 	unsigned end_loop_idx;
-	unsigned long spec_data_sz;
+	uint_fast32_t spec_data_sz;
 	double note;
 	unsigned i;
 
@@ -162,7 +162,7 @@ static const char *setup_as(struct as_data *as, unsigned char *smpl, size_t smpl
 	if (as->nloop > MAX_LOOP)
 		return "too many loops";
 
-	if (smpl_sz < 36 + as->nloop * 24 + spec_data_sz)
+	if (smpl_sz < 36 + (uint_fast64_t)as->nloop * 24 + spec_data_sz)
 		return "invalid sampler chunk";
 
 	if (as->nloop == 0)
@@ -267,7 +267,7 @@ static const char *setup_rel(struct rel_data *rel, const unsigned char *cue, siz
 	return NULL;
 }
 
-const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, unsigned long fsz, unsigned load_format)
+const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, size_t fsz, unsigned load_format)
 {
 	struct wave_cks cks;
 	unsigned        i, ch;

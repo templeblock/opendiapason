@@ -121,7 +121,7 @@ load_smpl_f
 	,int                         load_type
 	);
 
-const char *load_smpl_mem(struct memory_wave *smpl, unsigned char *buf, unsigned long fsz, unsigned load_format);
+const char *load_smpl_mem(struct memory_wave *smpl, unsigned char *buf, size_t fsz, unsigned load_format);
 
 const char *load_smpl(struct memory_wave *smpl, const char *fname, double *frequency);
 
