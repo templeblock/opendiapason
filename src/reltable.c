@@ -19,6 +19,7 @@
  * DEALINGS IN THE SOFTWARE. */
 
 #include "reltable.h"
+#include "interpdata.h"
 #include <stddef.h>
 #include <math.h>
 #include <assert.h>
@@ -97,10 +98,15 @@ reltable_find
 #if 0
 	return fmod(fabs(sample - reltable->entry[i].b), reltable->entry[i].m);
 #else
-	tmp = sample - reltable->entry[i].b - 8.0;
+	/* Remember, the position that is passed into the function is the next
+	 * position which will be read into the interpolator delay line. The
+	 * delay line is of length 8 and we always will want to fill it completely
+	 * when we instantiate the release (otherwise we may produce some unwanted
+	 * samples at the beginning of the release). */
+	tmp = sample - reltable->entry[i].b - (double)SMPL_INTERP_TAPS;
 	while (tmp < 0.0)
 		tmp += reltable->entry[i].m;
-	return 8.0 + fmod(tmp, reltable->entry[i].m);
+	return (double)SMPL_INTERP_TAPS + fmod(tmp, reltable->entry[i].m);
 #endif
 }
 
@@ -313,9 +319,10 @@ reltable_int
 void
 reltable_build
 	(struct reltable *reltable
-	,float           *error_vec
-	,const float     *corr_vec
-	,float            rel_power
+	,float           *envelope_buf
+	,const float     *correlation_bufs
+	,const float     *rel_powers
+	,unsigned         nb_rels
 	,unsigned         error_vec_len
 	,float            period
 	,const char      *debug_prefix
@@ -324,6 +331,7 @@ reltable_build
 	double err = 0.0;
 	unsigned errpos = 0;
 	unsigned i;
+	float     rel_power = rel_powers[0];
 	unsigned *epos  = malloc(error_vec_len * sizeof(unsigned));
 	float    *egain = malloc(error_vec_len * sizeof(float));
 	float    *emse  = malloc(error_vec_len * sizeof(float));
@@ -336,10 +344,10 @@ reltable_build
 
 	/* Find best release alignment position. */
 	for (i = 0; i < error_vec_len; i++) {
-		float f = (rel_power + error_vec[i] - 2.0f * corr_vec[i]); /* Scaled up by the width of the release! */
-		error_vec[i] = (f <= 0.0f) ? 0.0f : (f);
-		if (i == 0 || error_vec[i] < err) {
-			err = error_vec[i];
+		float f = (rel_power + envelope_buf[i] - 2.0f * correlation_bufs[i]); /* Scaled up by the width of the release! */
+		envelope_buf[i] = (f <= 0.0f) ? 0.0f : (f);
+		if (i == 0 || envelope_buf[i] < err) {
+			err = envelope_buf[i];
 			errpos = i;
 		}
 	}
@@ -348,19 +356,19 @@ reltable_build
 	for (i = errpos; i > skip; ) {
 		i -= skip;
 		unsigned lep = i;
-		float    le  = error_vec[lep];
+		float    le  = envelope_buf[lep];
 		unsigned j;
 		for (j = 1; (j < lf) && (i >= j); j++) {
-			if (error_vec[i-j] < le) {
+			if (envelope_buf[i-j] < le) {
 				lep = i-j;
-				le = error_vec[lep];
+				le = envelope_buf[lep];
 			}
 		}
 
-		float env = error_vec[lep] - rel_power + 2.0f * corr_vec[lep];
-		float rg = corr_vec[lep] * rel_scale;
+		float env = envelope_buf[lep] - rel_power + 2.0f * correlation_bufs[lep];
+		float rg = correlation_bufs[lep] * rel_scale;
 
-		emse[positions]   = 2.0f * corr_vec[lep] / (env + rel_power);
+		emse[positions]   = 2.0f * correlation_bufs[lep] / (env + rel_power);
 		egain[positions]  = rg;
 		epos[positions++] = lep;
 		i = lep;
@@ -380,35 +388,35 @@ reltable_build
 	}
 
 	/* Insert best position */
-	float env = error_vec[errpos] - rel_power + 2.0f * corr_vec[errpos];
-	float rg = corr_vec[errpos] * rel_scale;
+	float env = envelope_buf[errpos] - rel_power + 2.0f * correlation_bufs[errpos];
+	float rg = correlation_bufs[errpos] * rel_scale;
 
-	emse[positions]   = 2.0f * corr_vec[errpos] / (env + rel_power);
+	emse[positions]   = 2.0f * correlation_bufs[errpos] / (env + rel_power);
 	egain[positions]  = rg;
-//	emse[positions]   = error_vec[errpos];
-//	egain[positions]  = corr_vec[errpos] * rel_scale;
+//	emse[positions]   = envelope_buf[errpos];
+//	egain[positions]  = correlation_bufs[errpos] * rel_scale;
 	epos[positions++] = errpos;
 
 	/* Insert all later positions. */
 	for (i = errpos + skip; i < error_vec_len; i += skip) {
 		unsigned lep = i;
-		float    le = error_vec[lep];
+		float    le = envelope_buf[lep];
 		unsigned j;
 		for (j = 1; (j < lf) && (i + j < error_vec_len); j++) {
-			if (error_vec[i+j] < le) {
+			if (envelope_buf[i+j] < le) {
 				lep = i+j;
-				le = error_vec[lep];
+				le = envelope_buf[lep];
 			}
 		}
 
-		float env = error_vec[lep] - rel_power + 2.0f * corr_vec[lep];
-		float rg = corr_vec[lep] * rel_scale;
+		float env = envelope_buf[lep] - rel_power + 2.0f * correlation_bufs[lep];
+		float rg = correlation_bufs[lep] * rel_scale;
 
-		emse[positions]   = 2.0f * corr_vec[lep] / (env + rel_power);
+		emse[positions]   = 2.0f * correlation_bufs[lep] / (env + rel_power);
 		egain[positions]  = rg;
 
-//		emse[positions]   = error_vec[lep];
-//		egain[positions]  = corr_vec[lep] * rel_scale;
+//		emse[positions]   = envelope_buf[lep];
+//		egain[positions]  = correlation_bufs[lep] * rel_scale;
 		epos[positions++] = lep;
 		i = lep;
 	}
@@ -419,7 +427,7 @@ reltable_build
 		,egain
 		,emse
 		,positions
-		,error_vec
+		,envelope_buf
 		,error_vec_len
 		);
 

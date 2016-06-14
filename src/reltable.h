@@ -91,8 +91,9 @@ void
 reltable_build
 	(struct reltable *reltable
 	,float           *envelope_buf
-	,const float     *correlation_buf
-	,float            rel_power
+	,const float     *correlation_bufs
+	,const float     *rel_powers
+	,unsigned         nb_rels
 	,unsigned         buf_len
 	,float            period
 	,const char      *debug_prefix

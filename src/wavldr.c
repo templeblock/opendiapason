@@ -643,6 +643,7 @@ load_smpl_lists
 	const unsigned release_slop   = 32;
 	uint_fast32_t rseed = rand();
 	unsigned i;
+	unsigned nb_releases;
 
 	{
 		struct as_data *tmp;
@@ -654,9 +655,9 @@ load_smpl_lists
 			abort();
 		}
 
-		for (i = 0, tmp2 = rel_bits; tmp2 != NULL; i++, tmp2 = tmp2->next);
-		if (i != 1) {
-			fprintf(stderr, "sample contained %d release blocks. the max is 1.\n", i);
+		for (nb_releases = 0, tmp2 = rel_bits; tmp2 != NULL; nb_releases++, tmp2 = tmp2->next);
+		if (nb_releases != 1) {
+			fprintf(stderr, "sample contained %d release blocks. the max is 1.\n", nb_releases);
 //			abort();
 		}
 	}
@@ -789,17 +790,19 @@ load_smpl_lists
 		float *scratch_buf2;
 		float *scratch_buf3;
 		float *kern_buf;
-		float rel_power;
+		float relpowers[16];
+		float *powptr;
 		unsigned ch;
 		struct odfilter filt;
 		size_t buf_stride = VLF_PAD_LENGTH(as_bits->length);
+		struct rel_data *r;
 
 		aalloc_push(allocator);
 
 		env_width    = (unsigned)(as_bits->period * 2.0f + 0.5f);
 		cor_fft_sz   = fftset_recommend_conv_length(env_width, 512) * 2;
 		fft          = fftset_create_fft(fftset, FFTSET_MODULATION_FREQ_OFFSET_REAL, cor_fft_sz / 2);
-		envelope_buf = aalloc_align_alloc(allocator, sizeof(float) * (buf_stride * 2), 64);
+		envelope_buf = aalloc_align_alloc(allocator, sizeof(float) * (buf_stride * (1 + nb_releases)), 64);
 		kern_buf     = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
 		scratch_buf  = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
 		scratch_buf2 = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
@@ -847,50 +850,68 @@ load_smpl_lists
 			,&filt
 			);
 
-		/* Build the cross correlation kernel. */
-		rel_power = 0.0f;
-		for (ch = 0; ch < channels; ch++) {
-			float ch_power = 0.0f;
-			for (i = 0; i < env_width; i++) {
-				float s = rel_bits->data[ch*rel_bits->chan_stride + env_width - 1 - i];
-				scratch_buf[i] = s * (2.0f / (cor_fft_sz * env_width));
-				ch_power += s * s;
-			}
-			for (; i < cor_fft_sz; i++)
-				scratch_buf[i] = 0.0f;
-			rel_power += ch_power;
-			fftset_fft_conv_get_kernel(fft, kern_buf, scratch_buf);
+		r      = rel_bits;
+		powptr = relpowers;
+		while (r != NULL) {
+			/* Build the cross correlation kernel. */
+			float rel_power = 0.0f;
+			for (ch = 0; ch < channels; ch++) {
+				float ch_power = 0.0f;
+				for (i = 0; i < env_width; i++) {
+					float s = r->data[ch*r->chan_stride + env_width - 1 - i];
+					scratch_buf[i] = s * (2.0f / (cor_fft_sz * env_width));
+					ch_power += s * s;
+				}
+				for (; i < cor_fft_sz; i++)
+					scratch_buf[i] = 0.0f;
+				rel_power += ch_power;
+				fftset_fft_conv_get_kernel(fft, kern_buf, scratch_buf);
 
-			odfilter_run
-				(as_bits->data + ch*as_bits->chan_stride
-				,mse_buf
-				,(ch != 0)
-				,as_bits->atk_end_loop_start
-				,as_bits->length
-				,env_width-1
-				,1
-				,scratch_buf
-				,scratch_buf2
-				,scratch_buf3
-				,&filt
-				);
+				odfilter_run
+					(as_bits->data + ch*as_bits->chan_stride
+					,mse_buf
+					,(ch != 0)
+					,as_bits->atk_end_loop_start
+					,as_bits->length
+					,env_width-1
+					,1
+					,scratch_buf
+					,scratch_buf2
+					,scratch_buf3
+					,&filt
+					);
+			}
+
+			rel_power /= env_width;
+
+#if 0
+			for (i = 0; i < buf_stride; i++) {
+				mse_buf[i] = envelope_buf[i] + rel_power - 2.0f * mse_buf[i];
+				//mse_buf[i] = envelope_buf[i] - mse_buf[i]*mse_buf[i]/rel_power;
+			}
+#endif
+
+			*powptr  = rel_power;
+			powptr  += 1;
+			mse_buf += buf_stride;
+			r        = r->next;
 		}
 
-		rel_power /= env_width;
+		mse_buf      = envelope_buf + buf_stride;
 
 #if OPENDIAPASON_VERBOSE_DEBUG
 		if (strlen(file_ref) < 1024 - 50) {
 			char      namebuf[1024];
 			struct wav_dumper dump;
-			sprintf(namebuf, "%s_reltable_inputs.wav", file_ref);
-			if (wav_dumper_begin(&dump, namebuf, 2, 24, norm_rate) == 0) {
+			sprintf(namebuf, "%s_reltable_inputs_nomin.wav", file_ref);
+			if (wav_dumper_begin(&dump, namebuf, 1 + nb_releases, 24, norm_rate) == 0) {
 				(void)wav_dumper_write_from_floats(&dump, envelope_buf, as_bits->length, 1, buf_stride);
 				wav_dumper_end(&dump);
 			}
 		}
 #endif
 
-		reltable_build(&pipe->reltable, envelope_buf, mse_buf, rel_power, as_bits->length, as_bits->period, file_ref);
+		reltable_build(&pipe->reltable, envelope_buf, mse_buf, relpowers, nb_releases, as_bits->length, as_bits->period, file_ref);
 
 		aalloc_pop(allocator);
 	}
