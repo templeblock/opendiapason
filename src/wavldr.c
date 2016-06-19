@@ -887,7 +887,6 @@ load_smpl_lists
 #if 0
 			for (i = 0; i < buf_stride; i++) {
 				mse_buf[i] = envelope_buf[i] + rel_power - 2.0f * mse_buf[i];
-				//mse_buf[i] = envelope_buf[i] - mse_buf[i]*mse_buf[i]/rel_power;
 			}
 #endif
 
@@ -911,7 +910,7 @@ load_smpl_lists
 		}
 #endif
 
-		reltable_build(&pipe->reltable, envelope_buf, mse_buf, relpowers, nb_releases, as_bits->length, as_bits->period, file_ref);
+		reltable_build(&pipe->reltable, envelope_buf, mse_buf, relpowers, nb_releases, buf_stride, as_bits->length, as_bits->period, file_ref);
 
 		aalloc_pop(allocator);
 	}

@@ -21,6 +21,8 @@
 #ifndef RELTABLE_H
 #define RELTABLE_H
 
+#include <stddef.h>
+
 #define RELTABLE_MAX_ENTRIES (128)
 
 struct reltable {
@@ -94,6 +96,7 @@ reltable_build
 	,const float     *correlation_bufs
 	,const float     *rel_powers
 	,unsigned         nb_rels
+	,size_t           rel_stride
 	,unsigned         buf_len
 	,float            period
 	,const char      *debug_prefix

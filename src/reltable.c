@@ -323,6 +323,7 @@ reltable_build
 	,const float     *correlation_bufs
 	,const float     *rel_powers
 	,unsigned         nb_rels
+	,size_t           rel_stride
 	,unsigned         error_vec_len
 	,float            period
 	,const char      *debug_prefix
