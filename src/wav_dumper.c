@@ -95,7 +95,8 @@ unsigned wav_dumper_write_from_floats(struct wav_dumper *dump, const float *data
 	num_written = 0;
 
 	while (num_written < num_samples) {
-		unsigned can_write = num_samples < num_can_write_into_buffer ? num_samples : num_can_write_into_buffer;
+		unsigned amt_left  = num_samples - num_written;
+		unsigned can_write = (amt_left < num_can_write_into_buffer) ? amt_left : num_can_write_into_buffer;
 		unsigned i, ch;
 
 		if (dump->bits_per_sample == 24) {

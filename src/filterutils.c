@@ -78,21 +78,22 @@ void odfilter_run
 			unsigned op = 0;
 			while (op < max_in) {
 				unsigned max_read;
-
+				unsigned desire_read;
 				/* How much can we read before we hit the end of the buffer? */
-				max_read = length - input_pos;
+				max_read    = length - input_pos;
+				desire_read = max_in - op;
 
 				/* How much SHOULD we read? */
-				if (max_read + op > max_in)
-					max_read = max_in - op;
+				if (desire_read > max_read)
+					desire_read = max_read;
 
 				/* Read it. */
-				for (j = 0; j < max_read; j++)
+				for (j = 0; j < desire_read; j++)
 					sc1[j + op] = input[j + input_pos];
 
 				/* Increment offsets. */
-				input_pos += max_read;
-				op        += max_read;
+				input_pos += desire_read;
+				op        += desire_read;
 
 				/* If we read to the end of the buffer, move to the sustain
 				 * start. */

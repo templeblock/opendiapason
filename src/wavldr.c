@@ -118,7 +118,6 @@ static const char *load_wave_cks(struct wave_cks *cks, unsigned char *buf, size_
 
 static const char *setup_as(struct as_data *as, unsigned char *smpl, size_t smpl_sz, uint_fast32_t rate, uint_fast32_t total_length, unsigned load_format)
 {
-	unsigned end_loop_idx;
 	uint_fast32_t spec_data_sz;
 	double note;
 	unsigned i;
@@ -153,7 +152,6 @@ static const char *setup_as(struct as_data *as, unsigned char *smpl, size_t smpl
 	 *   12: end
 	 *   16: frac
 	 *   20: play count */
-	end_loop_idx  = 0;
 	spec_data_sz  = cop_ld_ule32(smpl + 32);
 	note          = (cop_ld_ule32(smpl + 16) / (65536.0 * 65536.0)) + cop_ld_ule32(smpl + 12);
 	as->nloop     = cop_ld_ule32(smpl + 28);
@@ -176,10 +174,9 @@ static const char *setup_as(struct as_data *as, unsigned char *smpl, size_t smpl
 			return "invalid sampler loop";
 		}
 		if (as->loops[2*i+1] >= as->length) {
-			as->length = as->loops[2*i+1] + 1;
-			end_loop_idx = i;
+			as->length             = as->loops[2*i+1] + 1;
+			as->atk_end_loop_start = as->loops[2*i+0];
 		}
-		as->atk_end_loop_start = as->loops[2*end_loop_idx+0];
 	}
 
 	return NULL;
