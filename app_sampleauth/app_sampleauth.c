@@ -37,10 +37,11 @@ struct wav_marker {
 };
 
 struct wav_chunk {
-	uint_fast32_t  id;
-	uint_fast32_t  size;
-	int            needs_free;
-	unsigned char *data;
+	uint_fast32_t     id;
+	uint_fast32_t     size;
+	int               needs_free;
+	unsigned char    *data;
+	struct wav_chunk *next;
 };
 
 struct wav {
@@ -49,6 +50,8 @@ struct wav {
 	uint_fast64_t         pitch_info;
 	unsigned              nb_marker;
 	struct wav_marker     markers[MAX_MARKERS];
+
+
 	unsigned              nb_chunks;
 	struct wav_chunk      chunks[MAX_CHUNKS];
 
@@ -59,6 +62,8 @@ struct wav {
 	struct wav_chunk     *adtl;
 	struct wav_chunk     *cue;
 	struct wav_chunk     *smpl;
+
+	struct wav_chunk     *unsupported;
 };
 
 #define RIFF_ID(c1, c2, c3, c4) \
@@ -350,6 +355,10 @@ load_markers
 				wav->nb_marker = dest_idx;
 			} else {
 				fprintf(stderr, "%s has sampler loops that conflict with loops in the cue chunk. you must specify --prefer-smpl-loops or --prefer-cue-loops to load it. here are the details:\n", filename);
+				fprintf(stderr, "common loops (position/duration):\n");
+				for (i = 0; i < wav->nb_marker; i++)
+					if (wav->markers[i].in_cue && wav->markers[i].in_smpl && wav->markers[i].has_length && wav->markers[i].length > 0)
+						fprintf(stderr, "  %lu/%lu\n", (unsigned long)wav->markers[i].position, (unsigned long)wav->markers[i].length);
 				fprintf(stderr, "sampler loops (position/duration):\n");
 				for (i = 0; i < wav->nb_marker; i++)
 					if (!wav->markers[i].in_cue && wav->markers[i].in_smpl && wav->markers[i].has_length && wav->markers[i].length > 0)
@@ -466,6 +475,7 @@ static int read_entire_file(const char *filename, size_t *sz, unsigned char **bu
 static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, const char *filename, unsigned flags)
 {
 	uint_fast32_t riff_sz;
+	struct wav_chunk **next_unsupported;
 
 	if  (   (bufsz < 12)
 	    ||  (cop_ld_ule32(buf) != RIFF_ID('R', 'I', 'F', 'F'))
@@ -492,6 +502,7 @@ static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, c
 	wav->adtl = NULL;
 	wav->cue  = NULL;
 	wav->smpl = NULL;
+	next_unsupported = &(wav->unsupported);
 
 	while (riff_sz >= 8) {
 		uint_fast32_t      ckid   = cop_ld_ule32(buf);
@@ -559,18 +570,27 @@ static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, c
 			struct wav_chunk *ck = wav->chunks + wav->nb_chunks++;
 
 			if (known_ptr != NULL) {
+				/* There are no chunks which we know how to interpret which
+				 * can occur more than once. */
 				if (*known_ptr != NULL) {
 					fprintf(stderr, "%s contained duplicate wave chunks\n", filename);
 					return -1;
 				}
+				ck->next   = NULL;
 				*known_ptr = ck;
+			} else {
+				*next_unsupported = ck;
+				next_unsupported  = &(ck->next);
 			}
+
 			ck->id         = ckid;
 			ck->size       = cksz;
 			ck->needs_free = 0;
 			ck->data       = ckbase;
 		}
 	}
+
+	*next_unsupported = NULL;
 
 	return load_markers(wav, filename, flags);
 }
@@ -773,8 +793,16 @@ static void dump_metadata(const struct wav *wav)
 	}
 }
 
+
+
+
+
 static void dump_sample(const struct wav *wav, const char *filename)
 {
+
+
+
+
 	abort();
 }
 
