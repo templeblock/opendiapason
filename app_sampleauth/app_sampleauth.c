@@ -52,6 +52,7 @@ struct wav {
 	unsigned              nb_chunks;
 	struct wav_chunk      chunks[MAX_CHUNKS];
 
+	struct wav_chunk     *info;
 	struct wav_chunk     *fmt;
 	struct wav_chunk     *fact;
 	struct wav_chunk     *data;
@@ -484,6 +485,7 @@ static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, c
 	}
 
 	wav->nb_chunks = 0;
+	wav->info = NULL;
 	wav->fmt  = NULL;
 	wav->fact = NULL;
 	wav->data = NULL;
@@ -514,9 +516,16 @@ static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, c
 			return -1;
 		}
 
-		if (ckid == RIFF_ID('L', 'I', 'S', 'T')) {
-			if (cksz >= 4 && cop_ld_ule32(ckbase) == RIFF_ID('a', 'd', 't', 'l')) {
-				known_ptr = &wav->adtl;
+		if (ckid == RIFF_ID('L', 'I', 'S', 'T') && cksz >= 4) {
+			switch (cop_ld_ule32(ckbase)) {
+				case RIFF_ID('a', 'd', 't', 'l'):
+					known_ptr = &wav->adtl;
+					break;
+				case RIFF_ID('I', 'N', 'F', 'O'):
+					known_ptr = &wav->info;
+					break;
+				default:
+					break;
 			}
 		} else {
 			switch (ckid) {
