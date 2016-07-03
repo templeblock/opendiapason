@@ -389,40 +389,115 @@ load_markers
 		}
 	}
 
-	/* Reassign IDs. */
-	for (i = 0; i < wav->nb_marker; i++)
+	/* Reassign IDs and strip text metadata if requested. */
+	for (i = 0; i < wav->nb_marker; i++) {
 		wav->markers[i].id = i + 1;
+		if (flags & FLAG_STRIP_EVENT_METADATA) {
+			wav->markers[i].name = NULL;
+			wav->markers[i].desc = NULL;
+		}
+	}
 
 	return 0;
 }
 
+
+
 /*
- * info.icop
- * smpl.midi_pitch_frac
- * smpl.midi_unity_note
+ * Sample Parsing Options
+ *
+ * --reset
+ *   Removes all chunks are unnecessary for wave operation. i.e. any chunk
+ *   which is not "fmt", "fact" or "data" will be removed.
+ *
+ * --preserve-unknown-chunks
+ *   Chunks which were not parsable will be retained in the wave file. This
+ *   is normally a bad idea. This flag has no effect when --reset is used.
+ *
+ * --prefer-smpl-loops
+ * --prefer-cue-loops
+ *   Specify whether loops should be read from smpl or cue when loops are
+ *   found in both and the loops do not match. If neither is specified, the
+ *   program will exit with an error message when this condition occurs unless
+ *   the loops are all identical. This flag has no effect when --reset is
+ *   used. Only has an effect if loops are found in both the cue and smpl
+ *   chunks.
+ *
+ * --strip-event-metadata
+ *   Forces text metadata related to markers and loops to be stripped from the
+ *   sample. This flag has no effect when --reset is used.
+ *
+ * --set [ metadata item ] [ value ]
+ *
+ *   metadata item   value format
+ *   loop            start-duration name description
+ *   cue             position name description
+ *   smpl-pitch      pitch integer
+ *   info-icop       string
+ *
+ * --input-metadata
+ *   This flag will read metadata from stdin and overwrite singular metadata
+ *   elements (e.g. copyrights, midi pitch information). For non-singular
+ *   metadata elements (loops, markers), the behavior is to append to the
+ *   metadata (which is useful for merging loops).
+ *
+ * --output-metadata
+ *   This flag can be used to cause the final metadata to be output to stdout.
+ *
+ * --write-cue-loops
+ *   Only has effect when writing an output file. The default behavior is to
+ *   strip loops out of the cue chunk and only write them in the sampler chunk.
+ *   This flag can be used to add them back in.
+ *
+ * --output-inplace
+ * --output [ filename ]
+ *   This flag can be used to save the processed file over the input file or
+ *   to write it to a new file.
+ *
  */
 
-
-
-/* -k keep loops in cue chunk */
-/* -m discard textual metadata */
-/* -i discard RIFF INFO chunk */
-/* -p copy pitch information from file into the sample */
-
-/* -c/-s if there is conflicting loop information, prefer the data in the cue
- * or smpl chunk respectively. if neither specified, the program will not
- * update the sample. */
-
-/* -o specify a different output file - otherwise the operation happens on
- * the source wave file. */
 
 void print_usage(FILE *f, const char *pname)
 {
 	fprintf(f, "Usage:\n  %s\n", pname);
-	fprintf(f, "    [ -o ( output filename ) ]\n");
-	fprintf(f, "    [ -p ( source pitch filename ) ]\n");
-	fprintf(f, "    [ -i ] [ -k ] [ -m ] [ -c | -s ] ( sample filename )\n");
-
+	fprintf(f, "    [ \"--output-inplace\" | ( \"--output\" ( filename ) ) ]\n");
+	fprintf(f, "    [ \"--output-metadata\" ] [ \"--reset\" ] [ \"--write-cue-loops\" ]\n");
+	fprintf(f, "    [ \"--prefer-cue-loops\" | \"--prefer-smpl-loops\" ]\n");
+	fprintf(f, "    [ \"--strip-event-metadata\" ] ( sample filename )\n\n");
+	fprintf(f, "This tool is used to modify or repair the metadata associated with a sample. It\n");
+	fprintf(f, "operates according to the following flow:\n");
+	fprintf(f, "1) The sample is loaded. If \"--reset\" is specified, all known chunks which are\n");
+	fprintf(f, "   not required for the sample to be considered waveform audio will be deleted.\n");
+	fprintf(f, "   Chunks which are not known are always deleted unless the\n");
+	fprintf(f, "   \"--preserve-unknown-chunks\" flag is specified. The known and required chunks\n");
+	fprintf(f, "   are 'fmt ', 'fact' and 'data'. The known and unrequired chunks are 'INFO',\n");
+	fprintf(f, "   'adtl', 'smpl', 'cue '.\n");
+	fprintf(f, "2) The 'smpl', 'cue ' and 'adtl' chunks (if any exist) will be parsed to obtain\n");
+	fprintf(f, "   loop and release markers. Tools and audio editors which manipulate these\n");
+	fprintf(f, "   chunks have proven to occasionally corrupt the data in them. This tool uses\n");
+	fprintf(f, "   some (safe) heuristics to correct these issues. There is one issue which\n");
+	fprintf(f, "   cannot be corrected automatically: when there are loops in both the cue and\n");
+	fprintf(f, "   smpl chunks which do not match. When this happens, the default behavior is to\n");
+	fprintf(f, "   abort the load process and terminate with an error message which details what\n");
+	fprintf(f, "   the different loops are. If the \"--prefer-cue-loops\" flag is given, loops\n");
+	fprintf(f, "   will be taken from the cue chunk. If the \"--prefer-smpl-loops\" flag is\n");
+	fprintf(f, "   specified, loops will be taken from the smpl chunk. These two flags only have\n");
+	fprintf(f, "   an effect when there is actually an unresolvable issue. i.e. specifying\n");
+	fprintf(f, "   \"--prefer-cue-loops\" will not remove loops from the smpl chunk if there are\n");
+	fprintf(f, "   no loops in the cue chunk.\n");
+	fprintf(f, "3) If \"--strip-event-metadata\" is specified, any *textual* metadata which is\n");
+	fprintf(f, "   associated with loops or cue points will be deleted.\n");
+	fprintf(f, "4) If \"--output-metadata\" is specified, the metadata which has been loaded and\n");
+	fprintf(f, "   potentially modified will be dumped to stdout in a format which can be used\n");
+	fprintf(f, "   by \"--input-metadata\".\n");
+	fprintf(f, "5) If \"--output-inplace\" is specified, the input file will be re-written with\n");
+	fprintf(f, "   the updated metadata. Otherwise if \"--output\" is given, the output file will\n");
+	fprintf(f, "   be written to the specified filename. These flags cannot both be specified\n");
+	fprintf(f, "   simultaneously. The default behavior is that loops will only be written to\n");
+	fprintf(f, "   the smpl chunk and markers will only be written to the cue chunk as this is\n");
+	fprintf(f, "   the most compatible form. If \"--write-cue-loops\" is specified, loops will\n");
+	fprintf(f, "   also be stored in the cue chunk. This may assist in checking them in editor\n");
+	fprintf(f, "   software.\n");
 
 
 }
@@ -695,60 +770,6 @@ static int handle_options(struct wavauth_options *opts, char **argv, unsigned ar
 	return 0;
 }
 
-
-/*
- * Sample Parsing Options
- *
- * --reset
- *   Removes all chunks are unnecessary for wave operation. i.e. any chunk
- *   which is not "fmt", "fact" or "data" will be removed.
- *
- * --preserve-unknown-chunks
- *   Chunks which were not parsable will be retained in the wave file. This
- *   is normally a bad idea. This flag has no effect when --reset is used.
- *
- * --prefer-smpl-loops
- * --prefer-cue-loops
- *   Specify whether loops should be read from smpl or cue when loops are
- *   found in both and the loops do not match. If neither is specified, the
- *   program will exit with an error message when this condition occurs unless
- *   the loops are all identical. This flag has no effect when --reset is
- *   used. Only has an effect if loops are found in both the cue and smpl
- *   chunks.
- *
- * --strip-event-metadata
- *   Forces text metadata related to markers and loops to be stripped from the
- *   sample. This flag has no effect when --reset is used.
- *
- * --set [ metadata item ] [ value ]
- *
- *   metadata item   value format
- *   loop            start-duration name description
- *   cue             position name description
- *   smpl-pitch      pitch integer
- *   info-icop       string
- *
- * --input-metadata
- *   This flag will read metadata from stdin and overwrite singular metadata
- *   elements (e.g. copyrights, midi pitch information). For non-singular
- *   metadata elements (loops, markers), the behavior is to append to the
- *   metadata (which is useful for merging loops).
- *
- * --output-metadata
- *   This flag can be used to cause the final metadata to be output to stdout.
- *
- * --write-cue-loops
- *   Only has effect when writing an output file. The default behavior is to
- *   strip loops out of the cue chunk and only write them in the sampler chunk.
- *   This flag can be used to add them back in.
- *
- * --output-inplace
- * --output [ filename ]
- *   This flag can be used to save the processed file over the input file or
- *   to write it to a new file.
- *
- */
-
 void printstr(const char *s)
 {
 	printf("\"");
@@ -837,25 +858,19 @@ static void serialise_notelabl(unsigned char *buf, size_t *size, uint_fast32_t c
 	*size += 12 + len + (len & 1);
 }
 
-static void serialise_adtl(const struct wav *wav, unsigned char *buf, size_t *size, int include_text_meta, int store_cue_loops)
+static void serialise_adtl(const struct wav *wav, unsigned char *buf, size_t *size, int store_cue_loops)
 {
 	size_t old_sz = *size;
 	size_t new_sz = old_sz + 12;
 	unsigned i;
 
-	/* Early exit. If no text metadata is going to be written and loops will
-	 * not be stored in the cue chunk, the adtl chunk will never have anything
-	 * in it. */
-	if (!include_text_meta && !store_cue_loops)
-		return;
-
 	/* Serialise any metadata that might exist. */
 	for (i = 0; i < wav->nb_marker; i++) {
 		if (wav->markers[i].has_length && store_cue_loops)
 			serialise_ltxt(buf, &new_sz, i + 1, wav->markers[i].length);
-		if (wav->markers[i].name != NULL && include_text_meta)
+		if (wav->markers[i].name != NULL)
 			serialise_notelabl(buf, &new_sz, RIFF_ID('l', 'a', 'b', 'l'), i + 1, wav->markers[i].name);
-		if (wav->markers[i].desc != NULL && include_text_meta)
+		if (wav->markers[i].desc != NULL)
 			serialise_notelabl(buf, &new_sz, RIFF_ID('n', 'o', 't', 'e'), i + 1, wav->markers[i].desc);
 	}
 
@@ -945,7 +960,7 @@ static void serialise_smpl(const struct wav *wav, unsigned char *buf, size_t *si
 	}
 }
 
-int serialise_wave(const struct wav *wav, unsigned char *buf, size_t *size, int include_text_meta, int store_cue_loops)
+int serialise_wave(const struct wav *wav, unsigned char *buf, size_t *size, int store_cue_loops)
 {
 	struct wav_chunk *ck;
 	*size = 12;
@@ -957,7 +972,7 @@ int serialise_wave(const struct wav *wav, unsigned char *buf, size_t *size, int 
 	assert(wav->data != NULL);
 	serialise_dumb_chunk(wav->data, buf, size);
 
-	serialise_adtl(wav, buf, size, include_text_meta, store_cue_loops);
+	serialise_adtl(wav, buf, size, store_cue_loops);
 	serialise_cue(wav, buf, size, store_cue_loops);
 	serialise_smpl(wav, buf, size);
 
@@ -976,7 +991,7 @@ int serialise_wave(const struct wav *wav, unsigned char *buf, size_t *size, int 
 	return 0;
 }
 
-static int dump_sample(const struct wav *wav, const char *filename, int include_text_meta, int store_cue_loops)
+static int dump_sample(const struct wav *wav, const char *filename, int store_cue_loops)
 {
 	int err;
 	size_t sz;
@@ -985,7 +1000,7 @@ static int dump_sample(const struct wav *wav, const char *filename, int include_
 	FILE *f;
 
 	/* Find size of entire wave file then allocate memory for it. */
-	if ((err = serialise_wave(wav, NULL, &sz, include_text_meta, store_cue_loops)) != 0)
+	if ((err = serialise_wave(wav, NULL, &sz, store_cue_loops)) != 0)
 		return err;
 	if ((data = malloc(sz)) == NULL) {
 		fprintf(stderr, "out of memory\n");
@@ -993,7 +1008,7 @@ static int dump_sample(const struct wav *wav, const char *filename, int include_
 	}
 
 	/* Serialise the wave file to memory. */
-	err = serialise_wave(wav, data, &sz2, include_text_meta, store_cue_loops);
+	err = serialise_wave(wav, data, &sz2, store_cue_loops);
 
 	/* serialise should never fail if it succeded in getting the size of the
 	 * buffer and should always return the same size that was queried. */
@@ -1044,7 +1059,7 @@ int main(int argc, char *argv[])
 					dump_metadata(&wav);
 
 				if (err == 0 && opts.output_filename != NULL)
-					err = dump_sample(&wav, opts.output_filename, (opts.flags & FLAG_STRIP_EVENT_METADATA) == 0, (opts.flags & FLAG_WRITE_CUE_LOOPS) == FLAG_WRITE_CUE_LOOPS);
+					err = dump_sample(&wav, opts.output_filename, (opts.flags & FLAG_WRITE_CUE_LOOPS) == FLAG_WRITE_CUE_LOOPS);
 			}
 
 			free(buf);
