@@ -23,6 +23,8 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <assert.h>
+#include "cop/cop_attributes.h"
 
 #define MAX_MARKERS (64)
 #define MAX_CHUNKS  (32)
@@ -82,16 +84,15 @@ struct wav_sample {
 
 	struct wav_sample_format  format;
 
-	struct wav_chunk         *fact;
-	struct wav_chunk         *data;
+	uint_fast32_t             data_frames;
+	void                     *data;
 
-	struct wav_chunk     *unsupported;
+	struct wav_chunk         *unsupported;
 };
 
 struct wav {
 	struct wav_sample     sample;
 
-	uint_fast32_t         data_frames;
 
 	unsigned              nb_chunks;
 	struct wav_chunk      chunks[MAX_CHUNKS];
@@ -100,6 +101,8 @@ struct wav {
 	struct wav_chunk     *adtl;
 	struct wav_chunk     *cue;
 	struct wav_chunk     *smpl;
+	struct wav_chunk     *fact;
+	struct wav_chunk     *data;
 
 	struct wav_chunk     *fmt;
 };
@@ -110,5 +113,18 @@ struct wav {
 	|   (((uint_fast32_t)(c3)) << 16) \
 	|   (((uint_fast32_t)(c4)) << 24) \
 	)
+
+static COP_ATTR_UNUSED uint_fast16_t get_container_size(int format)
+{
+	switch (format) {
+		case WAV_SAMPLE_PCM16:
+			return 2;
+		case WAV_SAMPLE_PCM24:
+			return 3;
+		default:
+			assert(format == WAV_SAMPLE_PCM32 || format == WAV_SAMPLE_FLOAT32);
+			return 4;
+	}
+}
 
 #endif /* WAV_SAMPLE_H */

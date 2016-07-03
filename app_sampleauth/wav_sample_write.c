@@ -23,22 +23,6 @@
 #include <string.h>
 #include <assert.h>
 
-static void serialise_dumb_chunk(const struct wav_chunk *ck, unsigned char *buf, size_t *size)
-{
-	size_t ckpos = *size;
-
-	if (buf != NULL) {
-		buf += ckpos;
-		cop_st_ule32(buf, ck->id);
-		cop_st_ule32(buf + 4, ck->size);
-		memcpy(buf + 8, ck->data, ck->size);
-		if (ck->size & 1)
-			buf[8+ck->size] = 0;
-	}
-
-	*size = ckpos + 8 + ck->size + (ck->size & 1);
-}
-
 static void serialise_ltxt(unsigned char *buf, size_t *size, uint_fast32_t id, uint_fast32_t length)
 {
 	if (buf != NULL) {
@@ -173,20 +157,7 @@ static void serialise_smpl(const struct wav_sample *wav, unsigned char *buf, siz
 	}
 }
 
-static uint_fast16_t get_container_size(int format)
-{
-	switch (format) {
-		case WAV_SAMPLE_PCM16:
-			return 2;
-		case WAV_SAMPLE_PCM24:
-			return 3;
-		default:
-			assert(format == WAV_SAMPLE_PCM32 || format == WAV_SAMPLE_FLOAT32);
-			return 4;
-	}
-}
-
-void serialise_format(const struct wav_sample_format *fmt, unsigned char *buf, size_t *size)
+static int serialise_format(const struct wav_sample_format *fmt, unsigned char *buf, size_t *size)
 {
 	static const unsigned char EXTENSIBLE_GUID_SUFFIX[14] = {/* AA, BB, */ 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71};
 	int           format_code      = fmt->format;
@@ -195,6 +166,7 @@ void serialise_format(const struct wav_sample_format *fmt, unsigned char *buf, s
 	uint_fast16_t bits_per_sample  = fmt->bits_per_sample;
 	int           extensible       = container_bits != bits_per_sample;
 	uint_fast16_t basic_format_tag = (format_code == WAV_SAMPLE_FLOAT32) ? 0x0003u : 0x0001u;
+	uint_fast16_t format_tag       = (extensible) ? 0xFFFEu : basic_format_tag;
 	const size_t  fmt_sz           = (extensible) ? 48 : ((basic_format_tag == 1) ? 24 : 26);
 
 	if (buf != NULL) {
@@ -206,7 +178,7 @@ void serialise_format(const struct wav_sample_format *fmt, unsigned char *buf, s
 
 		cop_st_ule32(buf + 0, RIFF_ID('f', 'm', 't', ' '));
 		cop_st_ule32(buf + 4, fmt_sz - 8);
-		cop_st_ule16(buf + 8, (extensible) ? 0xFFFEu : basic_format_tag);
+		cop_st_ule16(buf + 8, format_tag);
 		cop_st_ule16(buf + 10, channels);
 		cop_st_ule32(buf + 12, sample_rate);
 		cop_st_ule32(buf + 16, sample_rate * block_align);
@@ -224,6 +196,40 @@ void serialise_format(const struct wav_sample_format *fmt, unsigned char *buf, s
 	}
 
 	*size += fmt_sz;
+
+	return (format_tag != 1);
+}
+
+static void serialise_fact(uint_fast32_t data_frames, unsigned char *buf, size_t *size)
+{
+	if (buf != NULL) {
+		buf += *size;
+		cop_st_ule32(buf,     RIFF_ID('f', 'a', 'c', 't'));
+		cop_st_ule32(buf + 4, 4);
+		cop_st_ule32(buf + 8, data_frames);
+	}
+	*size += 12;
+}
+
+static void serialise_blob(uint_fast32_t id, const unsigned char *ckdata, uint_fast32_t cksize, unsigned char *buf, size_t *size)
+{
+	if (buf != NULL) {
+		buf += *size;
+		cop_st_ule32(buf, id);
+		cop_st_ule32(buf + 4, cksize);
+		memcpy(buf + 8, ckdata, cksize);
+		if (cksize & 1)
+			buf[8+cksize] = 0;
+	}
+	*size += 8 + cksize + (cksize & 1);
+}
+
+static void serialise_data(const struct wav_sample_format *format, void *data, uint_fast32_t data_frames, unsigned char *buf, size_t *size)
+{
+	uint_fast16_t container_size = get_container_size(format->format);
+	uint_fast16_t block_align = container_size * format->channels;
+	uint_fast32_t data_size = data_frames * block_align;
+	serialise_blob(RIFF_ID('d', 'a', 't', 'a'), data, data_size, buf, size);
 }
 
 void wav_sample_serialise(const struct wav_sample *wav, unsigned char *buf, size_t *size, int store_cue_loops)
@@ -231,20 +237,17 @@ void wav_sample_serialise(const struct wav_sample *wav, unsigned char *buf, size
 	struct wav_chunk *ck;
 	*size = 12;
 
-	serialise_format(&wav->format, buf, size);
-
-	if (wav->fact != NULL)
-		serialise_dumb_chunk(wav->fact, buf, size);
-	assert(wav->data != NULL);
-	serialise_dumb_chunk(wav->data, buf, size);
-
+	if (serialise_format(&wav->format, buf, size)) {
+		serialise_fact(wav->data_frames, buf, size);
+	}
+	serialise_data(&wav->format, wav->data, wav->data_frames, buf, size);
 	serialise_adtl(wav, buf, size, store_cue_loops);
 	serialise_cue(wav, buf, size, store_cue_loops);
 	serialise_smpl(wav, buf, size);
 
 	ck = wav->unsupported;
 	while (ck != NULL) {
-		serialise_dumb_chunk(ck, buf, size);
+		serialise_blob(ck->id, ck->data, ck->size, buf, size);
 		ck = ck->next;
 	}
 

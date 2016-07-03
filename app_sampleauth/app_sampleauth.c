@@ -543,8 +543,6 @@ static int load_sample_format(struct wav_sample_format *format, struct wav_chunk
 		return -1;
 	}
 
-	printf("%u,%u,%u,%u\n", format->format, format->bits_per_sample, format->channels, format->sample_rate);
-
 	return 0;
 }
 
@@ -573,8 +571,8 @@ static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, c
 	wav->nb_chunks = 0;
 	wav->info = NULL;
 	wav->fmt  = NULL;
-	wav->sample.fact = NULL;
-	wav->sample.data = NULL;
+	wav->fact = NULL;
+	wav->data = NULL;
 	wav->adtl = NULL;
 	wav->cue  = NULL;
 	wav->smpl = NULL;
@@ -617,7 +615,7 @@ static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, c
 		} else {
 			switch (ckid) {
 				case RIFF_ID('d', 'a', 't', 'a'):
-					known_ptr = &wav->sample.data;
+					known_ptr = &wav->data;
 					required_chunk = 1;
 					break;
 				case RIFF_ID('f', 'm', 't', ' '):
@@ -625,7 +623,7 @@ static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, c
 					required_chunk = 1;
 					break;
 				case RIFF_ID('f', 'a', 'c', 't'):
-					known_ptr = &wav->sample.fact;
+					known_ptr = &wav->fact;
 					required_chunk = 1;
 					break;
 				case RIFF_ID('c', 'u', 'e', ' '):
@@ -667,13 +665,24 @@ static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, c
 
 	*next_unsupported = NULL;
 
-	if (wav->fmt == NULL || wav->sample.data == NULL) {
+	if (wav->fmt == NULL || wav->data == NULL) {
 		fprintf(stderr, "the wave file is missing the format or data chunk\n");
 		return -1;
 	}
 
 	if (load_sample_format(&(wav->sample.format), wav->fmt))
 		return -1;
+
+	/* Compute number of frames. */
+	{
+		uint_fast16_t block_align = (wav->sample.format.channels * get_container_size(wav->sample.format.format));
+		wav->sample.data        = wav->data->data;
+		wav->sample.data_frames = wav->data->size / block_align;
+		if (wav->data->size % block_align) {
+			fprintf(stderr, "the wave data chunk was corrupt or of invalid length\n");
+			return -1;
+		}
+	}
 
 	return load_markers(&(wav->sample), filename, flags, wav->adtl, wav->cue, wav->smpl);
 }
