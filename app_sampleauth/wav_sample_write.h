@@ -30,7 +30,11 @@
  * If store_cue_loops is non-zero, cue points and labeled text chunks for the
  * loops will be written.
  *
- * The unsupported chunks in the wav structure will always be written. */
+ * The unsupported chunks in the wav structure will always be written - set
+ * the list to NULL to suppress writing them.
+ *
+ * It is undefined for any of the values in the wav_sample structure to be
+ * invalid. */
 void wav_sample_serialise(const struct wav_sample *wav, unsigned char *buf, size_t *size, int store_cue_loops);
 
 #endif /* WAV_SAMPLE_WRITE_H */

@@ -232,11 +232,43 @@ static void serialise_data(const struct wav_sample_format *format, void *data, u
 	serialise_blob(RIFF_ID('d', 'a', 't', 'a'), data, data_size, buf, size);
 }
 
+static void serialise_zstrblob(uint_fast32_t id, const char *value, unsigned char *buf, size_t *size)
+{
+	size_t len;
+	if (value != NULL && (len = strlen(value)) > 0)
+		serialise_blob(id, (const unsigned char *)value, len + 1, buf, size);
+}
+
+static void serialise_info(const struct wav_sample_info_set *infoset, unsigned char *buf, size_t *size)
+{
+	size_t old_sz = *size;
+	size_t new_sz = old_sz + 12;
+	unsigned i;
+
+	for (i = 0; i < infoset->nb_info; i++) {
+		serialise_zstrblob(infoset->info[i].id, infoset->info[i].value, buf, &new_sz);
+	}
+
+	/* Only bother serialising if there were actually metadata items
+	 * written. */
+	if (new_sz != old_sz + 12) {
+		assert(new_sz > old_sz + 12);
+		if (buf != NULL) {
+			buf += old_sz;
+			cop_st_ule32(buf + 0, RIFF_ID('L', 'I', 'S', 'T'));
+			cop_st_ule32(buf + 4, new_sz - old_sz - 8);
+			cop_st_ule32(buf + 8, RIFF_ID('I', 'N', 'F', 'O'));
+		}
+		*size = new_sz;
+	}
+}
+
 void wav_sample_serialise(const struct wav_sample *wav, unsigned char *buf, size_t *size, int store_cue_loops)
 {
 	struct wav_chunk *ck;
 	*size = 12;
 
+	serialise_info(&(wav->info), buf, size);
 	if (serialise_format(&wav->format, buf, size)) {
 		serialise_fact(wav->data_frames, buf, size);
 	}

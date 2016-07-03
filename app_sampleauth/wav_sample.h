@@ -75,24 +75,35 @@ struct wav_sample_format {
 	uint_fast16_t bits_per_sample;
 };
 
+struct wav_sample_info {
+	uint_fast32_t  id;
+	const char    *value;
+};
+
+struct wav_sample_info_set {
+	unsigned                  nb_info;
+	struct wav_sample_info    info[MAX_INFO];
+};
+
 struct wav_sample {
-	int                       has_pitch_info;
-	uint_fast64_t             pitch_info;
+	struct wav_sample_info_set info;
 
-	unsigned                  nb_marker;
-	struct wav_marker         markers[MAX_MARKERS];
+	int                        has_pitch_info;
+	uint_fast64_t              pitch_info;
 
-	struct wav_sample_format  format;
+	unsigned                   nb_marker;
+	struct wav_marker          markers[MAX_MARKERS];
 
-	uint_fast32_t             data_frames;
-	void                     *data;
+	struct wav_sample_format   format;
 
-	struct wav_chunk         *unsupported;
+	uint_fast32_t              data_frames;
+	void                      *data;
+
+	struct wav_chunk          *unsupported;
 };
 
 struct wav {
 	struct wav_sample     sample;
-
 
 	unsigned              nb_chunks;
 	struct wav_chunk      chunks[MAX_CHUNKS];

@@ -410,7 +410,7 @@ void print_usage(FILE *f, const char *pname)
 	fprintf(f, "       Store pitch information in sampler chunk. The value is the MIDI note\n");
 	fprintf(f, "       multiplied by 2^32. This is to deal with the way the value is stored in\n");
 	fprintf(f, "       the smpl chunk.\n");
-	fprintf(f, "     info-icop ( copyright string )\n");
+	fprintf(f, "     info-ICOP ( copyright string )\n");
 	fprintf(f, "       Store copyright information for this sample in the RIFF standard INFO\n");
 	fprintf(f, "       chunk.\n");
 	fprintf(f, "6) If \"--output-metadata\" is specified, the metadata which has been loaded and\n");
@@ -544,6 +544,45 @@ static int load_sample_format(struct wav_sample_format *format, struct wav_chunk
 	}
 
 	return 0;
+}
+
+static void load_info(struct wav_sample_info_set *infoset, struct wav_chunk *info)
+{
+	unsigned char *buf;
+	size_t sz;
+
+	memset(infoset, 0, sizeof(*infoset));
+
+	sz   = info->size;
+	buf  = info->data;
+	assert(info->size >= 4);
+	sz  -= 4;
+	buf += 4;
+
+	while (sz >= 8) {
+		uint_fast32_t ckid = cop_ld_ule32(buf);
+		uint_fast32_t cksz = cop_ld_ule32(buf + 4);
+		char *base;
+
+		sz   -= 8;
+		buf  += 8;
+		base  = (char *)buf;
+
+		if (cksz >= sz) {
+			cksz = sz;
+			sz   = 0;
+		} else {
+			buf += cksz + (cksz & 1);
+			sz  -= cksz + (cksz & 1);
+		}
+
+		if (cksz == 0 || base[cksz-1] != 0)
+			continue;
+
+		infoset->info[infoset->nb_info].value = base;
+		infoset->info[infoset->nb_info].id    = ckid;
+		infoset->nb_info++;
+	}
 }
 
 static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, const char *filename, unsigned flags)
@@ -684,6 +723,10 @@ static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, c
 		}
 	}
 
+	if (wav->info != NULL) {
+		load_info(&(wav->sample.info), wav->info);
+	}
+
 	return load_markers(&(wav->sample), filename, flags, wav->adtl, wav->cue, wav->smpl);
 }
 
@@ -812,6 +855,12 @@ void printstr(const char *s)
 static void dump_metadata(const struct wav_sample *wav)
 {
 	unsigned i;
+
+	for (i = 0; i < wav->info.nb_info; i++) {
+		uint_fast32_t id = wav->info.info[i].id;
+		printf("info-%c%c%c%c ", id & 0xFF, (id >> 8) & 0xFF, (id >> 16) & 0xFF, (id >> 24) & 0xFF); printstr(wav->info.info[i].value); printf("\n");
+	}
+
 	if (wav->has_pitch_info)
 		printf("smpl-pitch %llu\n", wav->pitch_info);
 	for (i = 0; i < wav->nb_marker; i++) {
