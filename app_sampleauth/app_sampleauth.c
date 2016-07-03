@@ -1,8 +1,30 @@
+/* Copyright (c) 2016 Nick Appleton
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE. */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <string.h>
 #include "cop/cop_conversions.h"
+#include "wav_sample.h"
+#include "wav_sample_write.h"
 
 #define FLAG_RESET                (1)
 #define FLAG_PRESERVE_UNKNOWN     (2)
@@ -13,67 +35,7 @@
 #define FLAG_OUTPUT_METADATA      (64)
 #define FLAG_INPUT_METADATA       (128)
 
-#define MAX_MARKERS (64)
-#define MAX_CHUNKS  (32)
-
-struct wav_marker {
-	/* Cue ID */
-	uint_fast32_t         id;
-
-	/* From labl */
-	char                 *name;
-
-	/* From note */
-	char                 *desc;
-
-	/* From ltxt or smpl. */
-	uint_fast32_t         length;
-	int                   has_length;
-
-	/* Is this marker in smpl. */
-	int                   in_cue;
-	int                   in_smpl;
-	uint_fast32_t         position;
-};
-
-struct wav_chunk {
-	uint_fast32_t     id;
-	uint_fast32_t     size;
-	int               needs_free;
-	unsigned char    *data;
-	struct wav_chunk *next;
-};
-
-struct wav {
-	uint_fast32_t         data_frames;
-	int                   has_pitch_info;
-	uint_fast64_t         pitch_info;
-	unsigned              nb_marker;
-	struct wav_marker     markers[MAX_MARKERS];
-
-
-	unsigned              nb_chunks;
-	struct wav_chunk      chunks[MAX_CHUNKS];
-
-	struct wav_chunk     *info;
-	struct wav_chunk     *fmt;
-	struct wav_chunk     *fact;
-	struct wav_chunk     *data;
-	struct wav_chunk     *adtl;
-	struct wav_chunk     *cue;
-	struct wav_chunk     *smpl;
-
-	struct wav_chunk     *unsupported;
-};
-
-#define RIFF_ID(c1, c2, c3, c4) \
-	(   ((uint_fast32_t)(c1)) \
-	|   (((uint_fast32_t)(c2)) << 8) \
-	|   (((uint_fast32_t)(c3)) << 16) \
-	|   (((uint_fast32_t)(c4)) << 24) \
-	)
-
-static struct wav_marker *get_new_marker(struct wav *wav)
+static struct wav_marker *get_new_marker(struct wav_sample *wav)
 {
 	struct wav_marker *m = wav->markers + wav->nb_marker++;
 	m->id           = 0;
@@ -90,8 +52,8 @@ static struct wav_marker *get_new_marker(struct wav *wav)
 static
 struct wav_marker *
 get_marker
-	(struct wav     *wav
-	,uint_fast32_t   id
+	(struct wav_sample *wav
+	,uint_fast32_t      id
 	)
 {
 	unsigned i;
@@ -108,9 +70,12 @@ get_marker
 static
 int
 load_markers
-	(struct wav *wav
-	,const char *filename
-	,unsigned    flags
+	(struct wav_sample *wav
+	,const char        *filename
+	,unsigned           flags
+	,struct wav_chunk  *adtl_ck
+	,struct wav_chunk  *cue_ck
+	,struct wav_chunk  *smpl_ck
 	)
 {
 	unsigned i;
@@ -121,9 +86,9 @@ load_markers
 	wav->pitch_info = 0;
 
 	/* Load metadata strings and labelled text durations first. */
-	if (wav->adtl != NULL) {
-		size_t adtl_len        = wav->adtl->size;
-		unsigned char *adtl    = wav->adtl->data;
+	if (adtl_ck != NULL) {
+		size_t adtl_len        = adtl_ck->size;
+		unsigned char *adtl    = adtl_ck->data;
 		unsigned char *zero_me = NULL;
 
 		/* This condition should have been checked by the calling code. */
@@ -222,9 +187,9 @@ load_markers
 	}
 
 	/* Next we read the cue points into the marker list. */
-	if (wav->cue != NULL) {
-		size_t         cue_len = wav->cue->size;
-		unsigned char *cue     = wav->cue->data;
+	if (cue_ck != NULL) {
+		size_t         cue_len = cue_ck->size;
+		unsigned char *cue     = cue_ck->data;
 		uint_fast32_t  ncue;
 
 		if (cue_len < 4 || cue_len < 4 + 24 * (ncue = cop_ld_ule32(cue))) {
@@ -252,9 +217,9 @@ load_markers
 		}
 	}
 
-	if (wav->smpl != NULL) {
-		size_t         smpl_len      = wav->smpl->size;
-		unsigned char *smpl          = wav->smpl->data;
+	if (smpl_ck != NULL) {
+		size_t         smpl_len      = smpl_ck->size;
+		unsigned char *smpl          = smpl_ck->data;
 		uint_fast32_t  nloop;
 
 		if (smpl_len < 36 || (smpl_len < (36 + (nloop = cop_ld_ule32(smpl + 28)) * 24 + cop_ld_ule32(smpl + 32)))) {
@@ -401,28 +366,6 @@ load_markers
 	return 0;
 }
 
-
-
-/*
- * Sample Parsing Options
- *
- * --set [ string ]
- *
- *   loop            start-duration name description
- *   cue             position name description
- *   smpl-pitch      pitch integer
- *   info-icop       string
- *
- * --input-metadata
- *   This flag will read metadata from stdin and overwrite singular metadata
- *   elements (e.g. copyrights, midi pitch information). For non-singular
- *   metadata elements (loops, markers), the behavior is to append to the
- *   metadata (which is useful for merging loops).
- *
- *
- */
-
-
 void print_usage(FILE *f, const char *pname)
 {
 	fprintf(f, "Usage:\n  %s\n", pname);
@@ -554,13 +497,13 @@ static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, c
 
 	wav->nb_chunks = 0;
 	wav->info = NULL;
-	wav->fmt  = NULL;
-	wav->fact = NULL;
-	wav->data = NULL;
+	wav->sample.fmt  = NULL;
+	wav->sample.fact = NULL;
+	wav->sample.data = NULL;
 	wav->adtl = NULL;
 	wav->cue  = NULL;
 	wav->smpl = NULL;
-	next_unsupported = &(wav->unsupported);
+	next_unsupported = &(wav->sample.unsupported);
 
 	while (riff_sz >= 8) {
 		uint_fast32_t      ckid   = cop_ld_ule32(buf);
@@ -599,15 +542,15 @@ static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, c
 		} else {
 			switch (ckid) {
 				case RIFF_ID('d', 'a', 't', 'a'):
-					known_ptr = &wav->data;
+					known_ptr = &wav->sample.data;
 					required_chunk = 1;
 					break;
 				case RIFF_ID('f', 'm', 't', ' '):
-					known_ptr = &wav->fmt;
+					known_ptr = &wav->sample.fmt;
 					required_chunk = 1;
 					break;
 				case RIFF_ID('f', 'a', 'c', 't'):
-					known_ptr = &wav->fact;
+					known_ptr = &wav->sample.fact;
 					required_chunk = 1;
 					break;
 				case RIFF_ID('c', 'u', 'e', ' '):
@@ -643,14 +586,13 @@ static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, c
 
 			ck->id         = ckid;
 			ck->size       = cksz;
-			ck->needs_free = 0;
 			ck->data       = ckbase;
 		}
 	}
 
 	*next_unsupported = NULL;
 
-	return load_markers(wav, filename, flags);
+	return load_markers(&(wav->sample), filename, flags, wav->adtl, wav->cue, wav->smpl);
 }
 
 struct wavauth_options {
@@ -775,7 +717,7 @@ void printstr(const char *s)
 	printf("\"");
 }
 
-static void dump_metadata(const struct wav *wav)
+static void dump_metadata(const struct wav_sample *wav)
 {
 	unsigned i;
 	if (wav->has_pitch_info)
@@ -797,209 +739,25 @@ static void dump_metadata(const struct wav *wav)
 	}
 }
 
-static void serialise_dumb_chunk(const struct wav_chunk *ck, unsigned char *buf, size_t *size)
-{
-	size_t ckpos = *size;
-
-	if (buf != NULL) {
-		buf += ckpos;
-		cop_st_ule32(buf, ck->id);
-		cop_st_ule32(buf + 4, ck->size);
-		memcpy(buf + 8, ck->data, ck->size);
-		if (ck->size & 1)
-			buf[8+ck->size] = 0;
-	}
-
-	*size = ckpos + 8 + ck->size + (ck->size & 1);
-}
-
-static void serialise_ltxt(unsigned char *buf, size_t *size, uint_fast32_t id, uint_fast32_t length)
-{
-	if (buf != NULL) {
-		buf += *size;
-		cop_st_ule32(buf + 0, RIFF_ID('l', 't', 'x', 't'));
-		cop_st_ule32(buf + 4, 20);
-		cop_st_ule32(buf + 8, id);
-		cop_st_ule32(buf + 12, length);
-		cop_st_ule32(buf + 16, 0);
-		cop_st_ule16(buf + 20, 0);
-		cop_st_ule16(buf + 22, 0);
-		cop_st_ule16(buf + 24, 0);
-		cop_st_ule16(buf + 26, 0);
-	}
-	*size += 28;
-}
-
-static void serialise_notelabl(unsigned char *buf, size_t *size, uint_fast32_t ctyp, uint_fast32_t id, const char *s)
-{
-	size_t len = strlen(s) + 1;
-	if (buf != NULL) {
-		buf += *size;
-		cop_st_ule32(buf + 0, ctyp);
-		cop_st_ule32(buf + 4, 4 + len);
-		cop_st_ule32(buf + 8, id);
-		memcpy(buf + 12, s, len);
-		if (len & 1)
-			buf[12+len] = 0;
-	}
-	*size += 12 + len + (len & 1);
-}
-
-static void serialise_adtl(const struct wav *wav, unsigned char *buf, size_t *size, int store_cue_loops)
-{
-	size_t old_sz = *size;
-	size_t new_sz = old_sz + 12;
-	unsigned i;
-
-	/* Serialise any metadata that might exist. */
-	for (i = 0; i < wav->nb_marker; i++) {
-		if (wav->markers[i].has_length && store_cue_loops)
-			serialise_ltxt(buf, &new_sz, i + 1, wav->markers[i].length);
-		if (wav->markers[i].name != NULL)
-			serialise_notelabl(buf, &new_sz, RIFF_ID('l', 'a', 'b', 'l'), i + 1, wav->markers[i].name);
-		if (wav->markers[i].desc != NULL)
-			serialise_notelabl(buf, &new_sz, RIFF_ID('n', 'o', 't', 'e'), i + 1, wav->markers[i].desc);
-	}
-
-	/* Only bother serialising if there were actually metadata items
-	 * written. */
-	if (new_sz != old_sz + 12) {
-		assert(new_sz > old_sz + 12);
-		if (buf != NULL) {
-			buf += old_sz;
-			cop_st_ule32(buf + 0, RIFF_ID('L', 'I', 'S', 'T'));
-			cop_st_ule32(buf + 4, new_sz - old_sz - 8);
-			cop_st_ule32(buf + 8, RIFF_ID('a', 'd', 't', 'l'));
-		}
-		*size = new_sz;
-	}
-}
-
-static void serialise_cue(const struct wav *wav, unsigned char *buf, size_t *size, int store_cue_loops)
-{
-	unsigned i;
-	unsigned nb_cue = 0;
-
-	if (buf != NULL)
-		buf += *size;
-
-	for (i = 0; i < wav->nb_marker; i++) {
-		if (store_cue_loops || wav->markers[i].length == 0) {
-			if (buf != NULL) {
-				cop_st_ule32(buf + 12 + nb_cue * 24, i + 1);
-				cop_st_ule32(buf + 16 + nb_cue * 24, 0);
-				cop_st_ule32(buf + 20 + nb_cue * 24, RIFF_ID('d', 'a', 't', 'a'));
-				cop_st_ule32(buf + 24 + nb_cue * 24, 0);
-				cop_st_ule32(buf + 28 + nb_cue * 24, 0);
-				cop_st_ule32(buf + 32 + nb_cue * 24, wav->markers[i].position);
-			}
-			nb_cue++;
-		}
-	}
-
-	if (nb_cue) {
-		if (buf != NULL) {
-			cop_st_ule32(buf + 0, RIFF_ID('c', 'u', 'e', ' '));
-			cop_st_ule32(buf + 4, 4 + nb_cue * 24);
-			cop_st_ule32(buf + 8, nb_cue);
-		}
-		*size += 12 + nb_cue * 24;
-	}
-}
-
-static void serialise_smpl(const struct wav *wav, unsigned char *buf, size_t *size)
-{
-	unsigned i;
-	unsigned nb_loop = 0;
-
-	if (buf != NULL)
-		buf += *size;
-
-	for (i = 0; i < wav->nb_marker; i++) {
-		if (wav->markers[i].has_length && wav->markers[i].length > 0) {
-			if (buf != NULL) {
-				cop_st_ule32(buf + 44 + 24 * nb_loop, i + 1);
-				cop_st_ule32(buf + 48 + 24 * nb_loop, 0);
-				cop_st_ule32(buf + 52 + 24 * nb_loop, wav->markers[i].position);
-				cop_st_ule32(buf + 56 + 24 * nb_loop, wav->markers[i].position + wav->markers[i].length - 1);
-				cop_st_ule32(buf + 60 + 24 * nb_loop, 0);
-				cop_st_ule32(buf + 64 + 24 * nb_loop, 0);
-			}
-			nb_loop++;
-		}
-	}
-
-	if (nb_loop || wav->has_pitch_info) {
-		if (buf != NULL) {
-			cop_st_ule32(buf + 0, RIFF_ID('s', 'm', 'p', 'l'));
-			cop_st_ule32(buf + 4, 36 + nb_loop * 24);
-			cop_st_ule32(buf + 8, 0);
-			cop_st_ule32(buf + 12, 0);
-			cop_st_ule32(buf + 16, 0);
-			cop_st_ule32(buf + 20, (wav->pitch_info) >> 32 & 0xFFFFFFFFu);
-			cop_st_ule32(buf + 24, wav->pitch_info & 0xFFFFFFFFu);
-			cop_st_ule32(buf + 28, 0);
-			cop_st_ule32(buf + 32, 0);
-			cop_st_ule32(buf + 36, nb_loop);
-			cop_st_ule32(buf + 40, 0);
-		}
-		*size += 44 + nb_loop * 24;
-	}
-}
-
-int serialise_wave(const struct wav *wav, unsigned char *buf, size_t *size, int store_cue_loops)
-{
-	struct wav_chunk *ck;
-	*size = 12;
-
-	assert(wav->fmt != NULL);
-	serialise_dumb_chunk(wav->fmt, buf, size);
-	if (wav->fact != NULL)
-		serialise_dumb_chunk(wav->fact, buf, size);
-	assert(wav->data != NULL);
-	serialise_dumb_chunk(wav->data, buf, size);
-
-	serialise_adtl(wav, buf, size, store_cue_loops);
-	serialise_cue(wav, buf, size, store_cue_loops);
-	serialise_smpl(wav, buf, size);
-
-	ck = wav->unsupported;
-	while (ck != NULL) {
-		serialise_dumb_chunk(ck, buf, size);
-		ck = ck->next;
-	}
-
-	if (buf != NULL) {
-		cop_st_ule32(buf, RIFF_ID('R', 'I', 'F', 'F'));
-		cop_st_ule32(buf + 4, *size - 8);
-		cop_st_ule32(buf + 8, RIFF_ID('W', 'A', 'V', 'E'));
-	}
-
-	return 0;
-}
-
 static int dump_sample(const struct wav *wav, const char *filename, int store_cue_loops)
 {
-	int err;
+	int err = 0;
 	size_t sz;
 	size_t sz2;
 	unsigned char *data;
 	FILE *f;
 
 	/* Find size of entire wave file then allocate memory for it. */
-	if ((err = serialise_wave(wav, NULL, &sz, store_cue_loops)) != 0)
-		return err;
+	wav_sample_serialise(wav, NULL, &sz, store_cue_loops);
 	if ((data = malloc(sz)) == NULL) {
 		fprintf(stderr, "out of memory\n");
 		return -1;
 	}
 
 	/* Serialise the wave file to memory. */
-	err = serialise_wave(wav, data, &sz2, store_cue_loops);
+	wav_sample_serialise(wav, data, &sz2, store_cue_loops);
 
-	/* serialise should never fail if it succeded in getting the size of the
-	 * buffer and should always return the same size that was queried. */
-	assert(err == 0);
+	/* serialise should always return the same size that was queried. */
 	assert(sz2 == sz);
 
 	/* Open the output file and write the entire buffer to it. */
@@ -1043,7 +801,7 @@ int main(int argc, char *argv[])
 
 
 				if (opts.flags & FLAG_OUTPUT_METADATA)
-					dump_metadata(&wav);
+					dump_metadata(&wav.sample);
 
 				if (err == 0 && opts.output_filename != NULL)
 					err = dump_sample(&wav, opts.output_filename, (opts.flags & FLAG_WRITE_CUE_LOOPS) == FLAG_WRITE_CUE_LOOPS);
