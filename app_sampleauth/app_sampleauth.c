@@ -89,7 +89,6 @@ load_markers
 	if (adtl_ck != NULL) {
 		size_t adtl_len        = adtl_ck->size;
 		unsigned char *adtl    = adtl_ck->data;
-		unsigned char *zero_me = NULL;
 
 		/* This condition should have been checked by the calling code. */
 		assert(adtl_len >= 4);
@@ -137,14 +136,6 @@ load_markers
 				return -1;
 			}
 
-			/* Zero me (if it ever gets set) will likely end up pointing to
-			 * the first character in the next chunk (i.e part of its header).
-			 * We always zero it after we have read the chunk ID. */
-			if (zero_me != NULL) {
-				zero_me[0] = 0;
-				zero_me = NULL;
-			}
-
 			/* Skip over the metadata ID */
 			meta_base += 4;
 			meta_size -= 4;
@@ -157,6 +148,11 @@ load_markers
 				marker->has_length = 1;
 				marker->length     = cop_ld_ule32(meta_base);
 			} else {
+				if (!meta_size || meta_base[meta_size-1] != 0) {
+					fprintf(stderr, "adtl contained note or labl chunks which were not null-terminated\n");
+					continue;
+				}
+
 				if (is_note) {
 					if (marker->desc != NULL) {
 						fprintf(stderr, "sample contained multiple note chunks for a single cue point\n");
@@ -170,20 +166,8 @@ load_markers
 					}
 					marker->name = (char *)meta_base;
 				}
-
-				/* If the text metadata chunk did not end with a NULL
-				 * terminator (which is required by the spec) - ensure that we
-				 * insert one at the end of the string. This may write into
-				 * the ID of the next chunk, so we delay writing it until
-				 * after we have read the next chunk ID. */
-				if (!meta_size || meta_base[meta_size-1] != 0) {
-					zero_me = meta_base + meta_size;
-				}
 			}
 		}
-
-		if (zero_me != NULL)
-			zero_me[0] = '\0';
 	}
 
 	/* Next we read the cue points into the marker list. */

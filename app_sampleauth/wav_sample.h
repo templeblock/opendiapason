@@ -58,11 +58,6 @@ struct wav_chunk {
 	struct wav_chunk *next;
 };
 
-struct wav_info {
-	uint_fast32_t     id;
-	unsigned char    *str;
-};
-
 #define WAV_SAMPLE_PCM16   (0)
 #define WAV_SAMPLE_PCM24   (1)
 #define WAV_SAMPLE_PCM32   (2)
@@ -81,24 +76,33 @@ struct wav_sample_info {
 };
 
 struct wav_sample_info_set {
-	unsigned                  nb_info;
-	struct wav_sample_info    info[MAX_INFO];
+	unsigned                   nb_info;
+	struct wav_sample_info     info[MAX_INFO];
 };
 
 struct wav_sample {
+	/* String metadata found in the info chunk. */
 	struct wav_sample_info_set info;
 
+	/* If there was a smpl chunk, this will always be non-zero and pitch-info
+	 * will be set to the midi pitch information. */
 	int                        has_pitch_info;
 	uint_fast64_t              pitch_info;
 
+	/* Positional based metadata loaded from the waveform. */
 	unsigned                   nb_marker;
 	struct wav_marker          markers[MAX_MARKERS];
 
+	/* The data format of the wave file. */
 	struct wav_sample_format   format;
 
+	/* The number of samples in the wave file and the pointer to its data. */
 	uint_fast32_t              data_frames;
 	void                      *data;
 
+	/* Chunks which were found in the wave file which cannot be handled by
+	 * this implementation. This is anything other than: INFO, fmt, data, cue,
+	 * smpl, adtl and fact. */
 	struct wav_chunk          *unsupported;
 };
 
