@@ -26,6 +26,8 @@
 #include "wav_sample.h"
 #include "wav_sample_write.h"
 
+#define MAX_SET_ITEMS             (32)
+
 #define FLAG_RESET                (1)
 #define FLAG_PRESERVE_UNKNOWN     (2)
 #define FLAG_PREFER_SMPL_LOOPS    (4)
@@ -394,9 +396,12 @@ void print_usage(FILE *f, const char *pname)
 	fprintf(f, "       Store pitch information in sampler chunk. The value is the MIDI note\n");
 	fprintf(f, "       multiplied by 2^32. This is to deal with the way the value is stored in\n");
 	fprintf(f, "       the smpl chunk.\n");
-	fprintf(f, "     info-ICOP ( copyright string )\n");
-	fprintf(f, "       Store copyright information for this sample in the RIFF standard INFO\n");
-	fprintf(f, "       chunk.\n");
+	fprintf(f, "     info-XXXX ( string )\n");
+	fprintf(f, "       Store string in the RIFF INFO chunk where XXXX is the ID of the info\n");
+	fprintf(f, "       key. See the RIFF MCI spec for a list of keys. Some include:\n");
+	fprintf(f, "         info-IARL   Archival location.\n");
+	fprintf(f, "         info-IART   Artist.\n");
+	fprintf(f, "         info-ICOP   Copyright information.\n");
 	fprintf(f, "6) If \"--output-metadata\" is specified, the metadata which has been loaded and\n");
 	fprintf(f, "   potentially modified will be dumped to stdout in a format which can be used\n");
 	fprintf(f, "   by \"--input-metadata\".\n");
@@ -717,16 +722,12 @@ static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, c
 struct wavauth_options {
 	const char  *input_filename;
 	const char  *output_filename;
-	unsigned     flags;
-	unsigned     nb_set_items;
-	int         *set_items;
-};
 
-static void free_options(struct wavauth_options *opts)
-{
-	if (opts->set_items != NULL)
-		free(opts->set_items);
-}
+	unsigned     flags;
+
+	unsigned     nb_set_items;
+	char        *set_items[MAX_SET_ITEMS];
+};
 
 static int handle_options(struct wavauth_options *opts, char **argv, unsigned argc)
 {
@@ -735,7 +736,6 @@ static int handle_options(struct wavauth_options *opts, char **argv, unsigned ar
 	opts->input_filename  = NULL;
 	opts->output_filename = NULL;
 	opts->flags           = 0;
-	opts->set_items       = (argc / 3 <= 0) ? NULL : malloc(sizeof(int) * (argc / 3));
 	opts->nb_set_items    = 0;
 
 	while (argc) {
@@ -776,6 +776,20 @@ static int handle_options(struct wavauth_options *opts, char **argv, unsigned ar
 			argv++;
 			argc--;
 			output_inplace = 1;
+		} else if (!strcmp(*argv, "--set")) {
+			argv++;
+			argc--;
+			if (!argc) {
+				fprintf(stderr, "--set requires an argument.\n");
+				return -1;
+			}
+			if (opts->nb_set_items >= MAX_SET_ITEMS) {
+				fprintf(stderr, "too many --set options\n");
+				return -1;
+			}
+			opts->set_items[opts->nb_set_items++] = *argv;
+			argv++;
+			argc--;
 		} else if (!strcmp(*argv, "--output")) {
 			argv++;
 			argc--;
@@ -902,40 +916,56 @@ static int dump_sample(const struct wav *wav, const char *filename, int store_cu
 	return 0;
 }
 
+static int is_whitespace(char c)
+{
+	return (c == ' ') && (c == '\t');
+}
+
+#define MAX_SET_ARGS 8
+
+static int handle_metastring(struct wav *wav, char *cmd_str)
+{
+	abort();
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	struct wavauth_options opts;
 	int err;
+	size_t sz;
+	unsigned char *buf;
+	struct wav wav;
+	unsigned i;
 
 	if (argc < 2) {
 		print_usage(stdout, argv[0]);
 		return 0;
 	}
-	
-	err = handle_options(&opts, argv + 1, argc - 1);
-	if (err == 0) {
-		size_t sz;
-		unsigned char *buf;
 
-		err = read_entire_file(opts.input_filename, &sz, &buf);
-		if (err == 0) {
-			struct wav wav;
+	if ((err = handle_options(&opts, argv + 1, argc - 1)) != 0)
+		return err;
 
-			err = load_wave_sample(&wav, buf, sz, opts.input_filename, opts.flags);
-			if (err == 0) {
+	if ((err = read_entire_file(opts.input_filename, &sz, &buf)) != 0)
+		return err;
 
+	err = load_wave_sample(&wav, buf, sz, opts.input_filename, opts.flags);
 
-				if (opts.flags & FLAG_OUTPUT_METADATA)
-					dump_metadata(&wav.sample);
-
-				if (err == 0 && opts.output_filename != NULL)
-					err = dump_sample(&wav, opts.output_filename, (opts.flags & FLAG_WRITE_CUE_LOOPS) == FLAG_WRITE_CUE_LOOPS);
-			}
-
-			free(buf);
-		}
+	if (err == 0 && (opts.flags & FLAG_INPUT_METADATA)) {
+		abort();
 	}
-	free_options(&opts);
+
+	for (i = 0; err == 0 && i < opts.nb_set_items; i++) {
+		err = handle_metastring(&wav, opts.set_items[i]);
+	}
+
+	if (err == 0 && (opts.flags & FLAG_OUTPUT_METADATA))
+		dump_metadata(&wav.sample);
+
+	if (err == 0 && opts.output_filename != NULL)
+		err = dump_sample(&wav, opts.output_filename, (opts.flags & FLAG_WRITE_CUE_LOOPS) == FLAG_WRITE_CUE_LOOPS);
+
+	free(buf);
 
 	return err;
 }
