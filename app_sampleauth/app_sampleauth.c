@@ -406,30 +406,8 @@ load_markers
 /*
  * Sample Parsing Options
  *
- * --reset
- *   Removes all chunks are unnecessary for wave operation. i.e. any chunk
- *   which is not "fmt", "fact" or "data" will be removed.
+ * --set [ string ]
  *
- * --preserve-unknown-chunks
- *   Chunks which were not parsable will be retained in the wave file. This
- *   is normally a bad idea. This flag has no effect when --reset is used.
- *
- * --prefer-smpl-loops
- * --prefer-cue-loops
- *   Specify whether loops should be read from smpl or cue when loops are
- *   found in both and the loops do not match. If neither is specified, the
- *   program will exit with an error message when this condition occurs unless
- *   the loops are all identical. This flag has no effect when --reset is
- *   used. Only has an effect if loops are found in both the cue and smpl
- *   chunks.
- *
- * --strip-event-metadata
- *   Forces text metadata related to markers and loops to be stripped from the
- *   sample. This flag has no effect when --reset is used.
- *
- * --set [ metadata item ] [ value ]
- *
- *   metadata item   value format
  *   loop            start-duration name description
  *   cue             position name description
  *   smpl-pitch      pitch integer
@@ -441,18 +419,6 @@ load_markers
  *   metadata elements (loops, markers), the behavior is to append to the
  *   metadata (which is useful for merging loops).
  *
- * --output-metadata
- *   This flag can be used to cause the final metadata to be output to stdout.
- *
- * --write-cue-loops
- *   Only has effect when writing an output file. The default behavior is to
- *   strip loops out of the cue chunk and only write them in the sampler chunk.
- *   This flag can be used to add them back in.
- *
- * --output-inplace
- * --output [ filename ]
- *   This flag can be used to save the processed file over the input file or
- *   to write it to a new file.
  *
  */
 
@@ -487,19 +453,40 @@ void print_usage(FILE *f, const char *pname)
 	fprintf(f, "   no loops in the cue chunk.\n");
 	fprintf(f, "3) If \"--strip-event-metadata\" is specified, any *textual* metadata which is\n");
 	fprintf(f, "   associated with loops or cue points will be deleted.\n");
-	fprintf(f, "4) If \"--output-metadata\" is specified, the metadata which has been loaded and\n");
+	fprintf(f, "4) If \"--input-metadata\" is specified, lines will be read from stdin and will\n");
+	fprintf(f, "   be treated as if each one were passed to the \"--set\" option (see below).\n");
+	fprintf(f, "5) The \"--set\" argument may be supplied multiple times to add or replace\n");
+	fprintf(f, "   metadata elements in the sample. A set string is a command followed by one\n");
+	fprintf(f, "   or more whitespace separated parameters. Parameters may be quoted. The\n");
+	fprintf(f, "   following commands exist:\n");
+	fprintf(f, "     loop ( start sample ) ( duration ) ( name ) ( description )\n");
+	fprintf(f, "       Add a loop to the sample. duration must be at least 1.\n");
+	fprintf(f, "     cue ( sample ) ( name ) ( description )\n");
+	fprintf(f, "       Add a cue point to the sample.\n");
+	fprintf(f, "     smpl-pitch ( smpl pitch )\n");
+	fprintf(f, "       Store pitch information in sampler chunk. The value is the MIDI note\n");
+	fprintf(f, "       multiplied by 2^32. This is to deal with the way the value is stored in\n");
+	fprintf(f, "       the smpl chunk.\n");
+	fprintf(f, "     info-icop ( copyright string )\n");
+	fprintf(f, "       Store copyright information for this sample in the RIFF standard INFO\n");
+	fprintf(f, "       chunk.\n");
+	fprintf(f, "6) If \"--output-metadata\" is specified, the metadata which has been loaded and\n");
 	fprintf(f, "   potentially modified will be dumped to stdout in a format which can be used\n");
 	fprintf(f, "   by \"--input-metadata\".\n");
-	fprintf(f, "5) If \"--output-inplace\" is specified, the input file will be re-written with\n");
+	fprintf(f, "7) If \"--output-inplace\" is specified, the input file will be re-written with\n");
 	fprintf(f, "   the updated metadata. Otherwise if \"--output\" is given, the output file will\n");
 	fprintf(f, "   be written to the specified filename. These flags cannot both be specified\n");
 	fprintf(f, "   simultaneously. The default behavior is that loops will only be written to\n");
 	fprintf(f, "   the smpl chunk and markers will only be written to the cue chunk as this is\n");
 	fprintf(f, "   the most compatible form. If \"--write-cue-loops\" is specified, loops will\n");
 	fprintf(f, "   also be stored in the cue chunk. This may assist in checking them in editor\n");
-	fprintf(f, "   software.\n");
-
-
+	fprintf(f, "   software.\n\n");
+	fprintf(f, "Examples:\n");
+	fprintf(f, "   %s --reset sample.wav --output-inplace\n", pname);
+	fprintf(f, "   Removes all non-essential wave chunks from sample.wav and overwrites the\n");
+	fprintf(f, "   existing file.\n\n");
+	fprintf(f, "   %s in.wav --output-metadata | grep '^smpl-pitch' | %s dest.wav --input-metadata --output-inplace\n", pname, pname);
+	fprintf(f, "   Copy the pitch information from in.wav into dest.wav.\n\n");
 }
 
 
