@@ -66,27 +66,24 @@ struct wav_info {
 #define WAV_SAMPLE_PCM32   (2)
 #define WAV_SAMPLE_FLOAT32 (3)
 
+struct wav_sample_format {
+	int           format;
+	uint_fast32_t sample_rate;
+	uint_fast16_t channels;
+	uint_fast16_t bits_per_sample;
+};
+
 struct wav_sample {
-	int                   has_pitch_info;
-	uint_fast64_t         pitch_info;
+	int                       has_pitch_info;
+	uint_fast64_t             pitch_info;
 
-	unsigned              nb_marker;
-	struct wav_marker     markers[MAX_MARKERS];
+	unsigned                  nb_marker;
+	struct wav_marker         markers[MAX_MARKERS];
 
-	struct wav_chunk     *fmt;
-	struct wav_chunk     *fact;
-	struct wav_chunk     *data;
+	struct wav_sample_format  format;
 
-#if 0
-	unsigned              nb_info;
-	struct wav_info       info[MAX_INFO];
-
-	uint_fast32_t         data_frames;
-	unsigned              nb_channels;
-	unsigned              bits_per_sample;
-	unsigned              container_size;
-	int                   format;
-#endif
+	struct wav_chunk         *fact;
+	struct wav_chunk         *data;
 
 	struct wav_chunk     *unsupported;
 };
@@ -104,6 +101,7 @@ struct wav {
 	struct wav_chunk     *cue;
 	struct wav_chunk     *smpl;
 
+	struct wav_chunk     *fmt;
 };
 
 #define RIFF_ID(c1, c2, c3, c4) \

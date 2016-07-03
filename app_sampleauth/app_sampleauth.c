@@ -473,6 +473,81 @@ static int read_entire_file(const char *filename, size_t *sz, unsigned char **bu
 	return -1;
 }
 
+static int load_sample_format(struct wav_sample_format *format, struct wav_chunk *fmt_ck)
+{
+	static const unsigned char EXTENSIBLE_GUID_SUFFIX[14] = {/* AA, BB, */ 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71};
+	const unsigned char *fmt_ptr = fmt_ck->data;
+	const size_t         fmt_sz  = fmt_ck->size;
+
+	uint_fast16_t format_tag;
+	uint_fast16_t container_bytes;
+	uint_fast16_t block_align;
+	uint_fast16_t channels;
+	uint_fast16_t bits_per_sample;
+
+	if (fmt_sz < 16) {
+		fprintf(stderr, "corrupt format chunk\n");
+		return -1;
+	}
+
+	format_tag              = cop_ld_ule16(fmt_ptr + 0);
+	channels                = cop_ld_ule16(fmt_ptr + 2);
+	format->sample_rate     = cop_ld_ule32(fmt_ptr + 4);
+	block_align             = cop_ld_ule16(fmt_ptr + 12);
+	bits_per_sample         = cop_ld_ule16(fmt_ptr + 14);
+	container_bytes         = (bits_per_sample + 7) / 8;
+
+	if (format_tag == 0xFFFEu) {
+		uint_fast16_t cbsz;
+
+		if  (   (bits_per_sample % 8)
+			||  (fmt_sz < 18)
+			||  ((cbsz = cop_ld_ule16(fmt_ptr + 16)) < 22)
+			||  (fmt_sz < 18 + cbsz)
+			) {
+			fprintf(stderr, "corrupt format chunk\n");
+			return -1;
+		}
+
+		bits_per_sample = cop_ld_ule16(fmt_ptr + 18);
+		format_tag      = cop_ld_ule16(fmt_ptr + 24);
+
+		if (memcmp(fmt_ptr + 26, EXTENSIBLE_GUID_SUFFIX, 14) != 0) {
+			fprintf(stderr, "unsupported wave format for sample data\n");
+			return -1;
+		}
+	}
+
+	format->bits_per_sample = bits_per_sample;
+	format->channels = channels;
+	if (format_tag == 1 && container_bytes == 2)
+		format->format = WAV_SAMPLE_PCM16;
+	else if (format_tag == 1 && container_bytes == 3)
+		format->format = WAV_SAMPLE_PCM24;
+	else if (format_tag == 1 && container_bytes == 4)
+		format->format = WAV_SAMPLE_PCM32;
+	else if (format_tag == 3 && container_bytes == 4)
+		format->format = WAV_SAMPLE_FLOAT32; 
+	else {
+		fprintf(stderr, "unsupported wave format for sample data\n");
+		return -1;
+	}
+
+	if (block_align != channels * container_bytes) {
+		fprintf(stderr, "unsupported wave format for sample data\n");
+		return -1;
+	}
+
+	if (bits_per_sample > container_bytes * 8) {
+		fprintf(stderr, "corrupt format chunk\n");
+		return -1;
+	}
+
+	printf("%u,%u,%u,%u\n", format->format, format->bits_per_sample, format->channels, format->sample_rate);
+
+	return 0;
+}
+
 static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, const char *filename, unsigned flags)
 {
 	uint_fast32_t riff_sz;
@@ -497,7 +572,7 @@ static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, c
 
 	wav->nb_chunks = 0;
 	wav->info = NULL;
-	wav->sample.fmt  = NULL;
+	wav->fmt  = NULL;
 	wav->sample.fact = NULL;
 	wav->sample.data = NULL;
 	wav->adtl = NULL;
@@ -546,7 +621,7 @@ static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, c
 					required_chunk = 1;
 					break;
 				case RIFF_ID('f', 'm', 't', ' '):
-					known_ptr = &wav->sample.fmt;
+					known_ptr = &wav->fmt;
 					required_chunk = 1;
 					break;
 				case RIFF_ID('f', 'a', 'c', 't'):
@@ -591,6 +666,14 @@ static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, c
 	}
 
 	*next_unsupported = NULL;
+
+	if (wav->fmt == NULL || wav->sample.data == NULL) {
+		fprintf(stderr, "the wave file is missing the format or data chunk\n");
+		return -1;
+	}
+
+	if (load_sample_format(&(wav->sample.format), wav->fmt))
+		return -1;
 
 	return load_markers(&(wav->sample), filename, flags, wav->adtl, wav->cue, wav->smpl);
 }
@@ -748,14 +831,14 @@ static int dump_sample(const struct wav *wav, const char *filename, int store_cu
 	FILE *f;
 
 	/* Find size of entire wave file then allocate memory for it. */
-	wav_sample_serialise(wav, NULL, &sz, store_cue_loops);
+	wav_sample_serialise(&wav->sample, NULL, &sz, store_cue_loops);
 	if ((data = malloc(sz)) == NULL) {
 		fprintf(stderr, "out of memory\n");
 		return -1;
 	}
 
 	/* Serialise the wave file to memory. */
-	wav_sample_serialise(wav, data, &sz2, store_cue_loops);
+	wav_sample_serialise(&wav->sample, data, &sz2, store_cue_loops);
 
 	/* serialise should always return the same size that was queried. */
 	assert(sz2 == sz);
