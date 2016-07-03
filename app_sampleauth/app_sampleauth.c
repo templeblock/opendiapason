@@ -540,8 +540,6 @@ static void load_info(struct wav_sample_info_set *infoset, struct wav_chunk *inf
 	unsigned char *buf;
 	size_t sz;
 
-	memset(infoset, 0, sizeof(*infoset));
-
 	sz   = info->size;
 	buf  = info->data;
 	assert(info->size >= 4);
@@ -712,6 +710,7 @@ static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, c
 		}
 	}
 
+	memset(&(wav->sample.info), 0, sizeof(wav->sample.info));
 	if (wav->info != NULL) {
 		load_info(&(wav->sample.info), wav->info);
 	}
