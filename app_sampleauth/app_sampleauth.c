@@ -275,12 +275,17 @@ load_markers
 		 * of these are non-zero, one set of them needs to be deleted as we
 		 * cannot determine which metadata is correct. */
 		for (i = 0, dest_idx = 0; i < wav->nb_marker; i++) {
+			/* Metadata not corresponding to an item. Remove. */
 			if (!wav->markers[i].in_smpl && !wav->markers[i].in_cue)
 				continue;
-			if (wav->markers[i].in_smpl && !wav->markers[i].in_cue)
-				nb_smpl_only_loops++;
-			if (!wav->markers[i].in_smpl && wav->markers[i].in_cue)
-				nb_cue_only_loops++;
+
+			if (wav->markers[i].has_length && wav->markers[i].length > 0) {
+				if (wav->markers[i].in_smpl && !wav->markers[i].in_cue)
+					nb_smpl_only_loops++;
+				if (!wav->markers[i].in_smpl && wav->markers[i].in_cue)
+					nb_cue_only_loops++;
+			}
+
 			if (i != dest_idx)
 				wav->markers[dest_idx] = wav->markers[i];
 			dest_idx++;
