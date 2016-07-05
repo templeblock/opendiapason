@@ -540,7 +540,7 @@ static int load_sample_format(struct wav_sample_format *format, struct wav_chunk
 	return 0;
 }
 
-static void load_info(struct wav_sample_info_set *infoset, struct wav_chunk *info)
+static int load_info(char **infoset, struct wav_chunk *info)
 {
 	unsigned char *buf;
 	size_t sz;
@@ -555,6 +555,7 @@ static void load_info(struct wav_sample_info_set *infoset, struct wav_chunk *inf
 		uint_fast32_t ckid = cop_ld_ule32(buf);
 		uint_fast32_t cksz = cop_ld_ule32(buf + 4);
 		char *base;
+		unsigned i;
 
 		sz   -= 8;
 		buf  += 8;
@@ -571,10 +572,20 @@ static void load_info(struct wav_sample_info_set *infoset, struct wav_chunk *inf
 		if (cksz == 0 || base[cksz-1] != 0)
 			continue;
 
-		infoset->info[infoset->nb_info].value = base;
-		infoset->info[infoset->nb_info].id    = ckid;
-		infoset->nb_info++;
+		for (i = 0; i < NB_SUPPORTED_INFO_TAGS; i++) {
+			if (SUPPORTED_INFO_TAGS[i] == ckid) {
+				infoset[i] = base;
+				break;
+			}
+		}
+
+		if (i == NB_SUPPORTED_INFO_TAGS) {
+			fprintf(stderr,"unsupported RIFF info tag found\n");
+			return -1;
+		}
 	}
+
+	return 0;
 }
 
 static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, const char *filename, unsigned flags)
@@ -715,9 +726,10 @@ static int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, c
 		}
 	}
 
-	memset(&(wav->sample.info), 0, sizeof(wav->sample.info));
+	memset(wav->sample.info, 0, sizeof(wav->sample.info));
 	if (wav->info != NULL) {
-		load_info(&(wav->sample.info), wav->info);
+		if (load_info(wav->sample.info, wav->info))
+			return -1;
 	}
 
 	return load_markers(&(wav->sample), filename, flags, wav->adtl, wav->cue, wav->smpl);
@@ -858,9 +870,11 @@ static void dump_metadata(const struct wav_sample *wav)
 {
 	unsigned i;
 
-	for (i = 0; i < wav->info.nb_info; i++) {
-		uint_fast32_t id = wav->info.info[i].id;
-		printf("info-%c%c%c%c ", id & 0xFF, (id >> 8) & 0xFF, (id >> 16) & 0xFF, (id >> 24) & 0xFF); printstr(wav->info.info[i].value); printf("\n");
+	for (i = 0; i < NB_SUPPORTED_INFO_TAGS; i++) {
+		if (wav->info[i] != NULL) {
+			uint_fast32_t id = SUPPORTED_INFO_TAGS[i];
+			printf("info-%c%c%c%c ", id & 0xFF, (id >> 8) & 0xFF, (id >> 16) & 0xFF, (id >> 24) & 0xFF); printstr(wav->info[i]); printf("\n");
+		}
 	}
 
 	if (wav->has_pitch_info)
@@ -922,15 +936,186 @@ static int dump_sample(const struct wav *wav, const char *filename, int store_cu
 
 static int is_whitespace(char c)
 {
-	return (c == ' ') && (c == '\t');
+	return (c == ' ') || (c == '\t') || (c == '\n') || (c == '\r');
 }
 
-#define MAX_SET_ARGS 8
+static char *handle_identifier(char **cmd_str)
+{
+	char *s = *cmd_str;
+	char *t = s;
+
+	if (*t == '\0' || is_whitespace(*t))
+		return NULL;
+
+	do {
+		t++;
+	} while (*t != '\0' && !is_whitespace(*t));
+
+	if (*t != '\0') {
+		*t++ = '\0';
+	}
+	*cmd_str = t;
+
+	return s;
+}
+
+static void eat_whitespace(char **cmd_str)
+{
+	char *s = *cmd_str;
+	while (is_whitespace(*s))
+		s++;
+	*cmd_str = s;
+}
+
+static int handle_str(char **output_str, char **cmd_str)
+{
+	char *s        = *cmd_str;
+
+	if (*s == '\"') {
+		char *ret_ptr = s;
+		char c        = *++s;
+		*output_str   = ret_ptr;
+
+		while (c != '\0' && c != '\"') {
+			if (c == '\\') {
+				c = *++s;
+				switch (c) {
+				case '\"':
+				case '\\':
+					break;
+				case 'n':
+					c = '\n';
+					break;
+				case '\0':
+				default:
+					fprintf(stderr, "incomplete or invalid escape sequence\n");
+					return -1;
+				}
+				*ret_ptr++ = c;
+				c = *++s;
+			} else {
+				*ret_ptr++ = c;
+				c = *++s;
+			}
+		}
+
+		if (c != '\"') {
+			fprintf(stderr, "unterminated string\n");
+			return -1;
+		}
+
+		s++;
+		*ret_ptr++ = '\0';
+	} else {
+		if ((*output_str = handle_identifier(&s)) == NULL) {
+			fprintf(stderr, "expected identifier\n");
+			return -1;
+		}
+	}
+
+	*cmd_str = s;
+	return 0;
+}
+
+static int handle_info(struct wav *wav, char *ck, char *cmd_str)
+{
+	if (strlen(ck) == 4) {
+		unsigned i;
+		uint_fast32_t id = ((uint_fast32_t)ck[0]) | (((uint_fast32_t)ck[1]) << 8) | (((uint_fast32_t)ck[2]) << 16) | (((uint_fast32_t)ck[3]) << 24);
+		for (i = 0; i < NB_SUPPORTED_INFO_TAGS; i++) {
+			if (id == SUPPORTED_INFO_TAGS[i]) {
+				if (*cmd_str == '\0') {
+					wav->sample.info[i] = NULL;
+				} else if (handle_str(&(wav->sample.info[i]), &cmd_str)) {
+					return -1;
+				}
+				eat_whitespace(&cmd_str);
+				if (*cmd_str != '\0') {
+					fprintf(stderr, "info set command requires one argument\n");
+					return -1;
+				}
+				return 0;
+			}
+		}
+	}
+	fprintf(stderr, "'%s' is an unsupported INFO chunk\n", ck);
+	return -1;
+}
+
+static int handle_int(uint_fast64_t *ival, char **cmd_str)
+{
+	char *s = *cmd_str;
+	uint_fast64_t rv = 0;
+	if (*s < '0' || *s > '9') {
+		fprintf(stderr, "expected a numeric digit\n");
+		return -1;
+	}
+	do {
+		rv = rv * 10 + (*s++ - '0');
+	} while (*s >= '0' && *s <= '9');
+	*ival    = rv;
+	*cmd_str = s;
+	return 0;
+}
+
+static int handle_loop(struct wav *wav, char *cmd_str)
+{
+	return 0;
+}
+static int handle_cue(struct wav *wav, char *cmd_str)
+{
+	return 0;
+}
+static int handle_smplpitch(struct wav *wav, char *cmd_str)
+{
+	uint_fast64_t pitch;
+
+	if (*cmd_str == '\0') {
+		wav->sample.has_pitch_info = 0;
+		return 0;
+	}
+
+	if (handle_int(&pitch, &cmd_str))
+		return -1;
+
+	eat_whitespace(&cmd_str);
+
+	if (*cmd_str != '\0') {
+		fprintf(stderr, "smpl-pitch command requires one numeric argument\n");
+		return -1;
+	}
+
+	wav->sample.pitch_info = pitch;
+	wav->sample.has_pitch_info = 1;
+
+	return 0;
+}
 
 static int handle_metastring(struct wav *wav, char *cmd_str)
 {
-	abort();
-	return 0;
+	char *metastring = cmd_str;
+	char *command;
+	
+	eat_whitespace(&cmd_str);
+
+	if ((command = handle_identifier(&cmd_str)) == NULL) {
+		fprintf(stderr, "could not parse meta string '%s'\n", metastring);
+		return -1;
+	}
+
+	eat_whitespace(&cmd_str);
+
+	if (!memcmp(command, "info-", 5))
+		return handle_info(wav, command+5, cmd_str);
+	if (!strcmp(command, "loop"))
+		return handle_loop(wav, cmd_str);
+	if (!strcmp(command, "cue"))
+		return handle_cue(wav, cmd_str);
+	if (!strcmp(command, "smpl-pitch"))
+		return handle_smplpitch(wav, cmd_str);
+
+	fprintf(stderr, "Unknown set command: '%s'\n", command);
+	return -1;
 }
 
 int main(int argc, char *argv[])

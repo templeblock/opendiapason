@@ -29,8 +29,6 @@
 #define MAX_MARKERS (64)
 #define MAX_CHUNKS  (32)
 
-#define MAX_INFO    (64)
-
 struct wav_marker {
 	/* Cue ID */
 	uint_fast32_t         id;
@@ -70,19 +68,44 @@ struct wav_sample_format {
 	uint_fast16_t bits_per_sample;
 };
 
-struct wav_sample_info {
-	uint_fast32_t  id;
-	const char    *value;
+#define RIFF_ID(c1, c2, c3, c4) \
+	(   ((uint_fast32_t)(c1)) \
+	|   (((uint_fast32_t)(c2)) << 8) \
+	|   (((uint_fast32_t)(c3)) << 16) \
+	|   (((uint_fast32_t)(c4)) << 24) \
+	)
+
+static COP_ATTR_UNUSED uint_fast32_t SUPPORTED_INFO_TAGS[] =
+{	RIFF_ID('I', 'A', 'R', 'L')
+,	RIFF_ID('I', 'A', 'R', 'T')
+,	RIFF_ID('I', 'C', 'M', 'S')
+,	RIFF_ID('I', 'C', 'M', 'T')
+,	RIFF_ID('I', 'C', 'O', 'P')
+,	RIFF_ID('I', 'C', 'R', 'D')
+,	RIFF_ID('I', 'C', 'R', 'P')
+,	RIFF_ID('I', 'D', 'I', 'M')
+,	RIFF_ID('I', 'D', 'P', 'I')
+,	RIFF_ID('I', 'E', 'N', 'G')
+,	RIFF_ID('I', 'G', 'N', 'R')
+,	RIFF_ID('I', 'K', 'E', 'Y')
+,	RIFF_ID('I', 'L', 'G', 'T')
+,	RIFF_ID('I', 'M', 'E', 'D')
+,	RIFF_ID('I', 'N', 'A', 'M')
+,	RIFF_ID('I', 'P', 'L', 'T')
+,	RIFF_ID('I', 'P', 'R', 'D')
+,	RIFF_ID('I', 'S', 'B', 'J')
+,	RIFF_ID('I', 'S', 'F', 'T')
+,	RIFF_ID('I', 'S', 'H', 'P')
+,	RIFF_ID('I', 'S', 'R', 'C')
+,	RIFF_ID('I', 'S', 'R', 'F')
+,	RIFF_ID('I', 'T', 'C', 'H')
 };
 
-struct wav_sample_info_set {
-	unsigned                   nb_info;
-	struct wav_sample_info     info[MAX_INFO];
-};
+#define NB_SUPPORTED_INFO_TAGS (sizeof(SUPPORTED_INFO_TAGS) / sizeof(SUPPORTED_INFO_TAGS[0]))
 
 struct wav_sample {
 	/* String metadata found in the info chunk. */
-	struct wav_sample_info_set info;
+	char                      *info[NB_SUPPORTED_INFO_TAGS];
 
 	/* If there was a smpl chunk, this will always be non-zero and pitch-info
 	 * will be set to the midi pitch information. */
@@ -121,13 +144,6 @@ struct wav {
 
 	struct wav_chunk     *fmt;
 };
-
-#define RIFF_ID(c1, c2, c3, c4) \
-	(   ((uint_fast32_t)(c1)) \
-	|   (((uint_fast32_t)(c2)) << 8) \
-	|   (((uint_fast32_t)(c3)) << 16) \
-	|   (((uint_fast32_t)(c4)) << 24) \
-	)
 
 static COP_ATTR_UNUSED uint_fast16_t get_container_size(int format)
 {

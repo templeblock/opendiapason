@@ -239,14 +239,14 @@ static void serialise_zstrblob(uint_fast32_t id, const char *value, unsigned cha
 		serialise_blob(id, (const unsigned char *)value, len + 1, buf, size);
 }
 
-static void serialise_info(const struct wav_sample_info_set *infoset, unsigned char *buf, size_t *size)
+static void serialise_info(char * const *infoset, unsigned char *buf, size_t *size)
 {
 	size_t old_sz = *size;
 	size_t new_sz = old_sz + 12;
 	unsigned i;
 
-	for (i = 0; i < infoset->nb_info; i++) {
-		serialise_zstrblob(infoset->info[i].id, infoset->info[i].value, buf, &new_sz);
+	for (i = 0; i < NB_SUPPORTED_INFO_TAGS; i++) {
+		serialise_zstrblob(SUPPORTED_INFO_TAGS[i], infoset[i], buf, &new_sz);
 	}
 
 	/* Only bother serialising if there were actually metadata items
@@ -268,7 +268,7 @@ void wav_sample_serialise(const struct wav_sample *wav, unsigned char *buf, size
 	struct wav_chunk *ck;
 	*size = 12;
 
-	serialise_info(&(wav->info), buf, size);
+	serialise_info(wav->info, buf, size);
 	if (serialise_format(&wav->format, buf, size)) {
 		serialise_fact(wav->data_frames, buf, size);
 	}
