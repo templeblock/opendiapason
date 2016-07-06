@@ -353,118 +353,6 @@ load_markers
 	return 0;
 }
 
-void print_usage(FILE *f, const char *pname)
-{
-	fprintf(f, "Usage:\n  %s\n", pname);
-	fprintf(f, "    [ \"--output-inplace\" | ( \"--output\" ( filename ) ) ]\n");
-	fprintf(f, "    [ \"--output-metadata\" ] [ \"--reset\" ] [ \"--write-cue-loops\" ]\n");
-	fprintf(f, "    [ \"--prefer-cue-loops\" | \"--prefer-smpl-loops\" ]\n");
-	fprintf(f, "    [ \"--strip-event-metadata\" ] ( sample filename )\n\n");
-	fprintf(f, "This tool is used to modify or repair the metadata associated with a sample. It\n");
-	fprintf(f, "operates according to the following flow:\n");
-	fprintf(f, "1) The sample is loaded. If \"--reset\" is specified, all known chunks which are\n");
-	fprintf(f, "   not required for the sample to be considered waveform audio will be deleted.\n");
-	fprintf(f, "   Chunks which are not known are always deleted unless the\n");
-	fprintf(f, "   \"--preserve-unknown-chunks\" flag is specified. The known and required chunks\n");
-	fprintf(f, "   are 'fmt ', 'fact' and 'data'. The known and unrequired chunks are 'INFO',\n");
-	fprintf(f, "   'adtl', 'smpl', 'cue '.\n");
-	fprintf(f, "2) The 'smpl', 'cue ' and 'adtl' chunks (if any exist) will be parsed to obtain\n");
-	fprintf(f, "   loop and release markers. Tools and audio editors which manipulate these\n");
-	fprintf(f, "   chunks have proven to occasionally corrupt the data in them. This tool uses\n");
-	fprintf(f, "   some (safe) heuristics to correct these issues. There is one issue which\n");
-	fprintf(f, "   cannot be corrected automatically: when there are loops in both the cue and\n");
-	fprintf(f, "   smpl chunks which do not match. When this happens, the default behavior is to\n");
-	fprintf(f, "   abort the load process and terminate with an error message which details what\n");
-	fprintf(f, "   the different loops are. If the \"--prefer-cue-loops\" flag is given, loops\n");
-	fprintf(f, "   will be taken from the cue chunk. If the \"--prefer-smpl-loops\" flag is\n");
-	fprintf(f, "   specified, loops will be taken from the smpl chunk. These two flags only have\n");
-	fprintf(f, "   an effect when there is actually an unresolvable issue. i.e. specifying\n");
-	fprintf(f, "   \"--prefer-cue-loops\" will not remove loops from the smpl chunk if there are\n");
-	fprintf(f, "   no loops in the cue chunk.\n");
-	fprintf(f, "3) If \"--strip-event-metadata\" is specified, any *textual* metadata which is\n");
-	fprintf(f, "   associated with loops or cue points will be deleted.\n");
-	fprintf(f, "4) If \"--input-metadata\" is specified, lines will be read from stdin and will\n");
-	fprintf(f, "   be treated as if each one were passed to the \"--set\" option (see below).\n");
-	fprintf(f, "5) The \"--set\" argument may be supplied multiple times to add or replace\n");
-	fprintf(f, "   metadata elements in the sample. A set string is a command followed by one\n");
-	fprintf(f, "   or more whitespace separated parameters. Parameters may be quoted. The\n");
-	fprintf(f, "   following commands exist:\n");
-	fprintf(f, "     loop ( start sample ) ( duration ) ( name ) ( description )\n");
-	fprintf(f, "       Add a loop to the sample. duration must be at least 1.\n");
-	fprintf(f, "     cue ( sample ) ( name ) ( description )\n");
-	fprintf(f, "       Add a cue point to the sample.\n");
-	fprintf(f, "     smpl-pitch [ smpl pitch ]\n");
-	fprintf(f, "       Store pitch information in sampler chunk. The value is the MIDI note\n");
-	fprintf(f, "       multiplied by 2^32. This is to deal with the way the value is stored in\n");
-	fprintf(f, "       the smpl chunk. If the argument is not supplied, the pitch information\n");
-	fprintf(f, "       will be removed (this has no effect if the sample contains loops).\n");
-	fprintf(f, "     info-XXXX [ string ]\n");
-	fprintf(f, "       Store string in the RIFF INFO chunk where XXXX is the ID of the info\n");
-	fprintf(f, "       key. See the RIFF MCI spec for a list of keys. Some include:\n");
-	fprintf(f, "         info-IARL   Archival location.\n");
-	fprintf(f, "         info-IART   Artist.\n");
-	fprintf(f, "         info-ICOP   Copyright information.\n");
-	fprintf(f, "       If the argument is not supplied, the metadata item will be removed.\n");
-	fprintf(f, "6) If \"--output-metadata\" is specified, the metadata which has been loaded and\n");
-	fprintf(f, "   potentially modified will be dumped to stdout in a format which can be used\n");
-	fprintf(f, "   by \"--input-metadata\".\n");
-	fprintf(f, "7) If \"--output-inplace\" is specified, the input file will be re-written with\n");
-	fprintf(f, "   the updated metadata. Otherwise if \"--output\" is given, the output file will\n");
-	fprintf(f, "   be written to the specified filename. These flags cannot both be specified\n");
-	fprintf(f, "   simultaneously. The default behavior is that loops will only be written to\n");
-	fprintf(f, "   the smpl chunk and markers will only be written to the cue chunk as this is\n");
-	fprintf(f, "   the most compatible form. If \"--write-cue-loops\" is specified, loops will\n");
-	fprintf(f, "   also be stored in the cue chunk. This may assist in checking them in editor\n");
-	fprintf(f, "   software.\n\n");
-	fprintf(f, "Examples:\n");
-	fprintf(f, "   %s --reset sample.wav --output-inplace\n", pname);
-	fprintf(f, "   Removes all non-essential wave chunks from sample.wav and overwrites the\n");
-	fprintf(f, "   existing file.\n\n");
-	fprintf(f, "   %s in.wav --output-metadata | grep '^smpl-pitch' | %s dest.wav --input-metadata --output-inplace\n", pname, pname);
-	fprintf(f, "   Copy the pitch information from in.wav into dest.wav.\n\n");
-}
-
-
-static int read_entire_file(const char *filename, size_t *sz, unsigned char **buf)
-{
-	FILE *f = fopen(filename, "rb");
-	if (f == NULL) {
-		fprintf(stderr, "could not open file %s\n", filename);
-		return -1;
-	}
-
-	if (fseek(f, 0, SEEK_END) == 0) {
-		long fsz = ftell(f);
-		if (fsz >= 0) {
-			if (fseek(f, 0, SEEK_SET) == 0) {
-				unsigned char *fbuf;
-				fbuf = malloc(fsz+1);
-				if (fbuf != NULL) {
-					if (fread(fbuf, 1, fsz, f) == fsz) {
-						*sz = fsz;
-						*buf = fbuf;
-						return 0;
-					} else {
-						free(fbuf);
-						fprintf(stderr, "could not read %s\n", filename);
-					}
-				} else {
-					fprintf(stderr, "out of memory\n");
-				}
-			} else {
-				fprintf(stderr, "could not seek %s\n", filename);
-			}
-		} else {
-			fprintf(stderr, "could not ftell %s\n", filename);
-		}
-	} else {
-		fprintf(stderr, "could not seek eof on %s\n", filename);
-	}
-
-	fclose(f);
-	return -1;
-}
-
 static int load_sample_format(struct wav_sample_format *format, struct wav_chunk *fmt_ck)
 {
 	static const unsigned char EXTENSIBLE_GUID_SUFFIX[14] = {/* AA, BB, */ 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71};
@@ -1180,6 +1068,117 @@ static int handle_metastring(struct wav *wav, char *cmd_str)
 
 	fprintf(stderr, "Unknown set command: '%s'\n", command);
 	return -1;
+}
+
+static int read_entire_file(const char *filename, size_t *sz, unsigned char **buf)
+{
+	FILE *f = fopen(filename, "rb");
+	if (f == NULL) {
+		fprintf(stderr, "could not open file %s\n", filename);
+		return -1;
+	}
+
+	if (fseek(f, 0, SEEK_END) == 0) {
+		long fsz = ftell(f);
+		if (fsz >= 0) {
+			if (fseek(f, 0, SEEK_SET) == 0) {
+				unsigned char *fbuf;
+				fbuf = malloc(fsz+1);
+				if (fbuf != NULL) {
+					if (fread(fbuf, 1, fsz, f) == fsz) {
+						*sz = fsz;
+						*buf = fbuf;
+						return 0;
+					} else {
+						free(fbuf);
+						fprintf(stderr, "could not read %s\n", filename);
+					}
+				} else {
+					fprintf(stderr, "out of memory\n");
+				}
+			} else {
+				fprintf(stderr, "could not seek %s\n", filename);
+			}
+		} else {
+			fprintf(stderr, "could not ftell %s\n", filename);
+		}
+	} else {
+		fprintf(stderr, "could not seek eof on %s\n", filename);
+	}
+
+	fclose(f);
+	return -1;
+}
+
+void print_usage(FILE *f, const char *pname)
+{
+	fprintf(f, "Usage:\n  %s\n", pname);
+	fprintf(f, "    [ \"--output-inplace\" | ( \"--output\" ( filename ) ) ]\n");
+	fprintf(f, "    [ \"--output-metadata\" ] [ \"--reset\" ] [ \"--write-cue-loops\" ]\n");
+	fprintf(f, "    [ \"--prefer-cue-loops\" | \"--prefer-smpl-loops\" ]\n");
+	fprintf(f, "    [ \"--strip-event-metadata\" ] ( sample filename )\n\n");
+	fprintf(f, "This tool is used to modify or repair the metadata associated with a sample. It\n");
+	fprintf(f, "operates according to the following flow:\n");
+	fprintf(f, "1) The sample is loaded. If \"--reset\" is specified, all known chunks which are\n");
+	fprintf(f, "   not required for the sample to be considered waveform audio will be deleted.\n");
+	fprintf(f, "   Chunks which are not known are always deleted unless the\n");
+	fprintf(f, "   \"--preserve-unknown-chunks\" flag is specified. The known and required chunks\n");
+	fprintf(f, "   are 'fmt ', 'fact' and 'data'. The known and unrequired chunks are 'INFO',\n");
+	fprintf(f, "   'adtl', 'smpl', 'cue '.\n");
+	fprintf(f, "2) The 'smpl', 'cue ' and 'adtl' chunks (if any exist) will be parsed to obtain\n");
+	fprintf(f, "   loop and release markers. Tools and audio editors which manipulate these\n");
+	fprintf(f, "   chunks have proven to occasionally corrupt the data in them. This tool uses\n");
+	fprintf(f, "   some (safe) heuristics to correct these issues. There is one issue which\n");
+	fprintf(f, "   cannot be corrected automatically: when there are loops in both the cue and\n");
+	fprintf(f, "   smpl chunks which do not match. When this happens, the default behavior is to\n");
+	fprintf(f, "   abort the load process and terminate with an error message which details what\n");
+	fprintf(f, "   the different loops are. If the \"--prefer-cue-loops\" flag is given, loops\n");
+	fprintf(f, "   will be taken from the cue chunk. If the \"--prefer-smpl-loops\" flag is\n");
+	fprintf(f, "   specified, loops will be taken from the smpl chunk. These two flags only have\n");
+	fprintf(f, "   an effect when there is actually an unresolvable issue. i.e. specifying\n");
+	fprintf(f, "   \"--prefer-cue-loops\" will not remove loops from the smpl chunk if there are\n");
+	fprintf(f, "   no loops in the cue chunk.\n");
+	fprintf(f, "3) If \"--strip-event-metadata\" is specified, any *textual* metadata which is\n");
+	fprintf(f, "   associated with loops or cue points will be deleted.\n");
+	fprintf(f, "4) If \"--input-metadata\" is specified, lines will be read from stdin and will\n");
+	fprintf(f, "   be treated as if each one were passed to the \"--set\" option (see below).\n");
+	fprintf(f, "5) The \"--set\" argument may be supplied multiple times to add or replace\n");
+	fprintf(f, "   metadata elements in the sample. A set string is a command followed by one\n");
+	fprintf(f, "   or more whitespace separated parameters. Parameters may be quoted. The\n");
+	fprintf(f, "   following commands exist:\n");
+	fprintf(f, "     loop ( start sample ) ( duration ) ( name ) ( description )\n");
+	fprintf(f, "       Add a loop to the sample. duration must be at least 1.\n");
+	fprintf(f, "     cue ( sample ) ( name ) ( description )\n");
+	fprintf(f, "       Add a cue point to the sample.\n");
+	fprintf(f, "     smpl-pitch [ smpl pitch ]\n");
+	fprintf(f, "       Store pitch information in sampler chunk. The value is the MIDI note\n");
+	fprintf(f, "       multiplied by 2^32. This is to deal with the way the value is stored in\n");
+	fprintf(f, "       the smpl chunk. If the argument is not supplied, the pitch information\n");
+	fprintf(f, "       will be removed (this has no effect if the sample contains loops).\n");
+	fprintf(f, "     info-XXXX [ string ]\n");
+	fprintf(f, "       Store string in the RIFF INFO chunk where XXXX is the ID of the info\n");
+	fprintf(f, "       key. See the RIFF MCI spec for a list of keys. Some include:\n");
+	fprintf(f, "         info-IARL   Archival location.\n");
+	fprintf(f, "         info-IART   Artist.\n");
+	fprintf(f, "         info-ICOP   Copyright information.\n");
+	fprintf(f, "       If the argument is not supplied, the metadata item will be removed.\n");
+	fprintf(f, "6) If \"--output-metadata\" is specified, the metadata which has been loaded and\n");
+	fprintf(f, "   potentially modified will be dumped to stdout in a format which can be used\n");
+	fprintf(f, "   by \"--input-metadata\".\n");
+	fprintf(f, "7) If \"--output-inplace\" is specified, the input file will be re-written with\n");
+	fprintf(f, "   the updated metadata. Otherwise if \"--output\" is given, the output file will\n");
+	fprintf(f, "   be written to the specified filename. These flags cannot both be specified\n");
+	fprintf(f, "   simultaneously. The default behavior is that loops will only be written to\n");
+	fprintf(f, "   the smpl chunk and markers will only be written to the cue chunk as this is\n");
+	fprintf(f, "   the most compatible form. If \"--write-cue-loops\" is specified, loops will\n");
+	fprintf(f, "   also be stored in the cue chunk. This may assist in checking them in editor\n");
+	fprintf(f, "   software.\n\n");
+	fprintf(f, "Examples:\n");
+	fprintf(f, "   %s --reset sample.wav --output-inplace\n", pname);
+	fprintf(f, "   Removes all non-essential wave chunks from sample.wav and overwrites the\n");
+	fprintf(f, "   existing file.\n\n");
+	fprintf(f, "   %s in.wav --output-metadata | grep '^smpl-pitch' | %s dest.wav --input-metadata --output-inplace\n", pname, pname);
+	fprintf(f, "   Copy the pitch information from in.wav into dest.wav.\n\n");
 }
 
 int main(int argc, char *argv[])
