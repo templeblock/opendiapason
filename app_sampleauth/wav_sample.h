@@ -30,8 +30,12 @@
 #define MAX_CHUNKS  (32)
 
 struct wav_marker {
-	/* Cue ID */
+	/* id, in_cue and in_smpl are used while the markers are being loaded.
+	 * They are not used by the serialisation code and are free to be read
+	 * from and written to by the calling code for other purposes. */
 	uint_fast32_t         id;
+	int                   in_cue;
+	int                   in_smpl;
 
 	/* From labl */
 	char                 *name;
@@ -43,9 +47,7 @@ struct wav_marker {
 	uint_fast32_t         length;
 	int                   has_length;
 
-	/* Is this marker in smpl. */
-	int                   in_cue;
-	int                   in_smpl;
+	/* Sample offset this marker applies at. */
 	uint_fast32_t         position;
 };
 

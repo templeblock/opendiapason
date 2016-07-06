@@ -69,6 +69,27 @@ get_marker
 	return marker;
 }
 
+static void sort_and_reassign_ids(struct wav_sample *wav)
+{
+	unsigned i;
+	for (i = 1; i < wav->nb_marker; i++) {
+		unsigned j;
+		for (j = i; j < wav->nb_marker; j++) {
+			int i_loop = wav->markers[i-1].has_length && wav->markers[i-1].length > 0;
+			int j_loop = wav->markers[j].has_length && wav->markers[j].length > 0;
+			uint_fast64_t i_key = (((uint_fast64_t)wav->markers[i-1].position) << 32) | (wav->markers[i-1].length ^ 0xFFFFFFFF);
+			uint_fast64_t j_key = (((uint_fast64_t)wav->markers[j].position) << 32) | (wav->markers[j].length ^ 0xFFFFFFFF);
+			if ((j_loop && !i_loop) || (j_loop == i_loop && j_key < i_key)) {
+				struct wav_marker m = wav->markers[i-1];
+				wav->markers[i-1] = wav->markers[j];
+				wav->markers[j] = m;
+			}
+		}
+		wav->markers[i-1].id = i;
+	}
+}
+
+
 static
 int
 load_markers
@@ -330,25 +351,8 @@ load_markers
 	}
 
 	/* Sort the marker list. Bubble-it. */
-	for (i = 1; i < wav->nb_marker; i++) {
-		unsigned j;
-		for (j = i; j < wav->nb_marker; j++) {
-			int i_loop = wav->markers[i-1].has_length && wav->markers[i-1].length > 0;
-			int j_loop = wav->markers[j].has_length && wav->markers[j].length > 0;
-			uint_fast64_t i_key = (((uint_fast64_t)wav->markers[i-1].position) << 32) | (wav->markers[i-1].length ^ 0xFFFFFFFF);
-			uint_fast64_t j_key = (((uint_fast64_t)wav->markers[j].position) << 32) | (wav->markers[j].length ^ 0xFFFFFFFF);
-			if ((j_loop && !i_loop) || (j_loop == i_loop && j_key < i_key)) {
-				struct wav_marker m = wav->markers[i-1];
-				wav->markers[i-1] = wav->markers[j];
-				wav->markers[j] = m;
-			}
-		}
-	}
-
-	/* Reassign IDs and strip text metadata if requested. */
-	for (i = 0; i < wav->nb_marker; i++) {
-		wav->markers[i].id = i + 1;
-		if (flags & FLAG_STRIP_EVENT_METADATA) {
+	if (flags & FLAG_STRIP_EVENT_METADATA) {
+		for (i = 0; i < wav->nb_marker; i++) {
 			wav->markers[i].name = NULL;
 			wav->markers[i].desc = NULL;
 		}
@@ -852,8 +856,8 @@ static int handle_options(struct wavauth_options *opts, char **argv, unsigned ar
 
 void printstr(const char *s)
 {
-	printf("\"");
 	if (s != NULL) {
+		printf("\"");
 		while (*s != '\0') {
 			if (*s == '\"') {
 				printf("\\\"");
@@ -864,8 +868,10 @@ void printstr(const char *s)
 			}
 			s++;
 		}
+		printf("\"");
+	} else {
+		printf("null");
 	}
-	printf("\"");
 }
 
 static void dump_metadata(const struct wav_sample *wav)
@@ -969,89 +975,93 @@ static void eat_whitespace(char **cmd_str)
 	*cmd_str = s;
 }
 
-static int handle_str(char **output_str, char **cmd_str)
+static int expect_whitespace(char **cmd_str)
 {
-	char *s        = *cmd_str;
-
-	if (*s == '\"') {
-		char *ret_ptr = s;
-		char c        = *++s;
-		*output_str   = ret_ptr;
-
-		while (c != '\0' && c != '\"') {
-			if (c == '\\') {
-				c = *++s;
-				switch (c) {
-				case '\"':
-				case '\\':
-					break;
-				case 'n':
-					c = '\n';
-					break;
-				case '\0':
-				default:
-					fprintf(stderr, "incomplete or invalid escape sequence\n");
-					return -1;
-				}
-				*ret_ptr++ = c;
-				c = *++s;
-			} else {
-				*ret_ptr++ = c;
-				c = *++s;
-			}
-		}
-
-		if (c != '\"') {
-			fprintf(stderr, "unterminated string\n");
-			return -1;
-		}
-
-		s++;
-		*ret_ptr++ = '\0';
-	} else {
-		if ((*output_str = handle_identifier(&s)) == NULL) {
-			fprintf(stderr, "expected identifier\n");
-			return -1;
-		}
-	}
-
+	char *s = *cmd_str;
+	if (!is_whitespace(*s))
+		return -1;
+	while (is_whitespace(*++s));
 	*cmd_str = s;
 	return 0;
 }
 
-static int handle_info(struct wav *wav, char *ck, char *cmd_str)
+static int expect_string(char **output_str, char **cmd_str)
 {
-	if (strlen(ck) == 4) {
-		unsigned i;
-		uint_fast32_t id = ((uint_fast32_t)ck[0]) | (((uint_fast32_t)ck[1]) << 8) | (((uint_fast32_t)ck[2]) << 16) | (((uint_fast32_t)ck[3]) << 24);
-		for (i = 0; i < NB_SUPPORTED_INFO_TAGS; i++) {
-			if (id == SUPPORTED_INFO_TAGS[i]) {
-				if (*cmd_str == '\0') {
-					wav->sample.info[i] = NULL;
-				} else if (handle_str(&(wav->sample.info[i]), &cmd_str)) {
-					return -1;
-				}
-				eat_whitespace(&cmd_str);
-				if (*cmd_str != '\0') {
-					fprintf(stderr, "info set command requires one argument\n");
-					return -1;
-				}
-				return 0;
-			}
+	char *s       = *cmd_str;
+	char c;
+	char *ret_ptr;
+
+	if (*s != '\"')
+		return -1;
+
+	ret_ptr     = s;
+	c           = *++s;
+	*output_str = ret_ptr;
+
+	while (c != '\0' && c != '\"') {
+		if (c != '\\') {
+			*ret_ptr++ = c;
+			c = *++s;
+			continue;
 		}
+
+		c = *++s;
+
+		switch (c) {
+			case '\"':
+			case '\\':
+				break;
+			case 'n':
+				c = '\n';
+				break;
+			case '\0':
+			default:
+				return -1;
+		}
+
+		*ret_ptr++ = c;
+		c = *++s;
 	}
-	fprintf(stderr, "'%s' is an unsupported INFO chunk\n", ck);
-	return -1;
+
+	if (c != '\"')
+		return -1;
+
+	s++;
+	*ret_ptr = '\0';
+	*cmd_str = s;
+	return 0;
 }
 
-static int handle_int(uint_fast64_t *ival, char **cmd_str)
+static int expect_null(char **cmd_str)
+{
+	char *s = *cmd_str;
+	if (s[0] != 'n' || s[1] != 'u' || s[2] != 'l' || s[3] != 'l') {
+		return -1;
+	}
+	*cmd_str = s + 4;
+	return 0;
+}
+
+static int expect_null_or_str(char **str, char **cmd_str)
+{
+	char *s = *cmd_str;
+	if (*s == '\"')
+		return expect_string(str, &s);
+	if (expect_null(&s)) {
+		fprintf(stderr, "expected a quoted string or 'null'\n");
+		return -1;
+	}
+	*str     = NULL;
+	*cmd_str = s;
+	return 0;
+}
+
+static int expect_int(uint_fast64_t *ival, char **cmd_str)
 {
 	char *s = *cmd_str;
 	uint_fast64_t rv = 0;
-	if (*s < '0' || *s > '9') {
-		fprintf(stderr, "expected a numeric digit\n");
+	if (*s < '0' || *s > '9')
 		return -1;
-	}
 	do {
 		rv = rv * 10 + (*s++ - '0');
 	} while (*s >= '0' && *s <= '9');
@@ -1060,14 +1070,55 @@ static int handle_int(uint_fast64_t *ival, char **cmd_str)
 	return 0;
 }
 
-static int handle_loop(struct wav *wav, char *cmd_str)
+static int expect_end_of_args(char **cmd_str)
 {
+	char *s = *cmd_str;
+	eat_whitespace(&s);
+	if (*s != '\0')
+		return -1;
+	*cmd_str = s;
 	return 0;
 }
+
+static int handle_loop(struct wav *wav, char *cmd_str)
+{
+	uint_fast64_t start;
+	uint_fast64_t duration;
+	char *name;
+	char *desc;
+	if  (   expect_int(&start, &cmd_str)
+	    ||  expect_whitespace(&cmd_str)
+	    ||  expect_int(&duration, &cmd_str)
+	    ||  expect_whitespace(&cmd_str)
+	    ||  expect_null_or_str(&name, &cmd_str)
+	    ||  expect_whitespace(&cmd_str)
+	    ||  expect_null_or_str(&desc, &cmd_str)
+	    ||  expect_end_of_args(&cmd_str)
+	    ) {
+		fprintf(stderr, "loop command expects two integer arguments followed by two string or null arguments\n");
+		return -1;
+	}
+
+	if (wav->sample.nb_marker >= MAX_MARKERS) {
+		fprintf(stderr, "cannot add another loop - too much marker metadata\n");
+		return -1;
+	}
+
+	wav->sample.markers[wav->sample.nb_marker].name       = name;
+	wav->sample.markers[wav->sample.nb_marker].desc       = desc;
+	wav->sample.markers[wav->sample.nb_marker].length     = duration;
+	wav->sample.markers[wav->sample.nb_marker].has_length = 1;
+	wav->sample.markers[wav->sample.nb_marker].position   = start;
+	wav->sample.nb_marker++;
+
+	return 0;
+}
+
 static int handle_cue(struct wav *wav, char *cmd_str)
 {
 	return 0;
 }
+
 static int handle_smplpitch(struct wav *wav, char *cmd_str)
 {
 	uint_fast64_t pitch;
@@ -1077,7 +1128,7 @@ static int handle_smplpitch(struct wav *wav, char *cmd_str)
 		return 0;
 	}
 
-	if (handle_int(&pitch, &cmd_str))
+	if (expect_int(&pitch, &cmd_str))
 		return -1;
 
 	eat_whitespace(&cmd_str);
@@ -1091,6 +1142,25 @@ static int handle_smplpitch(struct wav *wav, char *cmd_str)
 	wav->sample.has_pitch_info = 1;
 
 	return 0;
+}
+
+static int handle_info(struct wav *wav, char *ck, char *cmd_str)
+{
+	if (strlen(ck) == 4) {
+		unsigned i;
+		uint_fast32_t id = ((uint_fast32_t)ck[0]) | (((uint_fast32_t)ck[1]) << 8) | (((uint_fast32_t)ck[2]) << 16) | (((uint_fast32_t)ck[3]) << 24);
+		for (i = 0; i < NB_SUPPORTED_INFO_TAGS; i++) {
+			if (id == SUPPORTED_INFO_TAGS[i]) {
+				if (expect_null_or_str(&(wav->sample.info[i]), &cmd_str) || expect_end_of_args(&cmd_str)) {
+					fprintf(stderr, "info commands requires exactly one string or 'null' argument\n");
+					return -1;
+				}
+				return 0;
+			}
+		}
+	}
+	fprintf(stderr, "'%s' is an unsupported INFO chunk\n", ck);
+	return -1;
 }
 
 static int handle_metastring(struct wav *wav, char *cmd_str)
@@ -1142,13 +1212,18 @@ int main(int argc, char *argv[])
 
 	err = load_wave_sample(&wav, buf, sz, opts.input_filename, opts.flags);
 
+	sort_and_reassign_ids(&wav.sample);
+
 	if (err == 0 && (opts.flags & FLAG_INPUT_METADATA)) {
+		
 		abort();
 	}
 
 	for (i = 0; err == 0 && i < opts.nb_set_items; i++) {
 		err = handle_metastring(&wav, opts.set_items[i]);
 	}
+
+	sort_and_reassign_ids(&wav.sample);
 
 	if (err == 0 && (opts.flags & FLAG_OUTPUT_METADATA))
 		dump_metadata(&wav.sample);
