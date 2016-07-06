@@ -350,14 +350,6 @@ load_markers
 		}
 	}
 
-	/* Sort the marker list. Bubble-it. */
-	if (flags & FLAG_STRIP_EVENT_METADATA) {
-		for (i = 0; i < wav->nb_marker; i++) {
-			wav->markers[i].name = NULL;
-			wav->markers[i].desc = NULL;
-		}
-	}
-
 	return 0;
 }
 
@@ -1212,10 +1204,29 @@ int main(int argc, char *argv[])
 
 	err = load_wave_sample(&wav, buf, sz, opts.input_filename, opts.flags);
 
+	if (opts.flags & FLAG_STRIP_EVENT_METADATA) {
+		for (i = 0; i < wav.sample.nb_marker; i++) {
+			wav.sample.markers[i].name = NULL;
+			wav.sample.markers[i].desc = NULL;
+		}
+	}
+
 	sort_and_reassign_ids(&wav.sample);
 
 	if (err == 0 && (opts.flags & FLAG_INPUT_METADATA)) {
-		
+		char c;
+		char linebuf[1024];
+		unsigned llen = 0;
+		printf("STDIN:");
+		while ((c = getchar()) != EOF) {
+			if (c == '\r' || c == '\n') {
+				linebuf[llen] = '\0';
+
+				llen = 0;
+			}
+//			printf("%c", c);
+		}
+		printf("\n");
 		abort();
 	}
 
