@@ -18,7 +18,7 @@ endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_LIST_DIR}/../cmakemodules)
 
-add_executable(sampleauth app_sampleauth.c wav_sample.h wav_sample_write.c wav_sample_write.h)
+add_executable(sampleauth app_sampleauth.c wav_sample.h wav_sample_write.c wav_sample_write.h wav_sample_read.c wav_sample_read.h)
 target_include_directories(sampleauth PUBLIC "../..")
 
 add_subdirectory("../../cop" "${CMAKE_CURRENT_BINARY_DIR}/cop_dep")

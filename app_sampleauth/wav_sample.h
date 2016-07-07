@@ -131,22 +131,6 @@ struct wav_sample {
 	struct wav_chunk          *unsupported;
 };
 
-struct wav {
-	struct wav_sample     sample;
-
-	unsigned              nb_chunks;
-	struct wav_chunk      chunks[MAX_CHUNKS];
-
-	struct wav_chunk     *info;
-	struct wav_chunk     *adtl;
-	struct wav_chunk     *cue;
-	struct wav_chunk     *smpl;
-	struct wav_chunk     *fact;
-	struct wav_chunk     *data;
-
-	struct wav_chunk     *fmt;
-};
-
 static COP_ATTR_UNUSED uint_fast16_t get_container_size(int format)
 {
 	switch (format) {
