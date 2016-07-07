@@ -51,13 +51,6 @@ struct wav_marker {
 	uint_fast32_t         position;
 };
 
-struct wav_chunk {
-	uint_fast32_t     id;
-	uint_fast32_t     size;
-	unsigned char    *data;
-	struct wav_chunk *next;
-};
-
 #define WAV_SAMPLE_PCM16   (0)
 #define WAV_SAMPLE_PCM24   (1)
 #define WAV_SAMPLE_PCM32   (2)
@@ -104,6 +97,13 @@ static COP_ATTR_UNUSED uint_fast32_t SUPPORTED_INFO_TAGS[] =
 };
 
 #define NB_SUPPORTED_INFO_TAGS (sizeof(SUPPORTED_INFO_TAGS) / sizeof(SUPPORTED_INFO_TAGS[0]))
+
+struct wav_chunk {
+	uint_fast32_t     id;
+	uint_fast32_t     size;
+	unsigned char    *data;
+	struct wav_chunk *next;
+};
 
 struct wav_sample {
 	/* String metadata found in the info chunk. */

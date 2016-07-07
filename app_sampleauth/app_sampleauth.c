@@ -597,6 +597,7 @@ int main(int argc, char *argv[])
 {
 	struct wavauth_options opts;
 	int err;
+	unsigned uerr;
 	size_t sz;
 	unsigned char *buf;
 	struct wav wav;
@@ -613,7 +614,10 @@ int main(int argc, char *argv[])
 	if ((err = read_entire_file(opts.input_filename, &sz, &buf)) != 0)
 		return err;
 
-	err = load_wave_sample(&wav, buf, sz, opts.input_filename, opts.flags);
+	if (WSR_ERROR_CODE(uerr = load_wave_sample(&wav, buf, sz, opts.input_filename, opts.flags))) {
+		fprintf(stderr, "failed to load sample: %u\n", uerr);
+		return -1;
+	}
 
 	if (opts.flags & FLAG_STRIP_EVENT_METADATA) {
 		for (i = 0; i < wav.sample.nb_marker; i++) {

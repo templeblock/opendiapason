@@ -76,7 +76,7 @@ void sort_and_reassign_ids(struct wav_sample *wav)
 }
 
 static
-int
+unsigned
 load_markers
 	(struct wav_sample *wav
 	,const char        *filename
@@ -87,6 +87,7 @@ load_markers
 	)
 {
 	unsigned i;
+	unsigned warnings = 0;
 
 	/* Reset the marker count to zero. */
 	wav->nb_marker = 0;
@@ -117,10 +118,9 @@ load_markers
 
 			/* Move the adtl pointer to the start of the next chunk.*/
 			cksz = 8 + (uint_fast64_t)meta_size + (meta_size & 1);
-			if (cksz > adtl_len) {
-				fprintf(stderr, "the adtl chunk was not properly formed\n");
-				return -1;
-			}
+			if (cksz > adtl_len)
+				return warnings | WSR_ERROR_ADTL_INVALID;
+
 			adtl     += cksz;
 			adtl_len -= cksz;
 
@@ -131,47 +131,37 @@ load_markers
 			is_note = (meta_class == RIFF_ID('n', 'o', 't', 'e'));
 			if  (  !(is_ltxt && meta_size >= 20)
 			    && !((is_note || (meta_class == RIFF_ID('l', 'a', 'b', 'l'))) && meta_size >= 4)
-			    ) {
-				fprintf(stderr, "sample contained unsupported or invalid adtl metadata\n");
-				return -1;
-			}
+			    )
+				return warnings | WSR_ERROR_ADTL_INVALID;
 
 			/* The a metadata item with the given ID associated with this adtl
 			 * metadata chunk. */
 			marker = get_marker(wav, cop_ld_ule32(meta_base));
-			if (marker == NULL) {
-				fprintf(stderr, "sample contained too much metadata\n");
-				return -1;
-			}
+			if (marker == NULL)
+				return warnings | WSR_ERROR_TOO_MANY_MARKERS;
 
 			/* Skip over the metadata ID */
 			meta_base += 4;
 			meta_size -= 4;
 
 			if (is_ltxt) {
-				if (marker->has_length) {
-					fprintf(stderr, "sample contained multiple ltxt chunks for a single cue point\n");
-					return -1;
-				}
+				if (marker->has_length)
+					return WSR_ERROR_ADTL_DUPLICATES;
 				marker->has_length = 1;
 				marker->length     = cop_ld_ule32(meta_base);
 			} else {
 				if (!meta_size || meta_base[meta_size-1] != 0) {
-					fprintf(stderr, "adtl contained note or labl chunks which were not null-terminated\n");
+					warnings |= WSR_WARNING_ADTL_UNTERMINATED_STRINGS;
 					continue;
 				}
 
 				if (is_note) {
-					if (marker->desc != NULL) {
-						fprintf(stderr, "sample contained multiple note chunks for a single cue point\n");
-						return -1;
-					}
+					if (marker->desc != NULL)
+						return warnings | WSR_ERROR_ADTL_DUPLICATES;
 					marker->desc = (char *)meta_base;
 				} else {
-					if (marker->name != NULL) {
-						fprintf(stderr, "sample contained multiple labl chunks for a single cue point\n");
-						return -1;
-					}
+					if (marker->name != NULL)
+						return warnings | WSR_ERROR_ADTL_DUPLICATES;
 					marker->name = (char *)meta_base;
 				}
 			}
@@ -184,24 +174,18 @@ load_markers
 		unsigned char *cue     = cue_ck->data;
 		uint_fast32_t  ncue;
 
-		if (cue_len < 4 || cue_len < 4 + 24 * (ncue = cop_ld_ule32(cue))) {
-			fprintf(stderr, "cue chunk was malformed\n");
-			return -1;
-		}
+		if (cue_len < 4 || cue_len < 4 + 24 * (ncue = cop_ld_ule32(cue)))
+			return warnings | WSR_ERROR_CUE_INVALID;
 
 		cue += 4;
 		while (ncue--) {
 			uint_fast32_t cue_id      = cop_ld_ule32(cue);
 			struct wav_marker *marker = get_marker(wav, cue_id);
-			if (marker == NULL) {
-				fprintf(stderr, "sample contained too much metadata\n");
-				return -1;
-			}
+			if (marker == NULL)
+				return warnings | WSR_ERROR_TOO_MANY_MARKERS;
 
-			if (marker->in_cue) {
-				fprintf(stderr, "sample countained multiple cue points with the same identifier\n");
-				return -1;
-			}
+			if (marker->in_cue)
+				return warnings | WSR_ERROR_CUE_DUPLICATE_IDS;
 
 			marker->position     = cop_ld_ule32(cue + 20);
 			marker->in_cue = 1;
@@ -214,10 +198,8 @@ load_markers
 		unsigned char *smpl          = smpl_ck->data;
 		uint_fast32_t  nloop;
 
-		if (smpl_len < 36 || (smpl_len < (36 + (nloop = cop_ld_ule32(smpl + 28)) * 24 + cop_ld_ule32(smpl + 32)))) {
-			fprintf(stderr, "smpl chunk was malformed\n");
-			return -1;
-		}
+		if (smpl_len < 36 || (smpl_len < (36 + (nloop = cop_ld_ule32(smpl + 28)) * 24 + cop_ld_ule32(smpl + 32))))
+			return warnings | WSR_ERROR_SMPL_INVALID;
 
 		wav->has_pitch_info = 1;
 		wav->pitch_info = (((uint_fast64_t)cop_ld_ule32(smpl + 12)) << 32) | cop_ld_ule32(smpl + 16);
@@ -231,10 +213,8 @@ load_markers
 			unsigned           j;
 			struct wav_marker *marker;
 
-			if (start > end) {
-				fprintf(stderr, "smpl chunk had invalid loops\n");
-				return -1;
-			}
+			if (start > end)
+				return warnings | WSR_ERROR_SMPL_INVALID;
 
 			length = end - start + 1;
 
@@ -335,14 +315,12 @@ load_markers
 		}
 	}
 
-	return 0;
+	return warnings;
 }
 
-static int load_sample_format(struct wav_sample_format *format, struct wav_chunk *fmt_ck)
+static unsigned load_sample_format(struct wav_sample_format *format, unsigned char *fmt_ptr, size_t fmt_sz)
 {
 	static const unsigned char EXTENSIBLE_GUID_SUFFIX[14] = {/* AA, BB, */ 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71};
-	const unsigned char *fmt_ptr = fmt_ck->data;
-	const size_t         fmt_sz  = fmt_ck->size;
 
 	uint_fast16_t format_tag;
 	uint_fast16_t container_bytes;
@@ -350,10 +328,8 @@ static int load_sample_format(struct wav_sample_format *format, struct wav_chunk
 	uint_fast16_t channels;
 	uint_fast16_t bits_per_sample;
 
-	if (fmt_sz < 16) {
-		fprintf(stderr, "corrupt format chunk\n");
-		return -1;
-	}
+	if (fmt_sz < 16)
+		return WSR_ERROR_FMT_INVALID;
 
 	format_tag              = cop_ld_ule16(fmt_ptr + 0);
 	channels                = cop_ld_ule16(fmt_ptr + 2);
@@ -369,22 +345,19 @@ static int load_sample_format(struct wav_sample_format *format, struct wav_chunk
 			||  (fmt_sz < 18)
 			||  ((cbsz = cop_ld_ule16(fmt_ptr + 16)) < 22)
 			||  (fmt_sz < 18 + cbsz)
-			) {
-			fprintf(stderr, "corrupt format chunk\n");
-			return -1;
-		}
+			)
+			return WSR_ERROR_FMT_INVALID;
 
 		bits_per_sample = cop_ld_ule16(fmt_ptr + 18);
 		format_tag      = cop_ld_ule16(fmt_ptr + 24);
 
-		if (memcmp(fmt_ptr + 26, EXTENSIBLE_GUID_SUFFIX, 14) != 0) {
-			fprintf(stderr, "unsupported wave format for sample data\n");
-			return -1;
-		}
+		if (memcmp(fmt_ptr + 26, EXTENSIBLE_GUID_SUFFIX, 14) != 0)
+			return WSR_ERROR_FMT_UNSUPPORTED;
 	}
 
 	format->bits_per_sample = bits_per_sample;
 	format->channels = channels;
+
 	if (format_tag == 1 && container_bytes == 2)
 		format->format = WAV_SAMPLE_PCM16;
 	else if (format_tag == 1 && container_bytes == 3)
@@ -393,32 +366,22 @@ static int load_sample_format(struct wav_sample_format *format, struct wav_chunk
 		format->format = WAV_SAMPLE_PCM32;
 	else if (format_tag == 3 && container_bytes == 4)
 		format->format = WAV_SAMPLE_FLOAT32; 
-	else {
-		fprintf(stderr, "unsupported wave format for sample data\n");
-		return -1;
-	}
+	else
+		return WSR_ERROR_FMT_UNSUPPORTED;
 
-	if (block_align != channels * container_bytes) {
-		fprintf(stderr, "unsupported wave format for sample data\n");
-		return -1;
-	}
-
-	if (bits_per_sample > container_bytes * 8) {
-		fprintf(stderr, "corrupt format chunk\n");
-		return -1;
-	}
+	if  (   (block_align != channels * container_bytes)
+		||  (bits_per_sample > container_bytes * 8)
+		)
+		return WSR_ERROR_FMT_INVALID;
 
 	return 0;
 }
 
-static int load_info(char **infoset, struct wav_chunk *info)
+static unsigned load_info(char **infoset, unsigned char *buf, size_t sz)
 {
-	unsigned char *buf;
-	size_t sz;
+	unsigned warnings = 0;
 
-	sz   = info->size;
-	buf  = info->data;
-	assert(info->size >= 4);
+	assert(sz >= 4);
 	sz  -= 4;
 	buf += 4;
 
@@ -440,8 +403,10 @@ static int load_info(char **infoset, struct wav_chunk *info)
 			sz  -= cksz + (cksz & 1);
 		}
 
-		if (cksz == 0 || base[cksz-1] != 0)
+		if (cksz == 0 || base[cksz-1] != 0) {
+			warnings |= WSR_WARNING_INFO_UNTERMINATED_STRINGS;
 			continue;
+		}
 
 		for (i = 0; i < NB_SUPPORTED_INFO_TAGS; i++) {
 			if (SUPPORTED_INFO_TAGS[i] == ckid) {
@@ -450,45 +415,43 @@ static int load_info(char **infoset, struct wav_chunk *info)
 			}
 		}
 
-		if (i == NB_SUPPORTED_INFO_TAGS) {
-			fprintf(stderr,"unsupported RIFF info tag found\n");
-			return -1;
-		}
+		if (i == NB_SUPPORTED_INFO_TAGS)
+			return WSR_ERROR_INFO_UNSUPPORTED;
 	}
 
-	return 0;
+	return warnings;
 }
 
-int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, const char *filename, unsigned flags)
+unsigned load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, const char *filename, unsigned flags)
 {
 	uint_fast32_t riff_sz;
 	struct wav_chunk **next_unsupported;
+	unsigned warnings = 0;
 
 	if  (   (bufsz < 12)
 	    ||  (cop_ld_ule32(buf) != RIFF_ID('R', 'I', 'F', 'F'))
 	    ||  ((riff_sz = cop_ld_ule32(buf + 4)) < 4)
 	    ||  (cop_ld_ule32(buf + 8) != RIFF_ID('W', 'A', 'V', 'E'))
-	    ) {
-		fprintf(stderr, "%s is not a wave file\n", filename);
-		return -1;
-	}
+	    )
+		return WSR_ERROR_NOT_A_WAVE;
 
 	riff_sz -= 4;
 	bufsz   -= 12;
 	buf     += 12;
+
 	if (riff_sz > bufsz) {
-		fprintf(stderr, "%s appears to have been truncated\n", filename);
+		warnings |= WSR_WARNING_FILE_TRUNCATION;
 		riff_sz = (uint_fast32_t)bufsz;
 	}
 
 	wav->nb_chunks = 0;
-	wav->info = NULL;
 	wav->fmt  = NULL;
 	wav->fact = NULL;
 	wav->data = NULL;
 	wav->adtl = NULL;
 	wav->cue  = NULL;
 	wav->smpl = NULL;
+	memset(wav->sample.info, 0, sizeof(wav->sample.info));
 	next_unsupported = &(wav->sample.unsupported);
 
 	while (riff_sz >= 8) {
@@ -509,10 +472,8 @@ int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, const ch
 			riff_sz -= cksz + (cksz & 1);
 		}
 
-		if (wav->nb_chunks >= MAX_CHUNKS) {
-			fprintf(stderr, "%s contained too many chunks for the authoring tool to manipulate\n", filename);
-			return -1;
-		}
+		if (wav->nb_chunks >= MAX_CHUNKS)
+			return warnings | WSR_ERROR_TOO_MANY_CHUNKS;
 
 		if (ckid == RIFF_ID('L', 'I', 'S', 'T') && cksz >= 4) {
 			switch (cop_ld_ule32(ckbase)) {
@@ -520,7 +481,10 @@ int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, const ch
 					known_ptr = &wav->adtl;
 					break;
 				case RIFF_ID('I', 'N', 'F', 'O'):
-					known_ptr = &wav->info;
+					if (!(flags & FLAG_RESET)) {
+						if (WSR_ERROR_CODE(warnings |= load_info(wav->sample.info, ckbase, cksz)))
+							return warnings;
+					}
 					break;
 				default:
 					break;
@@ -559,10 +523,9 @@ int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, const ch
 			if (known_ptr != NULL) {
 				/* There are no chunks which we know how to interpret which
 				 * can occur more than once. */
-				if (*known_ptr != NULL) {
-					fprintf(stderr, "%s contained duplicate wave chunks\n", filename);
-					return -1;
-				}
+				if (*known_ptr != NULL)
+					return warnings | WSR_ERROR_DUPLICATE_CHUNKS;
+
 				ck->next   = NULL;
 				*known_ptr = ck;
 			} else {
@@ -578,30 +541,19 @@ int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, const ch
 
 	*next_unsupported = NULL;
 
-	if (wav->fmt == NULL || wav->data == NULL) {
-		fprintf(stderr, "the wave file is missing the format or data chunk\n");
-		return -1;
-	}
+	if (wav->fmt == NULL || wav->data == NULL)
+		return warnings | WSR_ERROR_NOT_A_WAVE;
 
-	if (load_sample_format(&(wav->sample.format), wav->fmt))
-		return -1;
+	if (WSR_ERROR_CODE(warnings |= load_sample_format(&(wav->sample.format), wav->fmt->data, wav->fmt->size)))
+		return warnings;
 
-	/* Compute number of frames. */
 	{
 		uint_fast16_t block_align = (wav->sample.format.channels * get_container_size(wav->sample.format.format));
 		wav->sample.data        = wav->data->data;
 		wav->sample.data_frames = wav->data->size / block_align;
-		if (wav->data->size % block_align) {
-			fprintf(stderr, "the wave data chunk was corrupt or of invalid length\n");
-			return -1;
-		}
+		if (wav->data->size % block_align)
+			return warnings | WSR_ERROR_DATA_INVALID;
 	}
 
-	memset(wav->sample.info, 0, sizeof(wav->sample.info));
-	if (wav->info != NULL) {
-		if (load_info(wav->sample.info, wav->info))
-			return -1;
-	}
-
-	return load_markers(&(wav->sample), filename, flags, wav->adtl, wav->cue, wav->smpl);
+	return warnings | load_markers(&(wav->sample), filename, flags, wav->adtl, wav->cue, wav->smpl);
 }

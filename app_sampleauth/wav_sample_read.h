@@ -29,7 +29,6 @@ struct wav {
 	unsigned              nb_chunks;
 	struct wav_chunk      chunks[MAX_CHUNKS];
 
-	struct wav_chunk     *info;
 	struct wav_chunk     *adtl;
 	struct wav_chunk     *cue;
 	struct wav_chunk     *smpl;
@@ -44,7 +43,30 @@ struct wav {
 #define FLAG_PREFER_SMPL_LOOPS    (4)
 #define FLAG_PREFER_CUE_LOOPS     (8)
 
-int load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, const char *filename, unsigned flags);
+#define WSR_ERROR_NOT_A_WAVE        (1u)
+
+#define WSR_ERROR_INFO_UNSUPPORTED  (14u)
+#define WSR_ERROR_FMT_INVALID       (12u)
+#define WSR_ERROR_FMT_UNSUPPORTED   (13u)
+#define WSR_ERROR_DATA_INVALID      (4u)
+#define WSR_ERROR_ADTL_DUPLICATES   (6u)
+#define WSR_ERROR_ADTL_INVALID      (7u)
+#define WSR_ERROR_CUE_INVALID       (9u)
+#define WSR_ERROR_CUE_DUPLICATE_IDS (10u)
+#define WSR_ERROR_SMPL_INVALID      (11u)
+
+#define WSR_ERROR_TOO_MANY_CHUNKS   (2u)
+#define WSR_ERROR_DUPLICATE_CHUNKS  (3u)
+#define WSR_ERROR_TOO_MANY_MARKERS  (8u)
+
+
+#define WSR_WARNING_FILE_TRUNCATION           (0x100u)
+#define WSR_WARNING_ADTL_UNTERMINATED_STRINGS (0x200u)
+#define WSR_WARNING_INFO_UNTERMINATED_STRINGS (0x400u)
+
+#define WSR_ERROR_CODE(x) (x & 0xFFu)
+
+unsigned load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, const char *filename, unsigned flags);
 
 void sort_and_reassign_ids(struct wav_sample *wav);
 
