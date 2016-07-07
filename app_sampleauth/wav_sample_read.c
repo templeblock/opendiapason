@@ -20,12 +20,14 @@
 
 #include "wav_sample_read.h"
 #include "cop/cop_conversions.h"
-#include <stdio.h>
 #include <string.h>
 
 static struct wav_marker *get_new_marker(struct wav_sample *wav)
 {
-	struct wav_marker *m = wav->markers + wav->nb_marker++;
+	struct wav_marker *m;
+	if (wav->nb_marker >= WAV_SAMPLE_MAX_MARKERS)
+		return NULL;
+	m = wav->markers + wav->nb_marker++;
 	m->id           = 0;
 	m->name         = NULL;
 	m->desc         = NULL;
@@ -50,8 +52,8 @@ get_marker
 		if (wav->markers[i].id == id)
 			return &(wav->markers[i]);
 	}
-	marker = get_new_marker(wav);
-	marker->id = id;
+	if ((marker = get_new_marker(wav)) != NULL)
+		marker->id = id;
 	return marker;
 }
 
@@ -115,7 +117,7 @@ load_adtl
 		 * end up breaking metadata. */
 		is_ltxt = (meta_class == RIFF_ID('l', 't', 'x', 't'));
 		is_note = (meta_class == RIFF_ID('n', 'o', 't', 'e'));
-		if  (  !(is_ltxt && meta_size >= 20)
+		if  (  !(is_ltxt && meta_size == 20)
 		    && !((is_note || (meta_class == RIFF_ID('l', 'a', 'b', 'l'))) && meta_size >= 4)
 		    )
 			return warnings | WSR_ERROR_ADTL_INVALID;
@@ -236,9 +238,9 @@ load_smpl
 		}
 
 		if (j < wav->nb_marker) {
-			marker        = wav->markers + j;
-		} else {
-			marker        = get_new_marker(wav);
+			marker = wav->markers + j;
+		} else if ((marker = get_new_marker(wav)) == NULL) {
+			return WSR_ERROR_TOO_MANY_MARKERS;
 		}
 
 		marker->position   = start;
@@ -254,84 +256,67 @@ load_smpl
 
 static
 unsigned
-load_markers
+check_and_finalise_markers
 	(struct wav_sample *wav
-	,const char        *filename
 	,unsigned           flags
-	,struct wav_chunk  *adtl_ck
-	,struct wav_chunk  *cue_ck
-	,struct wav_chunk  *smpl_ck
 	)
 {
 	unsigned i;
-	unsigned warnings = 0;
+	unsigned dest_idx;
+	unsigned nb_smpl_only_loops = 0;
+	unsigned nb_cue_only_loops = 0;
 
-	{
-		unsigned dest_idx;
-		unsigned nb_smpl_only_loops = 0;
-		unsigned nb_cue_only_loops = 0;
-
-		/* Remove markers which contain metadata which does not correspond to
-		 * any actual data and count the number of loops which are only found
-		 * in cue points and the number that are only in smpl loops. If both
-		 * of these are non-zero, one set of them needs to be deleted as we
-		 * cannot determine which metadata is correct. */
-		for (i = 0, dest_idx = 0; i < wav->nb_marker; i++) {
-			/* Metadata not corresponding to an item. Remove. */
-			if (!wav->markers[i].in_smpl && !wav->markers[i].in_cue)
-				continue;
-
-			if (wav->markers[i].has_length && wav->markers[i].length > 0) {
-				if (wav->markers[i].in_smpl && !wav->markers[i].in_cue)
-					nb_smpl_only_loops++;
-				if (!wav->markers[i].in_smpl && wav->markers[i].in_cue)
-					nb_cue_only_loops++;
-			}
-
-			if (i != dest_idx)
-				wav->markers[dest_idx] = wav->markers[i];
-			dest_idx++;
+	/* Remove markers which contain metadata which does not correspond to
+	 * any actual data and count the number of loops which are only found
+	 * in cue points and the number that are only in smpl loops. If both
+	 * of these are non-zero, one set of them needs to be deleted as we
+	 * cannot determine which metadata is correct. */
+	for (i = 0, dest_idx = 0; i < wav->nb_marker; i++) {
+		/* Metadata not corresponding to an item. Remove. */
+		if (!wav->markers[i].in_smpl && !wav->markers[i].in_cue)
+			continue;
+		/* Check position is actually inside the audio region. */
+		if (wav->markers[i].position >= wav->data_frames)
+			return WSR_ERROR_MARKER_RANGE;
+		if (wav->markers[i].has_length && wav->markers[i].length > 0) {
+			/* Check duration does not go outside audio region. */
+			if (wav->markers[i].position + wav->markers[i].length > wav->data_frames)
+				return WSR_ERROR_MARKER_RANGE;
+			if (wav->markers[i].in_smpl && !wav->markers[i].in_cue)
+				nb_smpl_only_loops++;
+			if (!wav->markers[i].in_smpl && wav->markers[i].in_cue)
+				nb_cue_only_loops++;
 		}
-		wav->nb_marker = dest_idx;
+		if (i != dest_idx)
+			wav->markers[dest_idx] = wav->markers[i];
+		dest_idx++;
+	}
+	wav->nb_marker = dest_idx;
 
-		/* Were there both independent sampler loops or independent cue
-		 * loops? */
-		if (nb_smpl_only_loops && nb_cue_only_loops) {
-			/* If the caller has not specified a flag for what do do in this
-			 * situation, print some information and fail. Otherwise, delete
-			 * the markers belonging to the group we do not care about. */
-			if (flags & (FLAG_PREFER_CUE_LOOPS | FLAG_PREFER_SMPL_LOOPS)) {
-				for (i = 0, dest_idx = 0; i < wav->nb_marker; i++) {
-					int is_loop = wav->markers[i].has_length && wav->markers[i].length > 0;
-					if (is_loop && wav->markers[i].in_smpl && !wav->markers[i].in_cue && (flags & FLAG_PREFER_CUE_LOOPS))
-						continue;
-					if (is_loop && !wav->markers[i].in_smpl && wav->markers[i].in_cue && (flags & FLAG_PREFER_SMPL_LOOPS))
-						continue;
-					if (i != dest_idx)
-						wav->markers[dest_idx] = wav->markers[i];
-					dest_idx++;
-				}
-				wav->nb_marker = dest_idx;
-			} else {
-				fprintf(stderr, "%s has sampler loops that conflict with loops in the cue chunk. you must specify --prefer-smpl-loops or --prefer-cue-loops to load it. here are the details:\n", filename);
-				fprintf(stderr, "common loops (position/duration):\n");
-				for (i = 0; i < wav->nb_marker; i++)
-					if (wav->markers[i].in_cue && wav->markers[i].in_smpl && wav->markers[i].has_length && wav->markers[i].length > 0)
-						fprintf(stderr, "  %lu/%lu\n", (unsigned long)wav->markers[i].position, (unsigned long)wav->markers[i].length);
-				fprintf(stderr, "sampler loops (position/duration):\n");
-				for (i = 0; i < wav->nb_marker; i++)
-					if (!wav->markers[i].in_cue && wav->markers[i].in_smpl && wav->markers[i].has_length && wav->markers[i].length > 0)
-						fprintf(stderr, "  %lu/%lu\n", (unsigned long)wav->markers[i].position, (unsigned long)wav->markers[i].length);
-				fprintf(stderr, "cue loops (position/duration):\n");
-				for (i = 0; i < wav->nb_marker; i++)
-					if (wav->markers[i].in_cue && !wav->markers[i].in_smpl && wav->markers[i].has_length && wav->markers[i].length > 0)
-						fprintf(stderr, "  %lu/%lu\n", (unsigned long)wav->markers[i].position, (unsigned long)wav->markers[i].length);
-				return -1;
+	/* Were there both independent sampler loops or independent cue
+	 * loops? */
+	if (nb_smpl_only_loops && nb_cue_only_loops) {
+		/* If the caller has not specified a flag for what do do in this
+		 * situation, print some information and fail. Otherwise, delete
+		 * the markers belonging to the group we do not care about. */
+		if (flags & (FLAG_PREFER_CUE_LOOPS | FLAG_PREFER_SMPL_LOOPS)) {
+			for (i = 0, dest_idx = 0; i < wav->nb_marker; i++) {
+				int is_loop = wav->markers[i].has_length && wav->markers[i].length > 0;
+				if (is_loop && wav->markers[i].in_smpl && !wav->markers[i].in_cue && (flags & FLAG_PREFER_CUE_LOOPS))
+					continue;
+				if (is_loop && !wav->markers[i].in_smpl && wav->markers[i].in_cue && (flags & FLAG_PREFER_SMPL_LOOPS))
+					continue;
+				if (i != dest_idx)
+					wav->markers[dest_idx] = wav->markers[i];
+				dest_idx++;
 			}
+			wav->nb_marker = dest_idx;
+		} else {
+			return WSR_ERROR_SMPL_CUE_LOOP_CONFLICTS;
 		}
 	}
 
-	return warnings;
+	return 0;
 }
 
 static unsigned load_sample_format(struct wav_sample_format *format, unsigned char *fmt_ptr, size_t fmt_sz)
@@ -438,7 +423,7 @@ static unsigned load_info(char **infoset, unsigned char *buf, size_t sz)
 	return warnings;
 }
 
-unsigned load_wave_sample(struct wav_sample *wav, unsigned char *buf, size_t bufsz, const char *filename, unsigned flags)
+unsigned wav_sample_mount(struct wav_sample *wav, unsigned char *buf, size_t bufsz, unsigned flags)
 {
 	uint_fast32_t riff_sz;
 	unsigned warnings = 0;
@@ -536,7 +521,7 @@ unsigned load_wave_sample(struct wav_sample *wav, unsigned char *buf, size_t buf
 				if (known_ptr->data != NULL)
 					return warnings | WSR_ERROR_DUPLICATE_CHUNKS;
 			} else {
-				if (wav->nb_unsupported >= MAX_CHUNKS)
+				if (wav->nb_unsupported >= WAV_SAMPLE_MAX_UNSUPPORTED_CHUNKS)
 					return warnings | WSR_ERROR_TOO_MANY_CHUNKS;
 
 				known_ptr = wav->unsupported + wav->nb_unsupported++;
@@ -591,5 +576,5 @@ unsigned load_wave_sample(struct wav_sample *wav, unsigned char *buf, size_t buf
 			return warnings;
 	}
 
-	return warnings | load_markers(wav, filename, flags, &adtl, &cue, &smpl);
+	return warnings | check_and_finalise_markers(wav, flags);
 }

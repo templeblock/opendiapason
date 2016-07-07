@@ -391,7 +391,7 @@ static int handle_loop(struct wav_sample *wav, char *cmd_str)
 		return -1;
 	}
 
-	if (wav->nb_marker >= MAX_MARKERS) {
+	if (wav->nb_marker >= WAV_SAMPLE_MAX_MARKERS) {
 		fprintf(stderr, "cannot add another loop - too much marker metadata\n");
 		return -1;
 	}
@@ -614,8 +614,25 @@ int main(int argc, char *argv[])
 	if ((err = read_entire_file(opts.input_filename, &sz, &buf)) != 0)
 		return err;
 
-	if (WSR_ERROR_CODE(uerr = load_wave_sample(&wav, buf, sz, opts.input_filename, opts.flags))) {
-		fprintf(stderr, "failed to load sample: %u\n", uerr);
+	if (WSR_ERROR_CODE(uerr = wav_sample_mount(&wav, buf, sz, opts.flags))) {
+		if (WSR_ERROR_CODE(uerr) == WSR_ERROR_SMPL_CUE_LOOP_CONFLICTS) {
+			fprintf(stderr, "%s has sampler loops that conflict with loops in the cue chunk. you must specify --prefer-smpl-loops or --prefer-cue-loops to load it. here are the details:\n", opts.input_filename);
+			fprintf(stderr, "common loops (position/duration):\n");
+			for (i = 0; i < wav.nb_marker; i++)
+				if (wav.markers[i].in_cue && wav.markers[i].in_smpl && wav.markers[i].has_length && wav.markers[i].length > 0)
+					fprintf(stderr, "  %lu/%lu\n", (unsigned long)wav.markers[i].position, (unsigned long)wav.markers[i].length);
+			fprintf(stderr, "sampler loops (position/duration):\n");
+			for (i = 0; i < wav.nb_marker; i++)
+				if (!wav.markers[i].in_cue && wav.markers[i].in_smpl && wav.markers[i].has_length && wav.markers[i].length > 0)
+					fprintf(stderr, "  %lu/%lu\n", (unsigned long)wav.markers[i].position, (unsigned long)wav.markers[i].length);
+			fprintf(stderr, "cue loops (position/duration):\n");
+			for (i = 0; i < wav.nb_marker; i++)
+				if (wav.markers[i].in_cue && !wav.markers[i].in_smpl && wav.markers[i].has_length && wav.markers[i].length > 0)
+					fprintf(stderr, "  %lu/%lu\n", (unsigned long)wav.markers[i].position, (unsigned long)wav.markers[i].length);
+		} else {
+			fprintf(stderr, "failed to load '%s' sample: %u\n", opts.input_filename, uerr);
+		}
+
 		return -1;
 	}
 

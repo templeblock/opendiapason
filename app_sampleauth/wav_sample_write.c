@@ -266,9 +266,7 @@ static void serialise_info(char * const *infoset, unsigned char *buf, size_t *si
 void wav_sample_serialise(const struct wav_sample *wav, unsigned char *buf, size_t *size, int store_cue_loops)
 {
 	unsigned i;
-
 	*size = 12;
-
 	serialise_info(wav->info, buf, size);
 	if (serialise_format(&wav->format, buf, size)) {
 		serialise_fact(wav->data_frames, buf, size);
@@ -277,10 +275,8 @@ void wav_sample_serialise(const struct wav_sample *wav, unsigned char *buf, size
 	serialise_adtl(wav, buf, size, store_cue_loops);
 	serialise_cue(wav, buf, size, store_cue_loops);
 	serialise_smpl(wav, buf, size);
-
 	for (i = 0; i < wav->nb_unsupported; i++)
 		serialise_blob(wav->unsupported[i].id, wav->unsupported[i].data, wav->unsupported[i].size, buf, size);
-
 	if (buf != NULL) {
 		cop_st_ule32(buf, RIFF_ID('R', 'I', 'F', 'F'));
 		cop_st_ule32(buf + 4, *size - 8);

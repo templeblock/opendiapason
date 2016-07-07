@@ -26,8 +26,8 @@
 #include <assert.h>
 #include "cop/cop_attributes.h"
 
-#define MAX_MARKERS (64)
-#define MAX_CHUNKS  (32)
+#define WAV_SAMPLE_MAX_MARKERS             (64)
+#define WAV_SAMPLE_MAX_UNSUPPORTED_CHUNKS  (32)
 
 struct wav_marker {
 	/* id, in_cue and in_smpl are used while the markers are being loaded.
@@ -116,7 +116,7 @@ struct wav_sample {
 
 	/* Positional based metadata loaded from the waveform. */
 	unsigned                   nb_marker;
-	struct wav_marker          markers[MAX_MARKERS];
+	struct wav_marker          markers[WAV_SAMPLE_MAX_MARKERS            ];
 
 	/* The data format of the wave file. */
 	struct wav_sample_format   format;
@@ -129,7 +129,7 @@ struct wav_sample {
 	 * this implementation. This is anything other than: INFO, fmt, data, cue,
 	 * smpl, adtl and fact. */
 	unsigned                   nb_unsupported;
-	struct wav_chunk           unsupported[MAX_CHUNKS];
+	struct wav_chunk           unsupported[WAV_SAMPLE_MAX_UNSUPPORTED_CHUNKS];
 };
 
 static COP_ATTR_UNUSED uint_fast16_t get_container_size(int format)
