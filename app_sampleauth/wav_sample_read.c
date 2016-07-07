@@ -77,6 +77,183 @@ void sort_and_reassign_ids(struct wav_sample *wav)
 
 static
 unsigned
+load_adtl
+	(struct wav_sample *wav
+	,unsigned char     *adtl
+	,size_t             adtl_len
+	)
+{
+	unsigned warnings = 0;
+
+	/* This condition should have been checked by the calling code. */
+	assert(adtl_len >= 4);
+
+	/* Move past "adtl" list identifier. */
+	adtl_len -= 4;
+	adtl     += 4;
+
+	/* Read all of the metadata chunks in the adtl list. */
+	while (adtl_len >= 8) {
+		uint_fast32_t      meta_class = cop_ld_ule32(adtl);
+		uint_fast32_t      meta_size  = cop_ld_ule32(adtl + 4);
+		unsigned char     *meta_base  = adtl + 8;
+		int                is_ltxt;
+		int                is_note;
+		struct wav_marker *marker;
+		uint_fast64_t      cksz;
+
+		/* Move the adtl pointer to the start of the next chunk.*/
+		cksz = 8 + (uint_fast64_t)meta_size + (meta_size & 1);
+		if (cksz > adtl_len)
+			return warnings | WSR_ERROR_ADTL_INVALID;
+
+		adtl     += cksz;
+		adtl_len -= cksz;
+
+		/* Make sure this is a chunk we can actually understand. If there
+		 * are chunks in the adtl list which are unknown to us, we could
+		 * end up breaking metadata. */
+		is_ltxt = (meta_class == RIFF_ID('l', 't', 'x', 't'));
+		is_note = (meta_class == RIFF_ID('n', 'o', 't', 'e'));
+		if  (  !(is_ltxt && meta_size >= 20)
+		    && !((is_note || (meta_class == RIFF_ID('l', 'a', 'b', 'l'))) && meta_size >= 4)
+		    )
+			return warnings | WSR_ERROR_ADTL_INVALID;
+
+		/* The a metadata item with the given ID associated with this adtl
+		 * metadata chunk. */
+		marker = get_marker(wav, cop_ld_ule32(meta_base));
+		if (marker == NULL)
+			return warnings | WSR_ERROR_TOO_MANY_MARKERS;
+
+		/* Skip over the metadata ID */
+		meta_base += 4;
+		meta_size -= 4;
+
+		if (is_ltxt) {
+			if (marker->has_length)
+				return WSR_ERROR_ADTL_DUPLICATES;
+			marker->has_length = 1;
+			marker->length     = cop_ld_ule32(meta_base);
+		} else {
+			if (!meta_size || meta_base[meta_size-1] != 0) {
+				warnings |= WSR_WARNING_ADTL_UNTERMINATED_STRINGS;
+				continue;
+			}
+
+			if (is_note) {
+				if (marker->desc != NULL)
+					return warnings | WSR_ERROR_ADTL_DUPLICATES;
+				marker->desc = (char *)meta_base;
+			} else {
+				if (marker->name != NULL)
+					return warnings | WSR_ERROR_ADTL_DUPLICATES;
+				marker->name = (char *)meta_base;
+			}
+		}
+	}
+
+	return warnings;
+}
+
+static
+unsigned
+load_cue
+	(struct wav_sample *wav
+	,unsigned char     *cue
+	,size_t             cue_len
+	)
+{
+	uint_fast32_t  ncue;
+
+	if (cue_len < 4 || cue_len < 4 + 24 * (ncue = cop_ld_ule32(cue)))
+		return WSR_ERROR_CUE_INVALID;
+
+	cue += 4;
+	while (ncue--) {
+		uint_fast32_t cue_id      = cop_ld_ule32(cue);
+		struct wav_marker *marker = get_marker(wav, cue_id);
+		if (marker == NULL)
+			return WSR_ERROR_TOO_MANY_MARKERS;
+
+		if (marker->in_cue)
+			return WSR_ERROR_CUE_DUPLICATE_IDS;
+
+		marker->position     = cop_ld_ule32(cue + 20);
+		marker->in_cue = 1;
+		cue += 24;
+	}
+
+	return 0;
+}
+
+static
+unsigned
+load_smpl
+	(struct wav_sample *wav
+	,unsigned char     *smpl
+	,size_t             smpl_len
+	)
+{
+	uint_fast32_t nloop;
+	uint_fast32_t i;
+
+	if (smpl_len < 36 || (smpl_len < (36 + (nloop = cop_ld_ule32(smpl + 28)) * 24 + cop_ld_ule32(smpl + 32))))
+		return WSR_ERROR_SMPL_INVALID;
+
+	wav->has_pitch_info = 1;
+	wav->pitch_info = (((uint_fast64_t)cop_ld_ule32(smpl + 12)) << 32) | cop_ld_ule32(smpl + 16);
+
+	smpl += 36;
+	for (i = 0; i < nloop; i++) {
+		uint_fast32_t      id    = cop_ld_ule32(smpl);
+		uint_fast32_t      start = cop_ld_ule32(smpl + 8);
+		uint_fast32_t      end   = cop_ld_ule32(smpl + 12);
+		uint_fast32_t      length;
+		unsigned           j;
+		struct wav_marker *marker;
+
+		if (start > end)
+			return WSR_ERROR_SMPL_INVALID;
+
+		length = end - start + 1;
+
+		for (j = 0; j < wav->nb_marker; j++) {
+			/* If the loop has the same id as some metadata, but the
+			 * metadata has no cue point, we can associate it with this
+			 * metadata item. */
+			if (id == wav->markers[j].id && !wav->markers[j].in_cue)
+				break;
+
+			/* If the loop matches an existing loop, we can associate it
+			 * with this metadata item. */
+			if  (   (wav->markers[j].in_cue && wav->markers[j].position == start)
+				&&  (   (wav->markers[j].has_length && wav->markers[j].length == length)
+			        || !wav->markers[j].has_length
+			        )
+			    )
+				break;
+		}
+
+		if (j < wav->nb_marker) {
+			marker        = wav->markers + j;
+		} else {
+			marker        = get_new_marker(wav);
+		}
+
+		marker->position   = start;
+		marker->in_smpl    = 1;
+		marker->length     = length;
+		marker->has_length = 1;
+
+		smpl += 24;
+	}
+
+	return 0;
+}
+
+static
+unsigned
 load_markers
 	(struct wav_sample *wav
 	,const char        *filename
@@ -88,167 +265,6 @@ load_markers
 {
 	unsigned i;
 	unsigned warnings = 0;
-
-	/* Reset the marker count to zero. */
-	wav->nb_marker = 0;
-	wav->has_pitch_info = 0;
-	wav->pitch_info = 0;
-
-	/* Load metadata strings and labelled text durations first. */
-	if (adtl_ck != NULL) {
-		size_t adtl_len        = adtl_ck->size;
-		unsigned char *adtl    = adtl_ck->data;
-
-		/* This condition should have been checked by the calling code. */
-		assert(adtl_len >= 4);
-
-		/* Move past "adtl" list identifier. */
-		adtl_len -= 4;
-		adtl     += 4;
-
-		/* Read all of the metadata chunks in the adtl list. */
-		while (adtl_len >= 8) {
-			uint_fast32_t      meta_class = cop_ld_ule32(adtl);
-			uint_fast32_t      meta_size  = cop_ld_ule32(adtl + 4);
-			unsigned char     *meta_base  = adtl + 8;
-			int                is_ltxt;
-			int                is_note;
-			struct wav_marker *marker;
-			uint_fast64_t      cksz;
-
-			/* Move the adtl pointer to the start of the next chunk.*/
-			cksz = 8 + (uint_fast64_t)meta_size + (meta_size & 1);
-			if (cksz > adtl_len)
-				return warnings | WSR_ERROR_ADTL_INVALID;
-
-			adtl     += cksz;
-			adtl_len -= cksz;
-
-			/* Make sure this is a chunk we can actually understand. If there
-			 * are chunks in the adtl list which are unknown to us, we could
-			 * end up breaking metadata. */
-			is_ltxt = (meta_class == RIFF_ID('l', 't', 'x', 't'));
-			is_note = (meta_class == RIFF_ID('n', 'o', 't', 'e'));
-			if  (  !(is_ltxt && meta_size >= 20)
-			    && !((is_note || (meta_class == RIFF_ID('l', 'a', 'b', 'l'))) && meta_size >= 4)
-			    )
-				return warnings | WSR_ERROR_ADTL_INVALID;
-
-			/* The a metadata item with the given ID associated with this adtl
-			 * metadata chunk. */
-			marker = get_marker(wav, cop_ld_ule32(meta_base));
-			if (marker == NULL)
-				return warnings | WSR_ERROR_TOO_MANY_MARKERS;
-
-			/* Skip over the metadata ID */
-			meta_base += 4;
-			meta_size -= 4;
-
-			if (is_ltxt) {
-				if (marker->has_length)
-					return WSR_ERROR_ADTL_DUPLICATES;
-				marker->has_length = 1;
-				marker->length     = cop_ld_ule32(meta_base);
-			} else {
-				if (!meta_size || meta_base[meta_size-1] != 0) {
-					warnings |= WSR_WARNING_ADTL_UNTERMINATED_STRINGS;
-					continue;
-				}
-
-				if (is_note) {
-					if (marker->desc != NULL)
-						return warnings | WSR_ERROR_ADTL_DUPLICATES;
-					marker->desc = (char *)meta_base;
-				} else {
-					if (marker->name != NULL)
-						return warnings | WSR_ERROR_ADTL_DUPLICATES;
-					marker->name = (char *)meta_base;
-				}
-			}
-		}
-	}
-
-	/* Next we read the cue points into the marker list. */
-	if (cue_ck != NULL) {
-		size_t         cue_len = cue_ck->size;
-		unsigned char *cue     = cue_ck->data;
-		uint_fast32_t  ncue;
-
-		if (cue_len < 4 || cue_len < 4 + 24 * (ncue = cop_ld_ule32(cue)))
-			return warnings | WSR_ERROR_CUE_INVALID;
-
-		cue += 4;
-		while (ncue--) {
-			uint_fast32_t cue_id      = cop_ld_ule32(cue);
-			struct wav_marker *marker = get_marker(wav, cue_id);
-			if (marker == NULL)
-				return warnings | WSR_ERROR_TOO_MANY_MARKERS;
-
-			if (marker->in_cue)
-				return warnings | WSR_ERROR_CUE_DUPLICATE_IDS;
-
-			marker->position     = cop_ld_ule32(cue + 20);
-			marker->in_cue = 1;
-			cue += 24;
-		}
-	}
-
-	if (smpl_ck != NULL) {
-		size_t         smpl_len      = smpl_ck->size;
-		unsigned char *smpl          = smpl_ck->data;
-		uint_fast32_t  nloop;
-
-		if (smpl_len < 36 || (smpl_len < (36 + (nloop = cop_ld_ule32(smpl + 28)) * 24 + cop_ld_ule32(smpl + 32))))
-			return warnings | WSR_ERROR_SMPL_INVALID;
-
-		wav->has_pitch_info = 1;
-		wav->pitch_info = (((uint_fast64_t)cop_ld_ule32(smpl + 12)) << 32) | cop_ld_ule32(smpl + 16);
-
-		smpl += 36;
-		for (i = 0; i < nloop; i++) {
-			uint_fast32_t      id    = cop_ld_ule32(smpl);
-			uint_fast32_t      start = cop_ld_ule32(smpl + 8);
-			uint_fast32_t      end   = cop_ld_ule32(smpl + 12);
-			uint_fast32_t      length;
-			unsigned           j;
-			struct wav_marker *marker;
-
-			if (start > end)
-				return warnings | WSR_ERROR_SMPL_INVALID;
-
-			length = end - start + 1;
-
-			for (j = 0; j < wav->nb_marker; j++) {
-				/* If the loop has the same id as some metadata, but the
-				 * metadata has no cue point, we can associate it with this
-				 * metadata item. */
-				if (id == wav->markers[j].id && !wav->markers[j].in_cue)
-					break;
-
-				/* If the loop matches an existing loop, we can associate it
-				 * with this metadata item. */
-				if  (   (wav->markers[j].in_cue && wav->markers[j].position == start)
-					&&  (   (wav->markers[j].has_length && wav->markers[j].length == length)
-				        || !wav->markers[j].has_length
-				        )
-				    )
-					break;
-			}
-
-			if (j < wav->nb_marker) {
-				marker        = wav->markers + j;
-			} else {
-				marker        = get_new_marker(wav);
-			}
-
-			marker->position   = start;
-			marker->in_smpl    = 1;
-			marker->length     = length;
-			marker->has_length = 1;
-
-			smpl += 24;
-		}
-	}
 
 	{
 		unsigned dest_idx;
@@ -451,16 +467,18 @@ unsigned load_wave_sample(struct wav_sample *wav, unsigned char *buf, size_t buf
 	}
 
 	wav->nb_unsupported = 0;
+	wav->nb_marker = 0;
+	wav->has_pitch_info = 0;
+	wav->pitch_info = 0;
+	memset(wav->info, 0, sizeof(wav->info));
 
 	info.data = NULL;
 	adtl.data = NULL;
-	cue.data = NULL;
+	cue.data  = NULL;
 	smpl.data = NULL;
 	fact.data = NULL;
 	data.data = NULL;
-	fmt.data = NULL;
-
-	memset(wav->info, 0, sizeof(wav->info));
+	fmt.data  = NULL;
 
 	while (riff_sz >= 8) {
 		uint_fast32_t      ckid           = cop_ld_ule32(buf);
@@ -553,9 +571,23 @@ unsigned load_wave_sample(struct wav_sample *wav, unsigned char *buf, size_t buf
 		return warnings | WSR_ERROR_NOT_A_WAVE;
 	}
 
-	/* If there was a RIFF INFO chunk, load the metadata items. */
 	if (info.data != NULL) {
 		if (WSR_ERROR_CODE(warnings |= load_info(wav->info, info.data, info.size)))
+			return warnings;
+	}
+
+	if (adtl.data != NULL) {
+		if (WSR_ERROR_CODE(warnings |= load_adtl(wav, adtl.data, adtl.size)))
+			return warnings;
+	}
+
+	if (cue.data != NULL) {
+		if (WSR_ERROR_CODE(warnings |= load_cue(wav, cue.data, cue.size)))
+			return warnings;
+	}
+
+	if (smpl.data != NULL) {
+		if (WSR_ERROR_CODE(warnings |= load_smpl(wav, smpl.data, smpl.size)))
 			return warnings;
 	}
 
