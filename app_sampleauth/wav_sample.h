@@ -128,7 +128,8 @@ struct wav_sample {
 	/* Chunks which were found in the wave file which cannot be handled by
 	 * this implementation. This is anything other than: INFO, fmt, data, cue,
 	 * smpl, adtl and fact. */
-	struct wav_chunk          *unsupported;
+	unsigned                   nb_unsupported;
+	struct wav_chunk           unsupported[MAX_CHUNKS];
 };
 
 static COP_ATTR_UNUSED uint_fast16_t get_container_size(int format)

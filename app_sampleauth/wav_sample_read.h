@@ -26,16 +26,6 @@
 struct wav {
 	struct wav_sample     sample;
 
-	unsigned              nb_chunks;
-	struct wav_chunk      chunks[MAX_CHUNKS];
-
-	struct wav_chunk     *adtl;
-	struct wav_chunk     *cue;
-	struct wav_chunk     *smpl;
-	struct wav_chunk     *fact;
-	struct wav_chunk     *data;
-
-	struct wav_chunk     *fmt;
 };
 
 #define FLAG_RESET                (1)

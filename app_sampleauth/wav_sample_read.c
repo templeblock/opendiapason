@@ -425,8 +425,15 @@ static unsigned load_info(char **infoset, unsigned char *buf, size_t sz)
 unsigned load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, const char *filename, unsigned flags)
 {
 	uint_fast32_t riff_sz;
-	struct wav_chunk **next_unsupported;
 	unsigned warnings = 0;
+
+	struct wav_chunk info;
+	struct wav_chunk adtl;
+	struct wav_chunk cue;
+	struct wav_chunk smpl;
+	struct wav_chunk fact;
+	struct wav_chunk data;
+	struct wav_chunk fmt;
 
 	if  (   (bufsz < 12)
 	    ||  (cop_ld_ule32(buf) != RIFF_ID('R', 'I', 'F', 'F'))
@@ -444,22 +451,24 @@ unsigned load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, con
 		riff_sz = (uint_fast32_t)bufsz;
 	}
 
-	wav->nb_chunks = 0;
-	wav->fmt  = NULL;
-	wav->fact = NULL;
-	wav->data = NULL;
-	wav->adtl = NULL;
-	wav->cue  = NULL;
-	wav->smpl = NULL;
+	wav->sample.nb_unsupported = 0;
+
+	info.data = NULL;
+	adtl.data = NULL;
+	cue.data = NULL;
+	smpl.data = NULL;
+	fact.data = NULL;
+	data.data = NULL;
+	fmt.data = NULL;
+
 	memset(wav->sample.info, 0, sizeof(wav->sample.info));
-	next_unsupported = &(wav->sample.unsupported);
 
 	while (riff_sz >= 8) {
 		uint_fast32_t      ckid   = cop_ld_ule32(buf);
 		uint_fast32_t      cksz   = cop_ld_ule32(buf + 4);
 		int                required_chunk = 0;
 		unsigned char     *ckbase = buf + 8;
-		struct wav_chunk **known_ptr = NULL;
+		struct wav_chunk  *known_ptr = NULL;
 
 		riff_sz -= 8;
 		buf     += 8;
@@ -472,19 +481,13 @@ unsigned load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, con
 			riff_sz -= cksz + (cksz & 1);
 		}
 
-		if (wav->nb_chunks >= MAX_CHUNKS)
-			return warnings | WSR_ERROR_TOO_MANY_CHUNKS;
-
 		if (ckid == RIFF_ID('L', 'I', 'S', 'T') && cksz >= 4) {
 			switch (cop_ld_ule32(ckbase)) {
 				case RIFF_ID('a', 'd', 't', 'l'):
-					known_ptr = &wav->adtl;
+					known_ptr = &adtl;
 					break;
 				case RIFF_ID('I', 'N', 'F', 'O'):
-					if (!(flags & FLAG_RESET)) {
-						if (WSR_ERROR_CODE(warnings |= load_info(wav->sample.info, ckbase, cksz)))
-							return warnings;
-					}
+					known_ptr = &info;
 					break;
 				default:
 					break;
@@ -492,22 +495,22 @@ unsigned load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, con
 		} else {
 			switch (ckid) {
 				case RIFF_ID('d', 'a', 't', 'a'):
-					known_ptr = &wav->data;
+					known_ptr = &data;
 					required_chunk = 1;
 					break;
 				case RIFF_ID('f', 'm', 't', ' '):
-					known_ptr = &wav->fmt;
+					known_ptr = &fmt;
 					required_chunk = 1;
 					break;
 				case RIFF_ID('f', 'a', 'c', 't'):
-					known_ptr = &wav->fact;
+					known_ptr = &fact;
 					required_chunk = 1;
 					break;
 				case RIFF_ID('c', 'u', 'e', ' '):
-					known_ptr = &wav->cue;
+					known_ptr = &cue;
 					break;
 				case RIFF_ID('s', 'm', 'p', 'l'):
-					known_ptr = &wav->smpl;
+					known_ptr = &smpl;
 					break;
 				default:
 					break;
@@ -518,42 +521,43 @@ unsigned load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, con
 		    ||  (known_ptr != NULL && !(flags & FLAG_RESET))
 		    ||  (known_ptr == NULL && (flags & FLAG_PRESERVE_UNKNOWN))
 		    ) {
-			struct wav_chunk *ck = wav->chunks + wav->nb_chunks++;
 
 			if (known_ptr != NULL) {
 				/* There are no chunks which we know how to interpret which
 				 * can occur more than once. */
-				if (*known_ptr != NULL)
+				if (known_ptr->data != NULL)
 					return warnings | WSR_ERROR_DUPLICATE_CHUNKS;
-
-				ck->next   = NULL;
-				*known_ptr = ck;
 			} else {
-				*next_unsupported = ck;
-				next_unsupported  = &(ck->next);
+				if (wav->sample.nb_unsupported >= MAX_CHUNKS)
+					return warnings | WSR_ERROR_TOO_MANY_CHUNKS;
+
+				known_ptr = wav->sample.unsupported + wav->sample.nb_unsupported++;
 			}
 
-			ck->id         = ckid;
-			ck->size       = cksz;
-			ck->data       = ckbase;
+			known_ptr->id   = ckid;
+			known_ptr->size = cksz;
+			known_ptr->data = ckbase;
 		}
 	}
 
-	*next_unsupported = NULL;
+	if (info.data != NULL) {
+		if (WSR_ERROR_CODE(warnings |= load_info(wav->sample.info, info.data, info.size)))
+			return warnings;
+	}
 
-	if (wav->fmt == NULL || wav->data == NULL)
+	if (fmt.data == NULL || data.data == NULL)
 		return warnings | WSR_ERROR_NOT_A_WAVE;
 
-	if (WSR_ERROR_CODE(warnings |= load_sample_format(&(wav->sample.format), wav->fmt->data, wav->fmt->size)))
+	if (WSR_ERROR_CODE(warnings |= load_sample_format(&(wav->sample.format), fmt.data, fmt.size)))
 		return warnings;
 
 	{
 		uint_fast16_t block_align = (wav->sample.format.channels * get_container_size(wav->sample.format.format));
-		wav->sample.data        = wav->data->data;
-		wav->sample.data_frames = wav->data->size / block_align;
-		if (wav->data->size % block_align)
+		wav->sample.data        = data.data;
+		wav->sample.data_frames = data.size / block_align;
+		if (data.size % block_align)
 			return warnings | WSR_ERROR_DATA_INVALID;
 	}
 
-	return warnings | load_markers(&(wav->sample), filename, flags, wav->adtl, wav->cue, wav->smpl);
+	return warnings | load_markers(&(wav->sample), filename, flags, &adtl, &cue, &smpl);
 }
