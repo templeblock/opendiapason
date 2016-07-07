@@ -426,7 +426,6 @@ unsigned load_wave_sample(struct wav_sample *wav, unsigned char *buf, size_t buf
 {
 	uint_fast32_t riff_sz;
 	unsigned warnings = 0;
-
 	struct wav_chunk info;
 	struct wav_chunk adtl;
 	struct wav_chunk cue;
@@ -464,15 +463,17 @@ unsigned load_wave_sample(struct wav_sample *wav, unsigned char *buf, size_t buf
 	memset(wav->info, 0, sizeof(wav->info));
 
 	while (riff_sz >= 8) {
-		uint_fast32_t      ckid   = cop_ld_ule32(buf);
-		uint_fast32_t      cksz   = cop_ld_ule32(buf + 4);
+		uint_fast32_t      ckid           = cop_ld_ule32(buf);
+		uint_fast32_t      cksz           = cop_ld_ule32(buf + 4);
 		int                required_chunk = 0;
-		unsigned char     *ckbase = buf + 8;
-		struct wav_chunk  *known_ptr = NULL;
+		unsigned char     *ckbase         = buf + 8;
+		struct wav_chunk  *known_ptr      = NULL;
 
+		/* Compute the amount of data left and move buf to point to the next
+		 * chunk. We always truncate the length of the chunk if it would go
+		 * beyond the length of the main RIFF body. */
 		riff_sz -= 8;
 		buf     += 8;
-
 		if (cksz >= riff_sz) {
 			cksz    = riff_sz;
 			riff_sz = 0;
@@ -481,42 +482,31 @@ unsigned load_wave_sample(struct wav_sample *wav, unsigned char *buf, size_t buf
 			riff_sz -= cksz + (cksz & 1);
 		}
 
+		/* Figure out if this is a required chunk, a "known" chunk or if we
+		 * don't know what the chunk is for. */
 		if (ckid == RIFF_ID('L', 'I', 'S', 'T') && cksz >= 4) {
 			switch (cop_ld_ule32(ckbase)) {
-				case RIFF_ID('a', 'd', 't', 'l'):
-					known_ptr = &adtl;
-					break;
-				case RIFF_ID('I', 'N', 'F', 'O'):
-					known_ptr = &info;
-					break;
-				default:
-					break;
+				case RIFF_ID('a', 'd', 't', 'l'): known_ptr = &adtl; break;
+				case RIFF_ID('I', 'N', 'F', 'O'): known_ptr = &info; break;
+				default: break;
 			}
 		} else {
 			switch (ckid) {
-				case RIFF_ID('d', 'a', 't', 'a'):
-					known_ptr = &data;
-					required_chunk = 1;
-					break;
-				case RIFF_ID('f', 'm', 't', ' '):
-					known_ptr = &fmt;
-					required_chunk = 1;
-					break;
-				case RIFF_ID('f', 'a', 'c', 't'):
-					known_ptr = &fact;
-					required_chunk = 1;
-					break;
-				case RIFF_ID('c', 'u', 'e', ' '):
-					known_ptr = &cue;
-					break;
-				case RIFF_ID('s', 'm', 'p', 'l'):
-					known_ptr = &smpl;
-					break;
-				default:
-					break;
+				case RIFF_ID('d', 'a', 't', 'a'): known_ptr = &data; required_chunk = 1; break;
+				case RIFF_ID('f', 'm', 't', ' '): known_ptr = &fmt;  required_chunk = 1; break;
+				case RIFF_ID('f', 'a', 'c', 't'): known_ptr = &fact; required_chunk = 1; break;
+				case RIFF_ID('c', 'u', 'e', ' '): known_ptr = &cue;  break;
+				case RIFF_ID('s', 'm', 'p', 'l'): known_ptr = &smpl; break;
+				default: break;
 			}
 		}
 
+		/* If the chunk is required OR we know what the chunk is for and we
+		 * are not resetting OR we don't know what the chunks is for but we
+		 * for whatever reason want to preserve chunks we don't know how to
+		 * handle: figure out where we need to place the information. Also,
+		 * all the chunks which are "known" we do not support duplicates of,
+		 * so figure out if that's happened here also. */ 
 		if  (   required_chunk
 		    ||  (known_ptr != NULL && !(flags & FLAG_RESET))
 		    ||  (known_ptr == NULL && (flags & FLAG_PRESERVE_UNKNOWN))
@@ -540,23 +530,33 @@ unsigned load_wave_sample(struct wav_sample *wav, unsigned char *buf, size_t buf
 		}
 	}
 
+	if (fmt.data != NULL && data.data != NULL) {
+		uint_fast16_t block_align;
+
+		/* Load the format chunk into our "simple" format descriptor. */
+		if (WSR_ERROR_CODE(warnings |= load_sample_format(&(wav->format), fmt.data, fmt.size)))
+			return warnings;
+
+		/* Compute the number of frames in the audio. */
+		block_align      = (wav->format.channels * get_container_size(wav->format.format));
+
+		/* If the data chunk does not contain a whole multiple of frames, it
+		 * is missing audio and we should probably (??) abort the load. */
+		if (data.size % block_align)
+			return warnings | WSR_ERROR_DATA_INVALID;
+
+		wav->data        = data.data;
+		wav->data_frames = data.size / block_align;
+	} else {
+		/* The wave file was missing the format or the data chunk. Totally
+		 * broken. */
+		return warnings | WSR_ERROR_NOT_A_WAVE;
+	}
+
+	/* If there was a RIFF INFO chunk, load the metadata items. */
 	if (info.data != NULL) {
 		if (WSR_ERROR_CODE(warnings |= load_info(wav->info, info.data, info.size)))
 			return warnings;
-	}
-
-	if (fmt.data == NULL || data.data == NULL)
-		return warnings | WSR_ERROR_NOT_A_WAVE;
-
-	if (WSR_ERROR_CODE(warnings |= load_sample_format(&(wav->format), fmt.data, fmt.size)))
-		return warnings;
-
-	{
-		uint_fast16_t block_align = (wav->format.channels * get_container_size(wav->format.format));
-		wav->data        = data.data;
-		wav->data_frames = data.size / block_align;
-		if (data.size % block_align)
-			return warnings | WSR_ERROR_DATA_INVALID;
 	}
 
 	return warnings | load_markers(wav, filename, flags, &adtl, &cue, &smpl);
