@@ -23,11 +23,6 @@
 
 #include "wav_sample.h"
 
-struct wav {
-	struct wav_sample     sample;
-
-};
-
 #define FLAG_RESET                (1)
 #define FLAG_PRESERVE_UNKNOWN     (2)
 #define FLAG_PREFER_SMPL_LOOPS    (4)
@@ -56,7 +51,7 @@ struct wav {
 
 #define WSR_ERROR_CODE(x) (x & 0xFFu)
 
-unsigned load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, const char *filename, unsigned flags);
+unsigned load_wave_sample(struct wav_sample *wav, unsigned char *buf, size_t bufsz, const char *filename, unsigned flags);
 
 void sort_and_reassign_ids(struct wav_sample *wav);
 

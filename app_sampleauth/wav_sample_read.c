@@ -422,7 +422,7 @@ static unsigned load_info(char **infoset, unsigned char *buf, size_t sz)
 	return warnings;
 }
 
-unsigned load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, const char *filename, unsigned flags)
+unsigned load_wave_sample(struct wav_sample *wav, unsigned char *buf, size_t bufsz, const char *filename, unsigned flags)
 {
 	uint_fast32_t riff_sz;
 	unsigned warnings = 0;
@@ -451,7 +451,7 @@ unsigned load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, con
 		riff_sz = (uint_fast32_t)bufsz;
 	}
 
-	wav->sample.nb_unsupported = 0;
+	wav->nb_unsupported = 0;
 
 	info.data = NULL;
 	adtl.data = NULL;
@@ -461,7 +461,7 @@ unsigned load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, con
 	data.data = NULL;
 	fmt.data = NULL;
 
-	memset(wav->sample.info, 0, sizeof(wav->sample.info));
+	memset(wav->info, 0, sizeof(wav->info));
 
 	while (riff_sz >= 8) {
 		uint_fast32_t      ckid   = cop_ld_ule32(buf);
@@ -528,10 +528,10 @@ unsigned load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, con
 				if (known_ptr->data != NULL)
 					return warnings | WSR_ERROR_DUPLICATE_CHUNKS;
 			} else {
-				if (wav->sample.nb_unsupported >= MAX_CHUNKS)
+				if (wav->nb_unsupported >= MAX_CHUNKS)
 					return warnings | WSR_ERROR_TOO_MANY_CHUNKS;
 
-				known_ptr = wav->sample.unsupported + wav->sample.nb_unsupported++;
+				known_ptr = wav->unsupported + wav->nb_unsupported++;
 			}
 
 			known_ptr->id   = ckid;
@@ -541,23 +541,23 @@ unsigned load_wave_sample(struct wav *wav, unsigned char *buf, size_t bufsz, con
 	}
 
 	if (info.data != NULL) {
-		if (WSR_ERROR_CODE(warnings |= load_info(wav->sample.info, info.data, info.size)))
+		if (WSR_ERROR_CODE(warnings |= load_info(wav->info, info.data, info.size)))
 			return warnings;
 	}
 
 	if (fmt.data == NULL || data.data == NULL)
 		return warnings | WSR_ERROR_NOT_A_WAVE;
 
-	if (WSR_ERROR_CODE(warnings |= load_sample_format(&(wav->sample.format), fmt.data, fmt.size)))
+	if (WSR_ERROR_CODE(warnings |= load_sample_format(&(wav->format), fmt.data, fmt.size)))
 		return warnings;
 
 	{
-		uint_fast16_t block_align = (wav->sample.format.channels * get_container_size(wav->sample.format.format));
-		wav->sample.data        = data.data;
-		wav->sample.data_frames = data.size / block_align;
+		uint_fast16_t block_align = (wav->format.channels * get_container_size(wav->format.format));
+		wav->data        = data.data;
+		wav->data_frames = data.size / block_align;
 		if (data.size % block_align)
 			return warnings | WSR_ERROR_DATA_INVALID;
 	}
 
-	return warnings | load_markers(&(wav->sample), filename, flags, &adtl, &cue, &smpl);
+	return warnings | load_markers(wav, filename, flags, &adtl, &cue, &smpl);
 }

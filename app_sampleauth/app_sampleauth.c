@@ -196,7 +196,7 @@ static void dump_metadata(const struct wav_sample *wav)
 	}
 }
 
-static int dump_sample(const struct wav *wav, const char *filename, int store_cue_loops)
+static int dump_sample(const struct wav_sample *wav, const char *filename, int store_cue_loops)
 {
 	int err = 0;
 	size_t sz;
@@ -205,14 +205,14 @@ static int dump_sample(const struct wav *wav, const char *filename, int store_cu
 	FILE *f;
 
 	/* Find size of entire wave file then allocate memory for it. */
-	wav_sample_serialise(&wav->sample, NULL, &sz, store_cue_loops);
+	wav_sample_serialise(wav, NULL, &sz, store_cue_loops);
 	if ((data = malloc(sz)) == NULL) {
 		fprintf(stderr, "out of memory\n");
 		return -1;
 	}
 
 	/* Serialise the wave file to memory. */
-	wav_sample_serialise(&wav->sample, data, &sz2, store_cue_loops);
+	wav_sample_serialise(wav, data, &sz2, store_cue_loops);
 
 	/* serialise should always return the same size that was queried. */
 	assert(sz2 == sz);
@@ -372,7 +372,7 @@ static int expect_end_of_args(char **cmd_str)
 	return 0;
 }
 
-static int handle_loop(struct wav *wav, char *cmd_str)
+static int handle_loop(struct wav_sample *wav, char *cmd_str)
 {
 	uint_fast64_t start;
 	uint_fast64_t duration;
@@ -391,32 +391,32 @@ static int handle_loop(struct wav *wav, char *cmd_str)
 		return -1;
 	}
 
-	if (wav->sample.nb_marker >= MAX_MARKERS) {
+	if (wav->nb_marker >= MAX_MARKERS) {
 		fprintf(stderr, "cannot add another loop - too much marker metadata\n");
 		return -1;
 	}
 
-	wav->sample.markers[wav->sample.nb_marker].name       = name;
-	wav->sample.markers[wav->sample.nb_marker].desc       = desc;
-	wav->sample.markers[wav->sample.nb_marker].length     = duration;
-	wav->sample.markers[wav->sample.nb_marker].has_length = 1;
-	wav->sample.markers[wav->sample.nb_marker].position   = start;
-	wav->sample.nb_marker++;
+	wav->markers[wav->nb_marker].name       = name;
+	wav->markers[wav->nb_marker].desc       = desc;
+	wav->markers[wav->nb_marker].length     = duration;
+	wav->markers[wav->nb_marker].has_length = 1;
+	wav->markers[wav->nb_marker].position   = start;
+	wav->nb_marker++;
 
 	return 0;
 }
 
-static int handle_cue(struct wav *wav, char *cmd_str)
+static int handle_cue(struct wav_sample *wav, char *cmd_str)
 {
 	return 0;
 }
 
-static int handle_smplpitch(struct wav *wav, char *cmd_str)
+static int handle_smplpitch(struct wav_sample *wav, char *cmd_str)
 {
 	uint_fast64_t pitch;
 
 	if (*cmd_str == '\0') {
-		wav->sample.has_pitch_info = 0;
+		wav->has_pitch_info = 0;
 		return 0;
 	}
 
@@ -430,20 +430,20 @@ static int handle_smplpitch(struct wav *wav, char *cmd_str)
 		return -1;
 	}
 
-	wav->sample.pitch_info = pitch;
-	wav->sample.has_pitch_info = 1;
+	wav->pitch_info = pitch;
+	wav->has_pitch_info = 1;
 
 	return 0;
 }
 
-static int handle_info(struct wav *wav, char *ck, char *cmd_str)
+static int handle_info(struct wav_sample *wav, char *ck, char *cmd_str)
 {
 	if (strlen(ck) == 4) {
 		unsigned i;
 		uint_fast32_t id = ((uint_fast32_t)ck[0]) | (((uint_fast32_t)ck[1]) << 8) | (((uint_fast32_t)ck[2]) << 16) | (((uint_fast32_t)ck[3]) << 24);
 		for (i = 0; i < NB_SUPPORTED_INFO_TAGS; i++) {
 			if (id == SUPPORTED_INFO_TAGS[i]) {
-				if (expect_null_or_str(&(wav->sample.info[i]), &cmd_str) || expect_end_of_args(&cmd_str)) {
+				if (expect_null_or_str(&(wav->info[i]), &cmd_str) || expect_end_of_args(&cmd_str)) {
 					fprintf(stderr, "info commands requires exactly one string or 'null' argument\n");
 					return -1;
 				}
@@ -455,7 +455,7 @@ static int handle_info(struct wav *wav, char *ck, char *cmd_str)
 	return -1;
 }
 
-static int handle_metastring(struct wav *wav, char *cmd_str)
+static int handle_metastring(struct wav_sample *wav, char *cmd_str)
 {
 	char *metastring = cmd_str;
 	char *command;
@@ -600,7 +600,7 @@ int main(int argc, char *argv[])
 	unsigned uerr;
 	size_t sz;
 	unsigned char *buf;
-	struct wav wav;
+	struct wav_sample wav;
 	unsigned i;
 
 	if (argc < 2) {
@@ -620,13 +620,13 @@ int main(int argc, char *argv[])
 	}
 
 	if (opts.flags & FLAG_STRIP_EVENT_METADATA) {
-		for (i = 0; i < wav.sample.nb_marker; i++) {
-			wav.sample.markers[i].name = NULL;
-			wav.sample.markers[i].desc = NULL;
+		for (i = 0; i < wav.nb_marker; i++) {
+			wav.markers[i].name = NULL;
+			wav.markers[i].desc = NULL;
 		}
 	}
 
-	sort_and_reassign_ids(&wav.sample);
+	sort_and_reassign_ids(&wav);
 
 	if (err == 0 && (opts.flags & FLAG_INPUT_METADATA)) {
 		char c;
@@ -649,10 +649,10 @@ int main(int argc, char *argv[])
 		err = handle_metastring(&wav, opts.set_items[i]);
 	}
 
-	sort_and_reassign_ids(&wav.sample);
+	sort_and_reassign_ids(&wav);
 
 	if (err == 0 && (opts.flags & FLAG_OUTPUT_METADATA))
-		dump_metadata(&wav.sample);
+		dump_metadata(&wav);
 
 	if (err == 0 && opts.output_filename != NULL)
 		err = dump_sample(&wav, opts.output_filename, (opts.flags & FLAG_WRITE_CUE_LOOPS) == FLAG_WRITE_CUE_LOOPS);
