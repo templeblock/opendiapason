@@ -21,9 +21,10 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_LIST_DIR}/../cmakemod
 find_package(Portaudio REQUIRED)
 include_directories(sampletune ${PORTAUDIO_INCLUDE_DIRS})
 add_executable(sampletune app_sampletune.c)
-target_link_libraries(sampletune od_audioengine fftset)
+target_link_libraries(sampletune od_audioengine fftset smplwav)
 target_link_libraries(sampletune ${PORTAUDIO_LIBRARIES})
 
+add_subdirectory("../../smplwav" "${CMAKE_CURRENT_BINARY_DIR}/smplwav_dep")
 add_subdirectory("../../cop" "${CMAKE_CURRENT_BINARY_DIR}/cop_dep")
 add_subdirectory("../../fftset" "${CMAKE_CURRENT_BINARY_DIR}/fftset_dep")
 add_subdirectory("../../opendiapason" "${CMAKE_CURRENT_BINARY_DIR}/opendiapason_dep")

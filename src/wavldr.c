@@ -26,293 +26,65 @@
 #include "decode_least16x2.h"
 #include "wavldr.h"
 #include "wav_dumper.h"
-
-struct wave_cks {
-	uint_fast32_t  datasz;
-	unsigned char *data;
-	uint_fast32_t  smplsz;
-	unsigned char *smpl;
-	uint_fast32_t  fmtsz;
-	unsigned char *fmt;
-	uint_fast32_t  cuesz;
-	unsigned char *cue;
-	uint_fast32_t  adtlsz;
-	unsigned char *adtl;
-};
-
-#define MAKE_FOURCC(a, b, c, d) \
-	(   (uint_fast32_t)(a) \
-	|   (((uint_fast32_t)(b)) << 8) \
-	|   (((uint_fast32_t)(c)) << 16) \
-	|   (((uint_fast32_t)(d)) << 24) \
-	)
-
-static const char *load_wave_cks(struct wave_cks *cks, unsigned char *buf, size_t bufsz)
-{
-	{
-		uint_fast32_t sz;
-		if (   bufsz < 12
-		   ||  cop_ld_ule32(buf) != MAKE_FOURCC('R', 'I', 'F', 'F')
-		   ||  ((sz = cop_ld_ule32(buf + 4)) < 4)
-		   ||  cop_ld_ule32(buf + 8) != MAKE_FOURCC('W', 'A', 'V', 'E')
-		   )
-			return "not a wave file";
-
-		buf   += 12; /* Seek past header data */
-		bufsz -= 12; /* Remove header data from buffer size */
-		sz    -= 4;  /* Remove wave form id from chunk size */
-
-		/* If the riff chunk size is less than the file size, truncate the
-		 * file size. */
-		if (sz < bufsz)
-			bufsz = sz;
-	}
-
-	memset(cks, 0, sizeof(*cks));
-
-	while (bufsz > 8) {
-		uint_fast32_t cksz;
-
-		bufsz  -= 8;
-		cksz = cop_ld_ule32(buf + 4);
-		if (cksz > bufsz)
-			cksz = bufsz;
-
-		switch (cop_ld_ule32(buf)) {
-			case MAKE_FOURCC('d', 'a', 't', 'a'):
-				cks->data   = buf + 8;
-				cks->datasz = cksz;
-				break;
-			case MAKE_FOURCC('c', 'u', 'e', ' '):
-				cks->cue    = buf + 8;
-				cks->cuesz  = cksz;
-				break;
-			case MAKE_FOURCC('s', 'm', 'p', 'l'):
-				cks->smpl   = buf + 8;
-				cks->smplsz = cksz;
-				break;
-			case MAKE_FOURCC('f', 'm', 't', ' '):
-				cks->fmt    = buf + 8;
-				cks->fmtsz  = cksz;
-				break;
-			case MAKE_FOURCC('L', 'I', 'S', 'T'):
-				if (cksz >= 4 && cop_ld_ule32(buf + 8) == MAKE_FOURCC('a', 'd', 't', 'l')) {
-					cks->adtl    = buf + 12;
-					cks->adtlsz  = cksz - 4;
-				}
-				break;
-		}
-
-		cksz += (cksz & 1); /* pad byte */
-		if (cksz > bufsz)
-			break;
-
-		buf    += 8 + cksz;
-		bufsz  -= cksz;
-	}
-
-	return NULL;
-}
-
+#include "smplwav/smplwav_mount.h"
 #include "bufcvt.h"
-
-static const char *setup_as(struct as_data *as, unsigned char *smpl, size_t smpl_sz, uint_fast32_t rate, uint_fast32_t total_length, unsigned load_format)
-{
-	uint_fast32_t spec_data_sz;
-	double note;
-	unsigned i;
-
-	as->data        = NULL;
-	as->next        = NULL;
-	as->load_format = load_format;
-	as->period      = 0.0f;
-	as->nloop       = 0;
-	as->length      = 0;
-
-	if (smpl == NULL)
-		return NULL;
-
-	if (smpl_sz < 36)
-		return "invalid sampler chunk";
-
-	/* 0: mfg
-	 * 4: product
-	 * 8: period
-	 * 12: unity note
-	 * 16: pitch frac
-	 * 20: smpte fmt
-	 * 24: smpte offset
-	 * 28: num loops
-	 * 32: specific data sz */
-
-	/* loop:
-	 *   0: ident
-	 *   4: type
-	 *   8: start
-	 *   12: end
-	 *   16: frac
-	 *   20: play count */
-	spec_data_sz  = cop_ld_ule32(smpl + 32);
-	note          = (cop_ld_ule32(smpl + 16) / (65536.0 * 65536.0)) + cop_ld_ule32(smpl + 12);
-	as->nloop     = cop_ld_ule32(smpl + 28);
-	as->period    = rate / (440.0f * powf(2.0f, (note - 69.0f) / 12.0f));
-
-	if (as->nloop > MAX_LOOP)
-		return "too many loops";
-
-	if (smpl_sz < 36 + (uint_fast64_t)as->nloop * 24 + spec_data_sz)
-		return "invalid sampler chunk";
-
-	if (as->nloop == 0)
-		return NULL;
-
-	for (i = 0; i < as->nloop; i++) {
-		as->loops[2*i+0] = cop_ld_ule32(smpl + 36 + i * 24 + 8);
-		as->loops[2*i+1] = cop_ld_ule32(smpl + 36 + i * 24 + 12);
-		if (as->loops[2*i+0] > as->loops[2*i+1] || as->loops[2*i+1] >= total_length) {
-			as->length = 0;
-			return "invalid sampler loop";
-		}
-		if (as->loops[2*i+1] >= as->length) {
-			as->length             = as->loops[2*i+1] + 1;
-			as->atk_end_loop_start = as->loops[2*i+0];
-		}
-	}
-
-	return NULL;
-}
-
-static const char *setup_rel(struct rel_data *rel, const unsigned char *cue, size_t cue_sz, const unsigned char *adtl, size_t adtl_sz, uint_fast32_t as_len, size_t block_align, uint_fast32_t total_length, unsigned load_format)
-{
-	uint_fast32_t last_rel_pos = 0;
-
-	rel->data = NULL;
-	rel->next = NULL;
-	rel->load_format = load_format;
-	rel->position = 0;
-	rel->length = 0;
-
-	if (cue != NULL) {
-		uint_fast32_t nb_cue;
-		uint_fast32_t i;
-
-		if (cue_sz < 4)
-			return "invalid cue chunk";
-		nb_cue = cop_ld_ule32(cue + 0);
-		if (cue_sz < nb_cue * 24 + 4)
-			return "invalid cue chunk";
-
-		/* 0             nb_cuepoints
-		 * 4 + 24*i + 0  dwName
-		 * 4 + 24*i + 4  dwPosition
-		 * 4 + 24*i + 8  fccChunk
-		 * 4 + 24*i + 12 dwChunkStart
-		 * 4 + 24*i + 16 dwBlockStart
-		 * 4 + 24*i + 20 dwSampleOffset
-		 */
-
-		for (i = 0; i < nb_cue; i++) {
-			/* We ignore the cue ID because too much software incorrectly
-			 * associates it with a loop. We instead look for a cue point that
-			 * is past the end of the last loop. */
-			uint_fast32_t cueid         = cop_ld_ule32(cue + 4 + i * 24 + 0);
-			uint_fast32_t block_start   = cop_ld_ule32(cue + 4 + i * 24 + 16);
-			uint_fast32_t sample_offset = cop_ld_ule32(cue + 4 + i * 24 + 20);
-			uint_fast32_t relpos        = sample_offset + block_start / block_align;
-			size_t        adpos;
-			int           isloop = 0;
-
-			if (cop_ld_ule32(cue + 4 + i * 24 + 12) != 0)
-				continue;
-			if (cop_ld_ule32(cue + 4 + i * 24 + 8) != 0x61746164ul)
-				continue;
-
-			for (adpos = 0; adpos + 12 <= adtl_sz; ) {
-				uint_fast32_t fccsz = cop_ld_ule32(adtl + adpos + 4);
-				if (fccsz >= 20) {
-					uint_fast32_t dur = cop_ld_ule32(adtl + adpos + 12);
-					if (cop_ld_ule32(adtl + adpos) == MAKE_FOURCC('l', 't', 'x', 't') && cop_ld_ule32(adtl + adpos + 8) == cueid && dur > 0) {
-						isloop = 1;
-						break;
-					}
-				}
-				adpos += fccsz + 8;
-			}
-
-			if (isloop)
-				continue;
-
-			if (relpos > last_rel_pos)
-				last_rel_pos = relpos;
-		}
-	}
-
-	if (last_rel_pos == 0 && as_len)
-		return NULL;
-
-	if (as_len && last_rel_pos && last_rel_pos < as_len) {
-		last_rel_pos = as_len;
-		printf("shortened release as it was positioned inside a loop\n");
-	}
-
-	if (last_rel_pos >= total_length)
-		return "invalid cue chunk";
-
-	rel->position = last_rel_pos;
-	rel->length   = total_length - last_rel_pos;
-
-	return NULL;
-}
 
 const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, size_t fsz, unsigned load_format)
 {
-	struct wave_cks cks;
 	unsigned        i, ch;
-	size_t          block_align;
-	uint_fast32_t   total_length;
 	float          *buffers;
+	struct smplwav  wav;
 
-	const char *err = load_wave_cks(&cks, buf, fsz);
-	if (err != NULL)
-		return err;
+	if (SMPLWAV_ERROR_CODE(smplwav_mount(&wav, buf, fsz, SMPLWAV_MOUNT_PREFER_CUE_LOOPS)))
+		return "could not parse wave file";
 
-	if (cks.data == NULL || cks.fmt == NULL)
-		return "wave file missing format or data chunk";
+	if (wav.format.format == SMPLWAV_FORMAT_FLOAT32 || (wav.format.bits_per_sample != 16 && wav.format.bits_per_sample != 24))
+		return "can only load 16 or 24 bit PCM wave files";
 
-	{
-		/* 0 fmt_tag
-		 * 2 channels
-		 * 4 sample rate
-		 * 8 avg bytes per sec
-		 * 12 block align
-		 * 14 bits per sample
-		 * 16 cbsize */
-		if (cks.fmtsz < 16)
-			return "invalid format chunk";
+	mw->native_bits     = wav.format.bits_per_sample;
+	mw->channels        = wav.format.channels;
+	mw->rate            = wav.format.sample_rate;
+	mw->as.data         = NULL;
+	mw->as.next         = NULL;
+	mw->rel.data        = NULL;
+	mw->rel.next        = NULL;
+	mw->as.load_format  = load_format;
+	mw->rel.load_format = load_format;
+	mw->as.nloop        = 0;
+	mw->as.length       = 0;
+	mw->rel.position    = 0;
+	mw->as.period       = wav.format.sample_rate / (440.0f * powf(2.0f, (wav.pitch_info / (65536.0f * 65536.0f) - 69.0f) / 12.0f));
+	mw->rel.period      = mw->as.period;
 
-		if (cop_ld_ule16(cks.fmt + 0) != 1)
-			return "can only read PCM wave files";
+	for (i = 0; i < wav.nb_marker; i++) {
+		if (wav.markers[i].length > 0) {
+			uint_fast32_t loop_start = wav.markers[i].position;
+			uint_fast32_t loop_end   = loop_start + wav.markers[i].length - 1;
 
-		mw->native_bits = cop_ld_ule16(cks.fmt + 14);
-		mw->channels    = cop_ld_ule16(cks.fmt + 2);
-		mw->rate        = cop_ld_ule32(cks.fmt + 4);
+			assert(loop_end < wav.data_frames);
+			assert(loop_start <= loop_end);
 
-		if (mw->native_bits != 16 && mw->native_bits != 24)
-			return "can only load 16 or 24 bit PCM wave files";
+			if (mw->as.nloop >= MAX_LOOP)
+				return "too many loops";
 
-		block_align  = mw->channels * ((mw->native_bits + 7) / 8);
-		total_length = cks.datasz / block_align;
+			mw->as.loops[2*mw->as.nloop+0] = loop_start;
+			mw->as.loops[2*mw->as.nloop+1] = loop_end;
+			mw->as.nloop++;
+
+			if (loop_end + 1 >= mw->as.length) {
+				mw->as.length             = loop_end + 1;
+				mw->as.atk_end_loop_start = loop_start;
+			}
+		} else if (wav.markers[i].position > mw->rel.position) {
+			mw->rel.position = wav.markers[i].position;
+		}
 	}
 
-	err = setup_as(&mw->as, cks.smpl, cks.smplsz, mw->rate, total_length, load_format);
-	if (err != NULL)
-		return err;
-
-	err = setup_rel(&mw->rel, cks.cue, cks.cuesz, cks.adtl, cks.adtlsz, mw->as.length, block_align, total_length, load_format);
-	if (err != NULL)
-		return err;
-
-	mw->rel.period             = mw->as.period;
+	if (mw->rel.position >= mw->as.length) {
+		mw->rel.length = wav.data_frames - mw->rel.position;
+	} else {
+		mw->rel.length = 0;
+	}
 
 	mw->chan_stride =
 		(mw->as.length ? VLF_PAD_LENGTH(mw->as.length) : 0) +
@@ -327,7 +99,7 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, size_t fsz
 		bufcvt_deinterleave
 			(buffers
 			,mw->chan_stride
-			,cks.data
+			,wav.data
 			,mw->as.length
 			,mw->channels
 			,(mw->native_bits == 24) ? BUFCVT_FMT_SLE24 : BUFCVT_FMT_SLE16
@@ -345,10 +117,11 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, size_t fsz
 	}
 
 	if (mw->rel.length) {
+		uint_fast32_t block_align = smplwav_format_container_size(wav.format.format) * wav.format.channels;
 		bufcvt_deinterleave
 			(buffers
 			,mw->chan_stride
-			,cks.data + mw->rel.position*block_align
+			,wav.data + mw->rel.position*block_align
 			,mw->rel.length
 			,mw->channels
 			,(mw->native_bits == 24) ? BUFCVT_FMT_SLE24 : BUFCVT_FMT_SLE16

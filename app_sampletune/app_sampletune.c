@@ -84,7 +84,7 @@ load_executors
 			char namebuf4[128];
 			struct smpl_comp bits[4];
 
-			sprintf(namebuf,  "%s/A0/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
+			sprintf(namebuf,  "%s/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
 			sprintf(namebuf2, "%s/R0/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
 			sprintf(namebuf3, "%s/R1/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
 			sprintf(namebuf4, "%s/R2/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
@@ -101,7 +101,7 @@ load_executors
 			bits[2].load_flags = SMPL_COMP_LOADFLAG_R;
 			bits[3].load_flags = SMPL_COMP_LOADFLAG_R;
 
-			err = load_smpl_comp(&(pipes[i].pd.data), bits, 4, mem, fftset, prefilter);
+			err = load_smpl_comp(&(pipes[i].pd.data), bits, 1, mem, fftset, prefilter);
 
 			if (err != NULL) {
 				printf("WAVE ERR: %s-%s\n", namebuf, err);
