@@ -47,17 +47,22 @@ void bufcvt_deinterleave(void *dest, size_t dest_stride, const void *src, unsign
 	else if (infmt == BUFCVT_FMT_SLE24 && outfmt == BUFCVT_FMT_FLOAT)
 	{
 		unsigned i;
-		float *out = dest;
-		for (i = 0; i < nbuf; i++, out += dest_stride) {
-			unsigned j;
-			for (j = 0; j < length; j++) {
-				uint_fast32_t s;
-				int_fast32_t t;
-				s =            ((const unsigned char *)src)[3*(i+nbuf*j)+2];
-				s = (s << 8) | ((const unsigned char *)src)[3*(i+nbuf*j)+1];
-				s = (s << 8) | ((const unsigned char *)src)[3*(i+nbuf*j)+0];
-				t = (s & 0x800000u) ? -(int_fast32_t)(((~s) & 0x7FFFFFu) + 1) : (int_fast32_t)s;
-				out[j] = t * (1.0f / (float)0x800000);
+		if (nbuf == 2) {
+			float *out1 = dest;
+			float *out2 = out1 + dest_stride;
+			for (i = 0; i < length; i++, src += 6) {
+				int_fast32_t t1 = cop_ld_sle24(((const unsigned char *)src) + 0);
+				int_fast32_t t2 = cop_ld_sle24(((const unsigned char *)src) + 3);
+				out1[i]         = t1 * (1.0f / (float)0x800000);
+				out2[i]         = t2 * (1.0f / (float)0x800000);
+			}
+		} else {
+			float *out = dest;
+			for (i = 0; i < nbuf; i++, out += dest_stride) {
+				unsigned j;
+				for (j = 0; j < length; j++) {
+					out[j] = cop_ld_sle24(((const unsigned char *)src) + 3 * (i + nbuf * j)) * (1.0f / (float)0x800000);
+				}
 			}
 		}
 	}
