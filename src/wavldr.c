@@ -232,7 +232,7 @@ static float quantize_boost_interleave
 			}
 		} else if (fmtbits == 16 && channels == 2) {
 			int_least16_t *out_buf = obuf;
-			maxv  *= 1.0f / 32768.0f;
+			maxv  *= 1.0f / 32764.0f;
 			boost  = 1.0f / maxv;
 			for (j = 0; j < in_length; j++) {
 				float s1         = in_bufs[j] * boost;
@@ -245,8 +245,10 @@ static float quantize_boost_interleave
 				float d2         = (r3 + r4) * (1.0f / 0x7FFFFFFF);
 				int_fast32_t v1  = (int_fast32_t)(d1 + s1 + 32768.0f) - 32768;
 				int_fast32_t v2  = (int_fast32_t)(d2 + s2 + 32768.0f) - 32768;
-				v1 = (v1 > (int)0x7FFF) ? 0x7FFF : ((v1 < -(int)0x8000) ? -(int)0x8000 : v1);
-				v2 = (v2 > (int)0x7FFF) ? 0x7FFF : ((v2 < -(int)0x8000) ? -(int)0x8000 : v2);
+
+				assert(v1 >= -(int_fast32_t)0x8000 && v1 <= (int_fast32_t)0x7FFF);
+				assert(v2 >= -(int_fast32_t)0x8000 && v2 <= (int_fast32_t)0x7FFF);
+
 				out_buf[2*j+0] = (int_least16_t)v1;
 				out_buf[2*j+1] = (int_least16_t)v2;
 			}
