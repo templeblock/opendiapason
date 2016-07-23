@@ -93,8 +93,10 @@ static const struct test_load_entry TEST_ENTRY_LIST[] =
 ,	{"II Dolce 4",          36, 53, SW,        4, '4'}
 ,	{"I Trompette 8",       36, 53, PED | GT,  2, 'a'}
 ,	{"I Montre 8",          36, 53, PED | GT,  2, 's'}
-,	{"I Prestant 4",        36, 53, PED | GT,  4, 'd'}
-,	{"I Doublette 2",       36, 53, PED | GT,  8, 'f'}
+,	{"I Flute Harmonique 8",36, 53, PED | GT,  2, 'd'}
+,	{"I Prestant 4",        36, 53, PED | GT,  4, 'f'}
+,	{"I Flute Douce 4",     36, 53, PED | GT,  4, 'g'}
+,	{"I Doublette 2",       36, 53, PED | GT,  8, 'h'}
 ,	{"P Contrebasse 16",    36, 27, PED,       1, 'x'}
 ,	{"P Soubasse 16",       36, 27, PED,       1, 'c'}
 ,	{"P Violoncelle 8",     36, 27, PED,       2, 'v'}

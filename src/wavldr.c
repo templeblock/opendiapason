@@ -27,7 +27,7 @@
 #include "wavldr.h"
 #include "wav_dumper.h"
 #include "smplwav/smplwav_mount.h"
-#include "bufcvt.h"
+#include "smplwav/smplwav_convert.h"
 
 const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, size_t fsz, unsigned load_format)
 {
@@ -96,14 +96,13 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, size_t fsz
 	mw->buffers     = buffers;
 
 	if (mw->as.length) {
-		bufcvt_deinterleave
+		smplwav_convert_deinterleave_floats
 			(buffers
 			,mw->chan_stride
 			,wav.data
 			,mw->as.length
 			,mw->channels
-			,(mw->native_bits == 24) ? BUFCVT_FMT_SLE24 : BUFCVT_FMT_SLE16
-			,BUFCVT_FMT_FLOAT
+			,wav.format.format
 			);
 		for (ch = 0; ch < mw->channels; ch++) {
 			for (i = mw->as.length; i < VLF_PAD_LENGTH(mw->as.length); i++) {
@@ -118,14 +117,13 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, size_t fsz
 
 	if (mw->rel.length) {
 		uint_fast32_t block_align = smplwav_format_container_size(wav.format.format) * wav.format.channels;
-		bufcvt_deinterleave
+		smplwav_convert_deinterleave_floats
 			(buffers
 			,mw->chan_stride
 			,wav.data + mw->rel.position*block_align
 			,mw->rel.length
 			,mw->channels
-			,(mw->native_bits == 24) ? BUFCVT_FMT_SLE24 : BUFCVT_FMT_SLE16
-			,BUFCVT_FMT_FLOAT
+			,wav.format.format
 			);
 		for (ch = 0; ch < mw->channels; ch++) {
 			for (i = mw->rel.length; i < VLF_PAD_LENGTH(mw->rel.length); i++) {
