@@ -29,7 +29,7 @@
 #include "opendiapason/odfilter.h"
 
 #define SHORT_WINDOW_LENGTH (5)
-#define LONG_WINDOW_LENGTH  (4095) /* ~ 43 ms at 48000 */
+#define LONG_WINDOW_LENGTH  (4799) /* ~ 100ms at 48000 */
 #define NB_XCDATA           (256)
 
 struct scaninfo {
