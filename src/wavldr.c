@@ -298,15 +298,12 @@ apply_prefilter
 	,const char                 *debug_prefix
 	)
 {
-	float *scratch;
-	float *inbuf;
-	float *outbuf;
 	unsigned ch;
 	unsigned idx;
+	struct odfilter_temporaries tmps;
+
 	aalloc_push(allocator);
-	inbuf   = aalloc_align_alloc(allocator, sizeof(float) * prefilter->conv_len, 64);
-	outbuf  = aalloc_align_alloc(allocator, sizeof(float) * prefilter->conv_len, 64);
-	scratch = aalloc_align_alloc(allocator, sizeof(float) * prefilter->conv_len, 64);
+	odfilter_init_temporaries(&tmps, allocator, prefilter);
 
 	/* Convolve the attack/sustain segments. */
 	idx = 0;
@@ -318,9 +315,7 @@ apply_prefilter
 				,/* total length */    as->length
 				,/* pre-read */        SMPL_INVERSE_FILTER_LEN / 2 + 1
 				,/* is looped */       1
-				,inbuf
-				,outbuf
-				,scratch
+				,&tmps
 				,prefilter
 				);
 		}
@@ -353,9 +348,7 @@ apply_prefilter
 				,/* total length */    rel->length
 				,/* pre-read */        SMPL_INVERSE_FILTER_LEN / 2 + SMPL_INVERSE_FILTER_LEN / 8
 				,/* is looped */       0
-				,inbuf
-				,outbuf
-				,scratch
+				,&tmps
 				,prefilter
 			);
 		}
@@ -596,9 +589,7 @@ load_smpl_lists
 			,as_bits->length
 			,env_width-1
 			,1
-			,filt_tmps.tmp1
-			,filt_tmps.tmp2
-			,filt_tmps.tmp3
+			,&filt_tmps
 			,&filt
 			);
 
@@ -618,9 +609,7 @@ load_smpl_lists
 					,as_bits->length
 					,env_width-1
 					,1
-					,filt_tmps.tmp1
-					,filt_tmps.tmp2
-					,filt_tmps.tmp3
+					,&filt_tmps
 					,&filt
 					);
 			}

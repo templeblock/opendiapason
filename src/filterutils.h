@@ -48,29 +48,25 @@ float odfilter_build_xcorr(struct odfilter *pf, struct odfilter_temporaries *tmp
 int odfilter_interp_prefilter_init(struct odfilter *pf, struct aalloc *allocobj, struct fftset *fftset);
 
 void odfilter_run
-	(const float                *input
-	,float                      *output
-	,int                         add_to_output
-	,unsigned long               susp_start
-	,unsigned long               length
-	,unsigned                    pre_read
-	,int                         is_looped
-	,float                      *sc1
-	,float                      *sc2
-	,float                      *sc3
-	,const struct odfilter      *filter
+	(const float                 *input
+	,float                       *output
+	,int                          add_to_output
+	,unsigned long                susp_start
+	,unsigned long                length
+	,unsigned                     pre_read
+	,int                          is_looped
+	,struct odfilter_temporaries *tmps
+	,const struct odfilter       *filter
 	);
 
 void odfilter_run_inplace
-	(float                      *data
-	,unsigned long               susp_start
-	,unsigned long               length
-	,unsigned                    pre_read
-	,int                         is_looped
-	,float                      *sc1
-	,float                      *sc2
-	,float                      *sc3
-	,const struct odfilter      *filter
+	(float                       *data
+	,unsigned long                susp_start
+	,unsigned long                length
+	,unsigned                     pre_read
+	,int                          is_looped
+	,struct odfilter_temporaries *tmps
+	,const struct odfilter       *filter
 	);
 
 #endif /* FILTERUTILS_H */

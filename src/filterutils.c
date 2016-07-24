@@ -87,22 +87,23 @@ int odfilter_interp_prefilter_init(struct odfilter *pf, struct aalloc *allocobj,
 }
 
 void odfilter_run
-	(const float                *input
-	,float                      *output
-	,int                         add_to_output
-	,unsigned long               susp_start
-	,unsigned long               length
-	,unsigned                    pre_read
-	,int                         is_looped
-	,float                      *sc1
-	,float                      *sc2
-	,float                      *sc3
-	,const struct odfilter      *filter
+	(const float                 *input
+	,float                       *output
+	,int                          add_to_output
+	,unsigned long                susp_start
+	,unsigned long                length
+	,unsigned                     pre_read
+	,int                          is_looped
+	,struct odfilter_temporaries *tmps
+	,const struct odfilter       *filter
 	)
 {
 	const unsigned max_in = filter->conv_len - filter->kern_len + 1;
 	unsigned input_read;
 	unsigned input_pos;
+	float *sc1 = tmps->tmp1;
+	float *sc2 = tmps->tmp2;
+	float *sc3 = tmps->tmp3;
 
 	/* Zero output buffer. */
 	if (!add_to_output) {
@@ -173,15 +174,13 @@ void odfilter_run
 }
 
 void odfilter_run_inplace
-	(float                      *data
-	,unsigned long               susp_start
-	,unsigned long               length
-	,unsigned                    pre_read
-	,int                         is_looped
-	,float                      *sc1
-	,float                      *sc2
-	,float                      *sc3
-	,const struct odfilter      *filter
+	(float                       *data
+	,unsigned long                susp_start
+	,unsigned long                length
+	,unsigned                     pre_read
+	,int                          is_looped
+	,struct odfilter_temporaries *tmps
+	,const struct odfilter       *filter
 	)
 {
 	float *old_data = malloc(sizeof(float) * length);
@@ -200,9 +199,7 @@ void odfilter_run_inplace
 		,length
 		,pre_read
 		,is_looped
-		,sc1
-		,sc2
-		,sc3
+		,tmps
 		,filter
 		);
 
