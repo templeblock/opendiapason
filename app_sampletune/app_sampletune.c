@@ -8,7 +8,6 @@
 #include "portaudio.h"
 #include "opendiapason/src/wavldr.h"
 #include "opendiapason/src/playeng.h"
-#include "opendiapason/src/filterutils.h"
 #include <math.h>
 
 #define DUMP_TUNING_SESSION "out.raw"

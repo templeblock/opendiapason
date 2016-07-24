@@ -32,7 +32,7 @@ extern const float SMPL_INVERSE_COEFS[SMPL_INVERSE_FILTER_LEN+1];
 extern const float SMPL_INTERP[SMPL_POSITION_SCALE][SMPL_INTERP_TAPS];
 
 #include "cop/cop_attributes.h"
-#include "filterutils.h"
+#include "opendiapason/odfilter.h"
 
 static COP_ATTR_UNUSED int odfilter_interp_prefilter_init(struct odfilter *pf, struct aalloc *allocobj, struct fftset *fftset)
 {

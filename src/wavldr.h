@@ -25,7 +25,7 @@
 #include "reltable.h"
 #include "cop/cop_alloc.h"
 #include "fftset/fftset.h"
-#include "filterutils.h"
+#include "opendiapason/odfilter.h"
 
 #define SMPL_COMP_LOADFLAG_AUTO (0)
 #define SMPL_COMP_LOADFLAG_AS   (1)
