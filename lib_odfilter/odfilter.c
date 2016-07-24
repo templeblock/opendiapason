@@ -20,7 +20,6 @@
 
 #include "opendiapason/odfilter.h"
 
-
 int odfilter_init_filter(struct odfilter *pf, struct aalloc *allocobj, struct fftset *fftset, unsigned length)
 {
 	pf->kern_len = length;
@@ -74,6 +73,8 @@ void odfilter_build_conv(struct odfilter *pf, struct odfilter_temporaries *tmps,
 	fftset_fft_conv_get_kernel(pf->conv, pf->kernel, tmps->tmp1);
 }
 
+/* TODO: Optimize this bastard. Profiling shows that this function takes
+ * almost as much processing time as the FFT it calls which is ridiculous. */
 void odfilter_run
 	(const float                 *input
 	,float                       *output
