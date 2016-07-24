@@ -20,6 +20,49 @@
 
 #include "filterutils.h"
 
+
+int odfilter_init_filter(struct odfilter *pf, struct aalloc *allocobj, struct fftset *fftset, unsigned length)
+{
+	pf->kern_len = length;
+	pf->conv_len = fftset_recommend_conv_length(length, 512) * 2;
+	pf->conv     = fftset_create_fft(fftset, FFTSET_MODULATION_FREQ_OFFSET_REAL, pf->conv_len / 2);
+	pf->kernel   = aalloc_align_alloc(allocobj, sizeof(float) * pf->conv_len, 64);
+	return 0;
+}
+
+int odfilter_init_temporaries(struct odfilter_temporaries *tmps, struct aalloc *allocobj, const struct odfilter *filter)
+{
+	tmps->tmp1 = aalloc_align_alloc(allocobj, sizeof(float) * filter->conv_len, 64);
+	tmps->tmp2 = aalloc_align_alloc(allocobj, sizeof(float) * filter->conv_len, 64);
+	tmps->tmp3 = aalloc_align_alloc(allocobj, sizeof(float) * filter->conv_len, 64);
+	return 0;
+}
+
+void odfilter_build_rect(struct odfilter *pf, struct odfilter_temporaries *tmps, unsigned length, float scale)
+{
+	unsigned i;
+	assert(length < pf->conv_len);
+	scale *= 2.0f / pf->conv_len;
+	for (i = 0; i < length;  i++)      tmps->tmp1[i] = scale;
+	for (     ; i < pf->conv_len; i++) tmps->tmp1[i] = 0.0f;
+	fftset_fft_conv_get_kernel(pf->conv, pf->kernel, tmps->tmp1);
+}
+
+float odfilter_build_xcorr(struct odfilter *pf, struct odfilter_temporaries *tmps, unsigned length, const float *buffer, float scale)
+{
+	unsigned i;
+	float psum = 0.0f;
+	scale *= 2.0f / pf->conv_len;
+	for (i = 0; i < length; i++) {
+		float s = buffer[length - 1 - i];
+		tmps->tmp1[i] = s * scale;
+		psum += s * s;
+	}
+	for (; i < pf->conv_len; i++) tmps->tmp1[i] = 0.0f;
+	fftset_fft_conv_get_kernel(pf->conv, pf->kernel, tmps->tmp1);
+	return psum;
+}
+
 int odfilter_interp_prefilter_init(struct odfilter *pf, struct aalloc *allocobj, struct fftset *fftset)
 {
 	float                   *workbuf;

@@ -34,6 +34,17 @@ struct odfilter {
 	float                   *kernel;
 };
 
+struct odfilter_temporaries {
+	float *tmp1;
+	float *tmp2;
+	float *tmp3;
+};
+
+int   odfilter_init_filter(struct odfilter *pf, struct aalloc *allocobj, struct fftset *fftset, unsigned length);
+int   odfilter_init_temporaries(struct odfilter_temporaries *tmps, struct aalloc *allocobj, const struct odfilter *filter);
+void  odfilter_build_rect(struct odfilter *pf, struct odfilter_temporaries *tmps, unsigned length, float scale);
+float odfilter_build_xcorr(struct odfilter *pf, struct odfilter_temporaries *tmps, unsigned length, const float *buffer, float scale);
+
 int odfilter_interp_prefilter_init(struct odfilter *pf, struct aalloc *allocobj, struct fftset *fftset);
 
 void odfilter_run

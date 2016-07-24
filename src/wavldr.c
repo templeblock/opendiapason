@@ -554,29 +554,22 @@ load_smpl_lists
 		float *envelope_buf;
 		float *mse_buf;
 		unsigned env_width;
-		unsigned cor_fft_sz;
-		const struct fftset_fft *fft;
-		float *scratch_buf;
-		float *scratch_buf2;
-		float *scratch_buf3;
-		float *kern_buf;
 		float relpowers[16];
 		float *powptr;
 		unsigned ch;
-		struct odfilter filt;
+		struct odfilter             filt;
+		struct odfilter_temporaries filt_tmps;
 		size_t buf_stride = VLF_PAD_LENGTH(as_bits->length);
 		struct rel_data *r;
 
 		aalloc_push(allocator);
 
 		env_width    = (unsigned)(as_bits->period * 2.0f + 0.5f);
-		cor_fft_sz   = fftset_recommend_conv_length(env_width, 512) * 2;
-		fft          = fftset_create_fft(fftset, FFTSET_MODULATION_FREQ_OFFSET_REAL, cor_fft_sz / 2);
+
+		odfilter_init_filter(&filt, allocator, fftset, env_width);
+		odfilter_init_temporaries(&filt_tmps, allocator, &filt);
+
 		envelope_buf = aalloc_align_alloc(allocator, sizeof(float) * (buf_stride * (1 + nb_releases)), 64);
-		kern_buf     = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
-		scratch_buf  = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
-		scratch_buf2 = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
-		scratch_buf3 = aalloc_align_alloc(allocator, sizeof(float) * cor_fft_sz, 64);
 		mse_buf      = envelope_buf + buf_stride;
 
 		if (channels == 2) {
@@ -594,18 +587,7 @@ load_smpl_lists
 		}
 
 		/* Build the evelope kernel. */
-		for (i = 0; i < env_width;  i++) scratch_buf[i] = 2.0f / (cor_fft_sz * env_width);
-		for (     ; i < cor_fft_sz; i++) scratch_buf[i] = 0.0f;
-		fftset_fft_conv_get_kernel
-			(fft
-			,kern_buf
-			,scratch_buf
-			);
-
-		filt.kernel   = kern_buf;
-		filt.conv     = fft;
-		filt.conv_len = cor_fft_sz;
-		filt.kern_len = env_width;
+		odfilter_build_rect(&filt, &filt_tmps, env_width, 1.0f / env_width);
 
 		/* Get the envelope */
 		odfilter_run_inplace
@@ -614,9 +596,9 @@ load_smpl_lists
 			,as_bits->length
 			,env_width-1
 			,1
-			,scratch_buf
-			,scratch_buf2
-			,scratch_buf3
+			,filt_tmps.tmp1
+			,filt_tmps.tmp2
+			,filt_tmps.tmp3
 			,&filt
 			);
 
@@ -626,16 +608,7 @@ load_smpl_lists
 			/* Build the cross correlation kernel. */
 			float rel_power = 0.0f;
 			for (ch = 0; ch < channels; ch++) {
-				float ch_power = 0.0f;
-				for (i = 0; i < env_width; i++) {
-					float s = r->data[ch*r->chan_stride + env_width - 1 - i];
-					scratch_buf[i] = s * (2.0f / (cor_fft_sz * env_width));
-					ch_power += s * s;
-				}
-				for (; i < cor_fft_sz; i++)
-					scratch_buf[i] = 0.0f;
-				rel_power += ch_power;
-				fftset_fft_conv_get_kernel(fft, kern_buf, scratch_buf);
+				rel_power += odfilter_build_xcorr(&filt, &filt_tmps, env_width, r->data + ch*r->chan_stride, 1.0f / env_width);
 
 				odfilter_run
 					(as_bits->data + ch*as_bits->chan_stride
@@ -645,9 +618,9 @@ load_smpl_lists
 					,as_bits->length
 					,env_width-1
 					,1
-					,scratch_buf
-					,scratch_buf2
-					,scratch_buf3
+					,filt_tmps.tmp1
+					,filt_tmps.tmp2
+					,filt_tmps.tmp3
 					,&filt
 					);
 			}
