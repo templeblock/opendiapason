@@ -26,6 +26,7 @@
 #include "smplwav/smplwav_mount.h"
 #include "smplwav/smplwav_serialise.h"
 #include "smplwav/smplwav_convert.h"
+#include "opendiapason/odfilter.h"
 
 #define SHORT_WINDOW_LENGTH (5)
 #define LONG_WINDOW_LENGTH  (4095) /* ~ 43 ms at 48000 */
@@ -147,11 +148,16 @@ int main(int argc, char *argv[])
 	struct scaninfo    *scinfo;
 	float              *tmp_buf;
 	float              *square_buf;
+	float              *envelope_buf;
 	uint_fast32_t       i, j;
 	uint_fast32_t       nb_scinfo;
 	uint_fast32_t       nb_xc;
 	struct xcdata      *xcbuf;
 	struct xcdata      *xcscratch;
+
+	struct odfilter             filter;
+	struct odfilter_temporaries filter_temps;
+	struct fftset               fftset;
 
 	if (argc < 2) {
 		fprintf(stderr, "need a filename\n");
@@ -173,21 +179,29 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "%s had issues (%u). check the output file carefully.\n", argv[1], err);
 
 	aalloc_init(&mem, 1024*1024*256, 32, 1024*1024);
+	fftset_init(&fftset);
 
 	/* Allocate memory for the various awful things this program does. */
 	chanstride = ((sample.data_frames + VLF_WIDTH - 1) / VLF_WIDTH) * VLF_WIDTH;
-	if  (   (wave_data  = aalloc_align_alloc(&mem, sizeof(float) * chanstride * sample.format.channels, 32)) == NULL
-		||  (tmp_buf    = aalloc_align_alloc(&mem, sizeof(float) * sample.data_frames, 32)) == NULL
-		||  (square_buf = aalloc_align_alloc(&mem, sizeof(float) * sample.data_frames, 32)) == NULL
-		||  (scinfo     = aalloc_align_alloc(&mem, sizeof(*scinfo) * sample.data_frames * 2, 32)) == NULL
-		||  (xcbuf      = aalloc_align_alloc(&mem, sizeof(*xcbuf) * (NB_XCDATA * (NB_XCDATA + 1) / 2), 32)) == NULL
-		||  (xcscratch  = aalloc_align_alloc(&mem, sizeof(*xcscratch) * (NB_XCDATA * (NB_XCDATA + 1) / 2), 32)) == NULL
+	if  (   (wave_data    = aalloc_align_alloc(&mem, sizeof(float) * chanstride * sample.format.channels, 32)) == NULL
+		||  (tmp_buf      = aalloc_align_alloc(&mem, sizeof(float) * sample.data_frames, 32)) == NULL
+		||  (square_buf   = aalloc_align_alloc(&mem, sizeof(float) * sample.data_frames, 32)) == NULL
+		||  (envelope_buf = aalloc_align_alloc(&mem, sizeof(float) * sample.data_frames, 32)) == NULL
+		||  (scinfo       = aalloc_align_alloc(&mem, sizeof(*scinfo) * sample.data_frames * 2, 32)) == NULL
+		||  (xcbuf        = aalloc_align_alloc(&mem, sizeof(*xcbuf) * (NB_XCDATA * (NB_XCDATA + 1) / 2), 32)) == NULL
+		||  (xcscratch    = aalloc_align_alloc(&mem, sizeof(*xcscratch) * (NB_XCDATA * (NB_XCDATA + 1) / 2), 32)) == NULL
+		||  (odfilter_init_filter(&filter, &mem, &fftset, LONG_WINDOW_LENGTH))
+		||  (odfilter_init_temporaries(&filter_temps, &mem, &filter))
 		) {
-		cop_filemap_close(&infile);
+		fftset_destroy(&fftset);
 		aalloc_free(&mem);
+		cop_filemap_close(&infile);
 		fprintf(stderr, "out of memory\n");
 		return -1;
 	}
+
+	/* Build the long filter to get the envelope of the input. */
+	odfilter_build_rect(&filter, &filter_temps, LONG_WINDOW_LENGTH, 1.0f);
 
 	/* Convert the wave data into floating point. */
 	smplwav_convert_deinterleave_floats(wave_data, chanstride, sample.data, sample.data_frames, sample.format.channels, sample.format.format);
@@ -212,6 +226,9 @@ int main(int argc, char *argv[])
 			}
 		}
 	}
+
+	/* Create the envelope of the signal. */
+	odfilter_run(square_buf, envelope_buf, 0, 0, sample.data_frames, (LONG_WINDOW_LENGTH-1)/2, 0, &filter_temps, &filter);
 
 	/* Build the very short-term power info. This is effectively the power of
 	 * a SHORT_WINDOW_LENGTH window of the input. It is meant to be almost
@@ -300,14 +317,7 @@ int main(int argc, char *argv[])
 
 		/* Get long RMS power levels. */
 		for (i = 0; i < nb_xcd; i++) {
-			float acc = 0.0f;
-			float *wd = square_buf + scinfo[start_range+i].position - (LONG_WINDOW_LENGTH-1)/2;
-			unsigned k;
-
-			for (k = 0; k < LONG_WINDOW_LENGTH; k++)
-				acc += wd[k];
-
-			scinfo[start_range+i].rms_long = acc;
+			scinfo[start_range+i].rms_long = envelope_buf[scinfo[start_range+i].position];
 		}
 
 		/* Build the triangular correlation matrix. */
@@ -366,6 +376,7 @@ int main(int argc, char *argv[])
 
 	}
 
+	fftset_destroy(&fftset);
 	aalloc_free(&mem);
 	cop_filemap_close(&infile);
 
