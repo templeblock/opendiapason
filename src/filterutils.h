@@ -25,7 +25,6 @@
 
 #include "cop/cop_alloc.h"
 #include "fftset/fftset.h"
-#include "interpdata.h"
 
 struct odfilter {
 	unsigned                 kern_len;
@@ -42,10 +41,10 @@ struct odfilter_temporaries {
 
 int   odfilter_init_filter(struct odfilter *pf, struct aalloc *allocobj, struct fftset *fftset, unsigned length);
 int   odfilter_init_temporaries(struct odfilter_temporaries *tmps, struct aalloc *allocobj, const struct odfilter *filter);
+
 void  odfilter_build_rect(struct odfilter *pf, struct odfilter_temporaries *tmps, unsigned length, float scale);
 float odfilter_build_xcorr(struct odfilter *pf, struct odfilter_temporaries *tmps, unsigned length, const float *buffer, float scale);
-
-int odfilter_interp_prefilter_init(struct odfilter *pf, struct aalloc *allocobj, struct fftset *fftset);
+void  odfilter_build_conv(struct odfilter *pf, struct odfilter_temporaries *tmps, unsigned length, const float *buffer, float scale);
 
 void odfilter_run
 	(const float                 *input

@@ -52,6 +52,7 @@ float odfilter_build_xcorr(struct odfilter *pf, struct odfilter_temporaries *tmp
 {
 	unsigned i;
 	float psum = 0.0f;
+	assert(length < pf->conv_len);
 	scale *= 2.0f / pf->conv_len;
 	for (i = 0; i < length; i++) {
 		float s = buffer[length - 1 - i];
@@ -63,27 +64,14 @@ float odfilter_build_xcorr(struct odfilter *pf, struct odfilter_temporaries *tmp
 	return psum;
 }
 
-int odfilter_interp_prefilter_init(struct odfilter *pf, struct aalloc *allocobj, struct fftset *fftset)
+void odfilter_build_conv(struct odfilter *pf, struct odfilter_temporaries *tmps, unsigned length, const float *buffer, float scale)
 {
-	float                   *workbuf;
 	unsigned i;
-
-	pf->kern_len   = SMPL_INVERSE_FILTER_LEN;
-	pf->conv_len   = fftset_recommend_conv_length(SMPL_INVERSE_FILTER_LEN, 4*SMPL_INVERSE_FILTER_LEN) * 2;
-	pf->conv       = fftset_create_fft(fftset, FFTSET_MODULATION_FREQ_OFFSET_REAL, pf->conv_len / 2);
-	pf->kernel     = aalloc_align_alloc(allocobj, pf->conv_len * sizeof(float), 64);
-	aalloc_push(allocobj);
-	workbuf = aalloc_align_alloc(allocobj, pf->conv_len * sizeof(float), 64);
-	for (i = 0; i < SMPL_INVERSE_FILTER_LEN; i++) {
-		workbuf[i] = SMPL_INVERSE_COEFS[i] * (2.0f / pf->conv_len);
-	}
-	for (; i < pf->conv_len; i++) {
-		workbuf[i] = 0.0f;
-	}
-	fftset_fft_conv_get_kernel(pf->conv, pf->kernel, workbuf);
-	aalloc_pop(allocobj);
-
-	return 0;
+	assert(length < pf->conv_len);
+	scale *= 2.0f / pf->conv_len;
+	for (i = 0; i < length;  i++)      tmps->tmp1[i] = buffer[i] * scale;
+	for (     ; i < pf->conv_len; i++) tmps->tmp1[i] = 0.0f;
+	fftset_fft_conv_get_kernel(pf->conv, pf->kernel, tmps->tmp1);
 }
 
 void odfilter_run
