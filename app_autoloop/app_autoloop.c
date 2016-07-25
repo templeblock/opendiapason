@@ -66,52 +66,52 @@
 #define LONG_WINDOW_LENGTH  (3801) /* ~ 100ms at 48 kHz */
 #define MAX_NB_XCDATA       (256)
 
+#define BUILD_MERGESORT(name_, data_, comparison_) \
+void sort_ ## name_(data_ *inout, data_ *scratch, uint_fast32_t nb_elements) \
+{ \
+	if (nb_elements <= 8) { \
+		uint_fast32_t i, j; \
+		for (i = 0; i < nb_elements; i++) { \
+			uint_fast32_t biggest = i; \
+			for (j = i+1; j < nb_elements; j++) { \
+				if (comparison_((inout + biggest), (inout + j))) \
+					biggest = j; \
+			} \
+			if (biggest != i) { \
+				data_ tmp = inout[biggest]; \
+				inout[biggest] = inout[i]; \
+				inout[i] = tmp; \
+			} \
+		} \
+	} else { \
+		uint_fast32_t l1 = nb_elements / 2; \
+		uint_fast32_t l2 = nb_elements - l1; \
+		data_ *p1 = scratch; \
+		data_ *p2 = scratch + l1; \
+		memcpy(scratch, inout, nb_elements * sizeof(data_)); \
+		sort_ ## name_(p1, inout, l1); \
+		sort_ ## name_(p2, inout, l2); \
+		while (l1 && l2) { \
+			if (comparison_(p1, p2)) { \
+				*inout++ = *p2++; \
+				l2--; \
+			} else { \
+				*inout++ = *p1++; \
+				l1--; \
+			} \
+		} \
+		while (l1--) \
+			*inout++ = *p1++; \
+		while (l2--) \
+			*inout++ = *p2++; \
+	} \
+}
+
 struct scaninfo {
 	uint_fast32_t position;
 	float         rms3;
 	float         rms_long;
 };
-
-void sort_scinfo(struct scaninfo *inout, struct scaninfo *scratch, uint_fast32_t nb_scinfo)
-{
-	uint_fast32_t l1, l2;
-	struct scaninfo *p1, *p2;
-
-	if (nb_scinfo == 2) {
-		if (inout[0].rms3 < inout[1].rms3) {
-			struct scaninfo tmp = inout[0];
-			inout[0] = inout[1];
-			inout[1] = tmp;
-		}
-		return;
-	}
-
-	memcpy(scratch, inout, nb_scinfo * sizeof(struct scaninfo));
-	l1 = nb_scinfo / 2;
-	l2 = nb_scinfo - l1;
-	p1 = scratch;
-	p2 = scratch + l1;
-	if (l1 > 1)
-		sort_scinfo(p1, inout, l1);
-	if (l2 > 1)
-		sort_scinfo(p2, inout, l2);
-
-	while (l1 && l2) {
-		if (p1->rms3 > p2->rms3) {
-			*inout++ = *p1++;
-			l1--;
-		} else {
-			*inout++ = *p2++;
-			l2--;
-		}
-	}
-
-	while (l1--)
-		*inout++ = *p1++;
-
-	while (l2--)
-		*inout++ = *p2++;
-}
 
 struct xcdata {
 	uint_fast32_t p1;
@@ -121,46 +121,13 @@ struct xcdata {
 	float         mratio;
 };
 
-void sort_xcinfo(struct xcdata *inout, struct xcdata *scratch, uint_fast32_t nb_xcinfo)
-{
-	uint_fast32_t l1, l2;
-	struct xcdata *p1, *p2;
+#define SCINFO_COMPARISON(a_, b_) ((a_)->rms3 < (b_)->rms3)
+BUILD_MERGESORT(scinfo, struct scaninfo, SCINFO_COMPARISON)
+#undef SCINFO_COMPARISON
 
-	if (nb_xcinfo == 2) {
-		if (inout[0].xc > inout[1].xc) {
-			struct xcdata tmp = inout[0];
-			inout[0] = inout[1];
-			inout[1] = tmp;
-		}
-		return;
-	}
-
-	memcpy(scratch, inout, nb_xcinfo * sizeof(struct xcdata));
-	l1 = nb_xcinfo / 2;
-	l2 = nb_xcinfo - l1;
-	p1 = scratch;
-	p2 = scratch + l1;
-	if (l1 > 1)
-		sort_xcinfo(p1, inout, l1);
-	if (l2 > 1)
-		sort_xcinfo(p2, inout, l2);
-
-	while (l1 && l2) {
-		if (p1->xc < p2->xc) {
-			*inout++ = *p1++;
-			l1--;
-		} else {
-			*inout++ = *p2++;
-			l2--;
-		}
-	}
-
-	while (l1--)
-		*inout++ = *p1++;
-
-	while (l2--)
-		*inout++ = *p2++;
-}
+#define XCINFO_COMPARISON(a_, b_) ((a_)->xc > (b_)->xc)
+BUILD_MERGESORT(xcinfo, struct xcdata, XCINFO_COMPARISON)
+#undef XCINFO_COMPARISON
 
 static float cross(float *a, float *b, unsigned len)
 {
