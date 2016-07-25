@@ -28,8 +28,42 @@
 #include "smplwav/smplwav_convert.h"
 #include "opendiapason/odfilter.h"
 
-#define SHORT_WINDOW_LENGTH (5)
-#define LONG_WINDOW_LENGTH  (3801) /* ~ 100ms at 48000 */
+/* How the algorithm works
+ *
+ * 1) Find the total RMS power of the input signal and using this, trim the
+ *    ends of the signal so we don't hunt for loops in releases or the attack.
+ *    This is a somewhat abitrary condition...
+ * 2) Find the power-envelope over LONG_WINDOW_LENGTH samples throughout the
+ *    selected region.
+ * 3) Find a rolling 5-sample (SHORT_WINDOW_LENGTH-sample) RMS window of the
+ *    entire input signal. Collect all of the peaks in this (along with their
+ *    sample indexes into a list) and sort the list based on the RMS value.
+ *    This gives a list where if there are many values which all have very
+ *    similar RMS values, they are "likely" to make good loop points.
+ * 4) Find ranges of very similar RMS values in the above list and create a
+ *    correlation matrix which maps each sample to each other sample over a
+ *    period of LONG_WINDOW_LENGTH. This is CPU intensive and means that the
+ *    ranges we search over should be limited. The complexity goes up with
+ *    sample pitch.
+ * 5) Using the correlation matrix and the envelop, we can convert the
+ *    correlation matrix into a mean-squared-error matrix mapping the error of
+ *    looping between each possible point. The values closest to zero will
+ *    introduce the minimum overall tonal change when using the two loop
+ *    points.
+ * 6) For each possible loop in the range found in 4, we can now measure the
+ *    short term energy difference (using the short RMS window values and a
+ *    short correlation measurement between the points) which in-a-way maps to
+ *    the likelyhood of hearing any click and we have a long-term correlation
+ *    measurement representing the tambor shift. We use a heuristic to pick
+ *    the best sections to loop using these two metrics.
+ *
+ * Because of the grouping in 4, many samples in the same vicinity end up
+ * getting picked. This is a good thing, but it also means that we can end up
+ * with many loops which all end up having the same duration with slightly
+ * different offsets. We prune these off the list at the end. */
+
+#define SHORT_WINDOW_LENGTH (5)    /* ~ 100us at 48 kHz */
+#define LONG_WINDOW_LENGTH  (3801) /* ~ 100ms at 48 kHz */
 #define MAX_NB_XCDATA       (256)
 
 struct scaninfo {
