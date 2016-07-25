@@ -29,8 +29,8 @@
 #include "opendiapason/odfilter.h"
 
 #define SHORT_WINDOW_LENGTH (5)
-#define LONG_WINDOW_LENGTH  (4799) /* ~ 100ms at 48000 */
-#define NB_XCDATA           (256)
+#define LONG_WINDOW_LENGTH  (3801) /* ~ 100ms at 48000 */
+#define MAX_NB_XCDATA       (256)
 
 struct scaninfo {
 	uint_fast32_t position;
@@ -137,24 +137,236 @@ static float cross(float *a, float *b, unsigned len)
 	return acc;
 }
 
+/* A recursive summation to increase floating point accuracy in summation. */
+static float accusum(float *buf, unsigned len)
+{
+	unsigned i;
+	float sum;
+
+	if (len > 64) {
+		unsigned pivot = len/2;
+		return accusum(buf, pivot) + accusum(buf + pivot, len - pivot);
+	}
+
+	for (i = 0, sum = 0.0f; i < len; i++)
+		sum += buf[i];
+
+	return sum;
+}
+
+int
+do_processing
+	(struct smplwav *sample
+	,struct aalloc  *mem
+	,float          *wave_data
+	,float          *square_buf
+	,float          *envelope_buf
+	,uint_fast32_t   chanstride
+	,uint_fast32_t   buf_start
+	,uint_fast32_t   buf_len
+	)
+{
+	struct scaninfo    *scinfo;
+	float              *tmp_buf;
+	unsigned            i, j;
+	uint_fast32_t       nb_scinfo;
+	uint_fast32_t       nb_xc, sc_start;
+	struct xcdata      *xcbuf;
+	struct xcdata      *xcscratch;
+	struct xcdata      *xcresults;
+	struct xcdata      *xcresults2;
+	struct xcdata      *xcresults3;
+	unsigned            nb_results = 0;
+
+	if  (   (tmp_buf      = aalloc_align_alloc(mem, sizeof(float) * buf_len, 32)) == NULL
+	    ||  (scinfo       = aalloc_align_alloc(mem, sizeof(*scinfo) * buf_len * 2, 32)) == NULL
+	    ||  (xcbuf        = aalloc_align_alloc(mem, sizeof(*xcbuf) * (MAX_NB_XCDATA * (MAX_NB_XCDATA + 1) / 2), 32)) == NULL
+	    ||  (xcscratch    = aalloc_align_alloc(mem, sizeof(*xcscratch) * (MAX_NB_XCDATA * (MAX_NB_XCDATA + 1) / 2), 32)) == NULL
+	    ||  (xcresults    = aalloc_align_alloc(mem, sizeof(*xcscratch) * MAX_NB_XCDATA, 32)) == NULL
+	    ||  (xcresults2   = aalloc_align_alloc(mem, sizeof(*xcscratch) * MAX_NB_XCDATA, 32)) == NULL
+	    ||  (xcresults3   = aalloc_align_alloc(mem, sizeof(*xcscratch) * MAX_NB_XCDATA, 32)) == NULL
+	    ) {
+		fprintf(stderr, "out of memory\n");
+		return -1;
+	}
+
+	/* Build the very short-term power info. This is effectively the power of
+	 * a SHORT_WINDOW_LENGTH window of the input. It is meant to be almost
+	 * the instantaneous power. */
+	{
+#if SHORT_WINDOW_LENGTH == 5
+		float a = square_buf[buf_start-2];
+		float b = square_buf[buf_start-1];
+		float c = square_buf[buf_start+0];
+		float d = square_buf[buf_start+1];
+		for (i = 0; i < buf_len; i++) {
+			float e    = square_buf[buf_start+2+i];
+			tmp_buf[i] = a + b + c + d + e;
+			a          = b;
+			b          = c;
+			c          = d;
+			d          = e;
+		}
+#else
+#error "reimplement this if you change SHORT_WINDOW_LENGTH"
+#endif
+	}
+
+	/* Find all of the peaks in the short-term power window. The positions and
+	 * values of these peaks get put into the scinfo buffer. */
+	{
+		float a = tmp_buf[0];
+		float b = tmp_buf[1];
+		for (i = 0, nb_scinfo = 0; i + 2 < buf_len; i++) {
+			float c = tmp_buf[2+i];
+			if (b > a && b > c) {
+				scinfo[nb_scinfo].position = buf_start+i+1;
+				scinfo[nb_scinfo].rms3     = sqrtf(b);
+				nb_scinfo++;
+			}
+			a = b;
+			b = c;
+		}
+	}
+
+	/* Sort the list of peaks by their short-term power levels. This will give
+	 * us a list where things which we can join should all live fairly close
+	 * to each other. */
+	sort_scinfo(scinfo, scinfo + nb_scinfo, nb_scinfo);
+
+	/* look for good search regions... */
+	sc_start = 0;
+	while (sc_start+1 < nb_scinfo) {
+		float base = scinfo[sc_start].rms3;
+		uint_fast32_t sc_end = sc_start+1;
+		while (sc_end < nb_scinfo && sc_end-sc_start < MAX_NB_XCDATA) {
+			float new = scinfo[sc_end].rms3;
+			if (new / base < 0.99)
+				break;
+			sc_end++;
+		}
+
+		if (sc_end - sc_start > 32) {
+			uint_fast32_t nb_xcd = sc_end - sc_start;
+			unsigned new_results = 0;
+			struct xcdata *swaptmp;
+
+			/* Get long RMS power levels. */
+			for (i = 0; i < nb_xcd; i++) {
+				scinfo[sc_start+i].rms_long = envelope_buf[scinfo[sc_start+i].position];
+			}
+
+			/* Build the triangular correlation matrix. */
+			nb_xc = 0;
+			for (i = 1; i < nb_xcd; i++) {
+				for (j = 0; j < i; j++, nb_xc++) {
+					float    *wd = wave_data;
+					unsigned  ch;
+					float     acc1 = 0.0f;
+					float     acc2 = 0.0f;
+					float     tmp1;
+					float     tmp2;
+
+					for (ch = 0; ch < sample->format.channels; ch++, wd += chanstride) {
+						float *ps1;
+						float *ps2;
+
+						ps1 = wd + scinfo[sc_start+i].position - (LONG_WINDOW_LENGTH-1)/2;
+						ps2 = wd + scinfo[sc_start+j].position - (LONG_WINDOW_LENGTH-1)/2;
+						acc1 += cross(ps1, ps2, LONG_WINDOW_LENGTH);
+
+						ps1 = wd + scinfo[sc_start+i].position - (SHORT_WINDOW_LENGTH-1)/2;
+						ps2 = wd + scinfo[sc_start+j].position - (SHORT_WINDOW_LENGTH-1)/2;
+						acc2 += cross(ps1, ps2, SHORT_WINDOW_LENGTH);
+					}
+
+					xcbuf[nb_xc].p1 = i+sc_start;
+					xcbuf[nb_xc].p2 = j+sc_start;
+
+					tmp1 = scinfo[sc_start+i].rms_long;
+					tmp2 = scinfo[sc_start+j].rms_long;
+					xcbuf[nb_xc].xc = (tmp2 + tmp1 - 2.0f * acc1) / (tmp2 + tmp1);
+
+					tmp1 = scinfo[sc_start+i].rms3;
+					tmp2 = scinfo[sc_start+j].rms3;
+					tmp1 *= tmp1;
+					tmp2 *= tmp2;
+					xcbuf[nb_xc].pratio = (tmp1 + tmp2 - 2.0f * acc2) / (tmp2 + tmp1);
+					xcbuf[nb_xc].mratio = tmp1 / tmp2;
+				}
+			}
+
+			/* Sort sc elements. */
+			sort_xcinfo(xcbuf, xcscratch, nb_xc);
+			for (i = 0, j = 0; i < nb_xc && j < MAX_NB_XCDATA; i++) {
+				unsigned p1 = scinfo[xcbuf[i].p1].position;
+				unsigned p2 = scinfo[xcbuf[i].p2].position;
+				unsigned ps = (p1 > p2) ? p2 : p1;
+				unsigned pe = (p1 > p2) ? p1 : p2;
+				if (pe - ps > 24000) {
+					xcresults2[j] = xcbuf[i];
+					j++;
+				}
+			}
+
+			nb_xc = j;
+
+			swaptmp = xcresults3;
+			xcresults3 = xcresults;
+			xcresults = swaptmp;
+
+			/* Merge. */
+			i = 0;
+			j = 0;
+			new_results = 0;
+			while (i < nb_xc && j < nb_results && new_results < MAX_NB_XCDATA) {
+				if (xcresults2[i].xc < xcresults3[j].xc) {
+					xcresults[new_results++] = xcresults2[i++];
+				} else {
+					xcresults[new_results++] = xcresults3[j++];
+				}
+			}
+			while (i < nb_xc && new_results < MAX_NB_XCDATA) {
+				xcresults[new_results++] = xcresults2[i++];
+			}
+			while (j < nb_results && new_results < MAX_NB_XCDATA) {
+				xcresults[new_results++] = xcresults3[j++];
+			}
+
+			nb_results = new_results;
+		}
+
+		sc_start = sc_end;
+	}
+
+	for (i = 0; i < nb_results; i++) {
+		unsigned p1 = scinfo[xcresults[i].p1].position;
+		unsigned p2 = scinfo[xcresults[i].p2].position;
+		unsigned ps = (p1 > p2) ? p2 : p1;
+		unsigned pe = (p1 > p2) ? p1 : p2;
+		printf("%u,%u,%f,%f,%f\n", ps, pe-ps, 10.0 * log10(xcresults[i].xc), 10.0 * log10(xcresults[i].pratio), 10.0 * log10(xcresults[i].mratio));
+
+
+	}
+
+	return 0;
+}
+
+
 int main(int argc, char *argv[])
 {
 	struct cop_filemap  infile;
 	struct smplwav      sample;
 	struct aalloc       mem;
-	unsigned            err;
+	int                 err;
 	float              *wave_data;
 	uint_fast32_t       chanstride;
-	struct scaninfo    *scinfo;
-	float              *tmp_buf;
 	float              *square_buf;
 	float              *envelope_buf;
-	uint_fast32_t       i, j;
-	uint_fast32_t       nb_scinfo;
-	uint_fast32_t       nb_xc;
-	struct xcdata      *xcbuf;
-	struct xcdata      *xcscratch;
+	uint_fast32_t       i;
 
+	uint_fast32_t               start_search;
+	uint_fast32_t               end_search;
 	struct odfilter             filter;
 	struct odfilter_temporaries filter_temps;
 	struct fftset               fftset;
@@ -169,14 +381,22 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-	if (SMPLWAV_ERROR_CODE(err = smplwav_mount(&sample, infile.ptr, infile.size, 0))) {
-		cop_filemap_close(&infile);
-		fprintf(stderr, "could not load '%s' as a waveform sample %u\n", argv[1], SMPLWAV_ERROR_CODE(err));
-		return -1;
+	{
+		unsigned uerr;
+		if (SMPLWAV_ERROR_CODE(uerr = smplwav_mount(&sample, infile.ptr, infile.size, 0))) {
+			cop_filemap_close(&infile);
+			fprintf(stderr, "could not load '%s' as a waveform sample %u\n", argv[1], SMPLWAV_ERROR_CODE(uerr));
+			return -1;
+		}
+		if (uerr)
+			fprintf(stderr, "%s had issues (%u). check the output file carefully.\n", argv[1], uerr);
 	}
 
-	if (err)
-		fprintf(stderr, "%s had issues (%u). check the output file carefully.\n", argv[1], err);
+	if (sample.data_frames < 2*LONG_WINDOW_LENGTH) {
+		cop_filemap_close(&infile);
+		fprintf(stderr, "not enought data in '%s' to loop.\n", argv[1]);
+		return -1;
+	}
 
 	aalloc_init(&mem, 1024*1024*256, 32, 1024*1024);
 	fftset_init(&fftset);
@@ -184,12 +404,8 @@ int main(int argc, char *argv[])
 	/* Allocate memory for the various awful things this program does. */
 	chanstride = ((sample.data_frames + VLF_WIDTH - 1) / VLF_WIDTH) * VLF_WIDTH;
 	if  (   (wave_data    = aalloc_align_alloc(&mem, sizeof(float) * chanstride * sample.format.channels, 32)) == NULL
-		||  (tmp_buf      = aalloc_align_alloc(&mem, sizeof(float) * sample.data_frames, 32)) == NULL
 		||  (square_buf   = aalloc_align_alloc(&mem, sizeof(float) * sample.data_frames, 32)) == NULL
 		||  (envelope_buf = aalloc_align_alloc(&mem, sizeof(float) * sample.data_frames, 32)) == NULL
-		||  (scinfo       = aalloc_align_alloc(&mem, sizeof(*scinfo) * sample.data_frames * 2, 32)) == NULL
-		||  (xcbuf        = aalloc_align_alloc(&mem, sizeof(*xcbuf) * (NB_XCDATA * (NB_XCDATA + 1) / 2), 32)) == NULL
-		||  (xcscratch    = aalloc_align_alloc(&mem, sizeof(*xcscratch) * (NB_XCDATA * (NB_XCDATA + 1) / 2), 32)) == NULL
 		||  (odfilter_init_filter(&filter, &mem, &fftset, LONG_WINDOW_LENGTH))
 		||  (odfilter_init_temporaries(&filter_temps, &mem, &filter))
 		) {
@@ -230,155 +446,31 @@ int main(int argc, char *argv[])
 	/* Create the envelope of the signal. */
 	odfilter_run(square_buf, envelope_buf, 0, 0, sample.data_frames, (LONG_WINDOW_LENGTH-1)/2, 0, &filter_temps, &filter);
 
-	/* Build the very short-term power info. This is effectively the power of
-	 * a SHORT_WINDOW_LENGTH window of the input. It is meant to be almost
-	 * the instantaneous power. */
+	/* Find a decent search region. This hopefully chops the releases off the
+	 * search region. */
 	{
-#if SHORT_WINDOW_LENGTH == 5
-		float a, b, c, d, e;
-		a = square_buf[0];
-		b = square_buf[1];
-		c = square_buf[2];
-		d = square_buf[3];
-		e = square_buf[4];
-		tmp_buf[0] = 0.0f;
-		tmp_buf[1] = 0.0f;
-		for (i = 0; i + 5 < sample.data_frames; i++) {
-			tmp_buf[i+2] = a + b + c + d + e;
-			a = b;
-			b = c;
-			c = d;
-			d = e;
-			e = square_buf[i+5];
-		}
-		tmp_buf[i+2] = 0.0f;
-		tmp_buf[i+3] = 0.0f;
-#else
-#error "reimplement this if you change SHORT_WINDOW_LENGTH"
-#endif
+		float total_ms_power = LONG_WINDOW_LENGTH * accusum(square_buf, sample.data_frames) / sample.data_frames;
+		start_search = (LONG_WINDOW_LENGTH-1)/2;
+		end_search   = sample.data_frames - start_search;
+		for (; start_search < end_search && envelope_buf[start_search] < total_ms_power * 0.5; start_search++);
+		for (; start_search < end_search && envelope_buf[end_search] < total_ms_power * 0.5; end_search--);
 	}
 
-	/* Find all of the peaks in the short-term power window. The positions and
-	 * values of these peaks get put into the scinfo buffer. */
-	for (i = 0, nb_scinfo = 0; i + 2 < sample.data_frames; i++) {
-		float a = tmp_buf[i];
-		float b = tmp_buf[i+1];
-		float c = tmp_buf[i+2];
-
-		if (i+1 < (LONG_WINDOW_LENGTH-1)/2)
-			continue;
-		if ((i+1) + (LONG_WINDOW_LENGTH+1)/2 > sample.data_frames)
-			continue;
-
-		if (b > a && b > c) {
-			scinfo[nb_scinfo].position = i+1;
-			scinfo[nb_scinfo].rms3 = sqrtf(b);
-			nb_scinfo++;
-		}
-	}
-
-	/* Sort the list of peaks by their short-term power levels. This will give
-	 * us a list where things which we can join should all live fairly close
-	 * to each other. */
-	sort_scinfo(scinfo, scinfo + nb_scinfo, nb_scinfo);
-
-	/* Trim the end of the list. We don't want to look for loops in a
-	 * release. We do this by finding the average power of the first half of
-	 * the list and then pruning the end of the list until we reach a value
-	 * within 3-dB of the average power. */
-	{
-		float thr = 0.0f;
-		for (i = 0; i < nb_scinfo / 2; i++) 
-			thr += scinfo[i].rms3;
-		thr *= 0.5f / (nb_scinfo / 2);
-		while (nb_scinfo && scinfo[nb_scinfo-1].rms3 < thr)
-			nb_scinfo--;
-	}
-
-	/* Find best range of NB_XCDATA elements. */
-	{
-		unsigned start_range = 0;
-		unsigned nb_xcd;
-		float best_range = scinfo[0].rms3;
-
-		for (i = 0; i + NB_XCDATA < nb_scinfo; i++) {
-			float diff = scinfo[i].rms3 - scinfo[i+NB_XCDATA].rms3;
-			if (diff < best_range) {
-				best_range = diff;
-				start_range = i;
-			}
-		}
-
-		if (start_range + NB_XCDATA > nb_scinfo) {
-			nb_xcd = nb_scinfo - start_range;
-		} else {
-			nb_xcd = NB_XCDATA;
-		}
-
-		/* Get long RMS power levels. */
-		for (i = 0; i < nb_xcd; i++) {
-			scinfo[start_range+i].rms_long = envelope_buf[scinfo[start_range+i].position];
-		}
-
-		/* Build the triangular correlation matrix. */
-		nb_xc = 0;
-		for (i = 1; i < nb_xcd; i++) {
-			for (j = 0; j < i; j++, nb_xc++) {
-				float    *wd = wave_data;
-				unsigned  ch;
-				float     acc1 = 0.0f;
-				float     acc2 = 0.0f;
-				float     tmp1;
-				float     tmp2;
-
-				for (ch = 0; ch < sample.format.channels; ch++, wd += chanstride) {
-					float *ps1;
-					float *ps2;
-
-					ps1 = wd + scinfo[start_range+i].position - (LONG_WINDOW_LENGTH-1)/2;
-					ps2 = wd + scinfo[start_range+j].position - (LONG_WINDOW_LENGTH-1)/2;
-					acc1 += cross(ps1, ps2, LONG_WINDOW_LENGTH);
-
-					ps1 = wd + scinfo[start_range+i].position - (SHORT_WINDOW_LENGTH-1)/2;
-					ps2 = wd + scinfo[start_range+j].position - (SHORT_WINDOW_LENGTH-1)/2;
-					acc2 += cross(ps1, ps2, SHORT_WINDOW_LENGTH);
-				}
-
-				xcbuf[nb_xc].p1 = i;
-				xcbuf[nb_xc].p2 = j;
-
-				tmp1 = scinfo[start_range+i].rms_long;
-				tmp2 = scinfo[start_range+j].rms_long;
-				xcbuf[nb_xc].xc = (tmp2 + tmp1 - 2.0f * acc1) / (tmp2 + tmp1);
-
-				tmp1 = scinfo[start_range+i].rms3;
-				tmp2 = scinfo[start_range+j].rms3;
-				tmp1 *= tmp1;
-				tmp2 *= tmp2;
-				xcbuf[nb_xc].pratio = (tmp1 + tmp2 - 2.0f * acc2) / (tmp2 + tmp1);
-				xcbuf[nb_xc].mratio = tmp1 / tmp2;
-			}
-		}
-
-		/* Sort sc elements. */
-		sort_xcinfo(xcbuf, xcscratch, nb_xc);
-		for (i = 0, j = 0; i < nb_xc && j < 50; i++) {
-			unsigned p1 = scinfo[xcbuf[i].p1+start_range].position;
-			unsigned p2 = scinfo[xcbuf[i].p2+start_range].position;
-			unsigned ps = (p1 > p2) ? p2 : p1;
-			unsigned pe = (p1 > p2) ? p1 : p2;
-
-			if (pe - ps > 24000) {
-				printf("%u,%u,%f,%f,%f\n", ps, pe-ps, 10.0 * log10(xcbuf[i].xc), 10.0 * log10(xcbuf[i].pratio), 10.0 * log10(xcbuf[i].mratio));
-				j++;
-			}
-		}
-
-	}
+	err =
+		do_processing
+			(&sample
+			,&mem
+			,wave_data
+			,square_buf
+			,envelope_buf
+			,chanstride
+			,start_search
+			,end_search - start_search + 1
+			);
 
 	fftset_destroy(&fftset);
 	aalloc_free(&mem);
 	cop_filemap_close(&infile);
 
-	return 0;
+	return err;
 }
