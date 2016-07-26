@@ -142,6 +142,13 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, size_t fsz
 const char *mw_load_from_file(struct memory_wave *mw, const char *fname, unsigned load_format)
 {
 	const char *err = NULL;
+	/* Reminder, we are deliberately not memory mapping samples as the intent
+	 * is to have a single thread reading file-at-a-time. My gut feel is that
+	 * this will perform better than memory-mapping once we start doing multi-
+	 * threaded loading (which would cause random IO accesses). This forces
+	 * linear IO accesses. Also, I've found that using a memory map here ends
+	 * up introducing more overhead than using the read... I can't explain
+	 * this. */
 	FILE *f = fopen(fname, "rb");
 	if (f != NULL) {
 		if (fseek(f, 0, SEEK_END) == 0) {
