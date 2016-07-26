@@ -57,7 +57,6 @@
 #include "opendiapason/src/interpdata.h"
 
 #define FILTER_LEN           (SMPL_POSITION_SCALE * SMPL_INTERP_TAPS)
-#define INVERSE_FILTER_LEN   (SMPL_INVERSE_FILTER_LEN + 1)
 
 static double filter[FILTER_LEN];
 
@@ -190,22 +189,21 @@ int main(int argc, char *argv[])
 	 *    truncate it to the required length and window it with a Kaiser
 	 *    window (to smooth it out). */
 	fftset_fft_inverse(fft, fft_buf, tmp_buf, tmp2_buf);
-	tmp_double[INVERSE_FILTER_LEN/2-1] = fft_buf[0] / SMPL_POSITION_SCALE;
-	for (i = 1; i < INVERSE_FILTER_LEN/2; i++) {
+	tmp_double[(SMPL_INVERSE_FILTER_LEN-1)/2] = fft_buf[0] / SMPL_POSITION_SCALE;
+	for (i = 1; i < (SMPL_INVERSE_FILTER_LEN+1)/2; i++) {
 		double x = fft_buf[i] / SMPL_POSITION_SCALE;
-		tmp_double[INVERSE_FILTER_LEN/2-1-i] = x;
-		tmp_double[INVERSE_FILTER_LEN/2-1+i] = x;
+		tmp_double[(SMPL_INVERSE_FILTER_LEN-1)/2-i] = x;
+		tmp_double[(SMPL_INVERSE_FILTER_LEN-1)/2+i] = x;
 	}
-	apply_kaiser(tmp_double, INVERSE_FILTER_LEN-1, 3.5);
-	for (i = 0; i < INVERSE_FILTER_LEN-1; i++) {
+	apply_kaiser(tmp_double, SMPL_INVERSE_FILTER_LEN, 3.5);
+	for (i = 0; i < SMPL_INVERSE_FILTER_LEN; i++) {
 		fft_buf[i] = tmp_double[i];
 	}
 	for (; i < fft_size; i++) {
 		fft_buf[i] = 0.0;
 	}
-	inv_buf[0] = 0.0;
-	for (i = 0; i < INVERSE_FILTER_LEN-1; i++) {
-		inv_buf[i+1] = fft_buf[i] * SMPL_POSITION_SCALE;
+	for (i = 0; i < SMPL_INVERSE_FILTER_LEN; i++) {
+		inv_buf[i] = fft_buf[i] * SMPL_POSITION_SCALE;
 	}
 	fftset_fft_forward(fft, tmp_buf, fft_buf, tmp2_buf);
 	for (i = 0; i < fft_size/2; i++) {
@@ -218,8 +216,8 @@ int main(int argc, char *argv[])
 	}
 
 	printf("#include \"interpdata.h\"\n");
-	printf("const float SMPL_INVERSE_COEFS[SMPL_INVERSE_FILTER_LEN+1] =\n");
-	for (i = 0; i < INVERSE_FILTER_LEN; i++) {
+	printf("const float SMPL_INVERSE_COEFS[SMPL_INVERSE_FILTER_LEN] =\n");
+	for (i = 0; i < SMPL_INVERSE_FILTER_LEN; i++) {
 		if (i == 0)
 			printf("{");
 		else

@@ -22,13 +22,13 @@
 #define INTERPDATA_H
 
 /* The filter is symmetric and of odd order and introduces a latency of
- * (INVERSE_FILTER_LEN-1)/2. */
+ * (SMPL_INVERSE_FILTER_LEN-1)/2. */
 #define SMPL_INVERSE_FILTER_LEN (191u)
 
 #define SMPL_POSITION_SCALE     (16384u)
 #define SMPL_INTERP_TAPS        (8u)
 
-extern const float SMPL_INVERSE_COEFS[SMPL_INVERSE_FILTER_LEN+1];
+extern const float SMPL_INVERSE_COEFS[SMPL_INVERSE_FILTER_LEN];
 extern const float SMPL_INTERP[SMPL_POSITION_SCALE][SMPL_INTERP_TAPS];
 
 #include "cop/cop_attributes.h"

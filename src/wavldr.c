@@ -320,7 +320,7 @@ apply_prefilter
 				(/* input */           as->data + ch*as->chan_stride
 				,/* sustain start */   as->atk_end_loop_start
 				,/* total length */    as->length
-				,/* pre-read */        SMPL_INVERSE_FILTER_LEN / 2 + 1
+				,/* pre-read */        (SMPL_INVERSE_FILTER_LEN-1)/2
 				,/* is looped */       1
 				,&tmps
 				,prefilter
@@ -353,7 +353,7 @@ apply_prefilter
 				(/* input */           rel->data + ch*rel->chan_stride
 				,/* sustain start */   0
 				,/* total length */    rel->length
-				,/* pre-read */        SMPL_INVERSE_FILTER_LEN / 2 + SMPL_INVERSE_FILTER_LEN / 8
+				,/* pre-read */        (SMPL_INVERSE_FILTER_LEN-1)/2 + SMPL_INVERSE_FILTER_LEN/8
 				,/* is looped */       0
 				,&tmps
 				,prefilter
