@@ -87,20 +87,30 @@ static const struct test_load_entry TEST_ENTRY_LIST[] =
 //,	{"Prestant4",      36, 53, GT | PED, 4}
 //,	{"Doublette2",     36, 53, GT | PED, 6}
 //,	{"Pleinjeu3",      36, 53, GT | PED, 2}
-	{"II Clarinette 8",     36, 53, SW,        2, '1'}
-,	{"II Cromorne 8",       36, 53, SW,        2, '2'}
-,	{"II Salicional 8",     36, 53, SW,        2, '3'}
-,	{"II Dolce 4",          36, 53, SW,        4, '4'}
+	{"III Trompette Harmonique 8", 36, 53, SW,        2, '1'}
+,	{"III Hautbois 8",             36, 53, SW,        2, '2'}
+,	{"III Aeoline 8",              36, 53, SW,        2, '3'}
+,	{"III Bourdon 8",              36, 53, SW,        2, '4'}
+,	{"III Flute Traversiere 8",    36, 53, SW,        2, '5'}
+,	{"III Fugara 4",               36, 53, SW,        4, '6'}
+,	{"III Flute Octaviante 4",     36, 53, SW,        4, '7'}
+,	{"III Doublette 2",            36, 53, SW,        8, '8'}
+//	{"II Clarinette 8",     36, 53, SW,        2, '1'}
+//,	{"II Cromorne 8",       36, 53, SW,        2, '2'}
+//,	{"II Salicional 8",     36, 53, SW,        2, '3'}
+//,	{"II Dolce 4",          36, 53, SW,        4, '4'}
 ,	{"I Trompette 8",       36, 53, PED | GT,  2, 'a'}
 ,	{"I Montre 8",          36, 53, PED | GT,  2, 's'}
-,	{"I Flute Harmonique 8",36, 53, PED | GT,  2, 'd'}
-,	{"I Prestant 4",        36, 53, PED | GT,  4, 'f'}
-,	{"I Flute Douce 4",     36, 53, PED | GT,  4, 'g'}
-,	{"I Doublette 2",       36, 53, PED | GT,  8, 'h'}
+,	{"I Bourdon 8",         36, 53, PED | GT,  2, 'd'}
+,	{"I Viole de Gambe 8",  36, 53, PED | GT,  2, 'f'}
+,	{"I Prestant 4",        36, 53, PED | GT,  4, 'g'}
+,	{"I Flute Douce 4",     36, 53, PED | GT,  4, 'h'}
+,	{"I Doublette 2",       36, 53, PED | GT,  8, 'j'}
+,	{"P Bombarde 16",       36, 27, PED,       1, 'z'}
 ,	{"P Contrebasse 16",    36, 27, PED,       1, 'x'}
 ,	{"P Soubasse 16",       36, 27, PED,       1, 'c'}
 ,	{"P Violoncelle 8",     36, 27, PED,       2, 'v'}
-,	{"P Bombarde 16",       36, 27, PED,       1, 'z'}/*	{"I Bordun 16",         36, 53, PED | GT,  1, 'a'}
+/*	{"I Bordun 16",         36, 53, PED | GT,  1, 'a'}
 ,	{"I Principal 8",       36, 53, PED | GT,  2, 's'}
 ,	{"I Octave 4",          36, 53, PED | GT,  4, 'd'}
 ,	{"I Quinte 2 23",       36, 53, GT,        6, 'f'}
