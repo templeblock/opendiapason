@@ -6,11 +6,12 @@
 #include <stdio.h>
 #include "cop/cop_thread.h"
 #include "portaudio.h"
+#include "opendiapason/src/wav_dumper.h"
 #include "opendiapason/src/wavldr.h"
 #include "opendiapason/src/playeng.h"
 #include <math.h>
 
-#define DUMP_TUNING_SESSION "out.raw"
+#define DUMP_TUNING_SESSION "out.wav"
 
 #define PLAYBACK_SAMPLE_RATE (48000)
 
@@ -83,7 +84,7 @@ load_executors
 			char namebuf4[128];
 			struct smpl_comp bits[4];
 
-			sprintf(namebuf,  "%s/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
+			sprintf(namebuf,  "%s/A0/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
 			sprintf(namebuf2, "%s/R0/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
 			sprintf(namebuf3, "%s/R1/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
 			sprintf(namebuf4, "%s/R2/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
@@ -100,7 +101,7 @@ load_executors
 			bits[2].load_flags = SMPL_COMP_LOADFLAG_R;
 			bits[3].load_flags = SMPL_COMP_LOADFLAG_R;
 
-			err = load_smpl_comp(&(pipes[i].pd.data), bits, 1, mem, fftset, prefilter);
+			err = load_smpl_comp(&(pipes[i].pd.data), bits, 2, mem, fftset, prefilter);
 
 			if (err != NULL) {
 				printf("WAVE ERR: %s-%s\n", namebuf, err);
@@ -184,7 +185,7 @@ engine_callback
 	return old_flags;
 }
 
-FILE *dump;
+struct wav_dumper dump;
 
 static
 int
@@ -237,15 +238,11 @@ pa_callback
 	for (samp = 0; samp < frameCount; samp++) {
 		ob[2*samp+0] *= 0.5f;
 		ob[2*samp+1] *= 0.5f;
-#ifdef DUMP_TUNING_SESSION
-		{
-			short pair[2];
-			pair[0] = (short)((int)(ob[2*samp+0] * 65536 + 65536.5) - 65536);
-			pair[1] = (short)((int)(ob[2*samp+1] * 65536 + 65536.5) - 65536);
-			fwrite(pair, 4, 1, dump);
-		}
-#endif
 	}
+
+#ifdef DUMP_TUNING_SESSION
+	(void)wav_dumper_write_from_floats(&dump, ob, frameCount, 2, 1);
+#endif
 
 	/* Synthesis the tuning signal */
 	if (at_tuning_signal_enabled) {
@@ -402,8 +399,7 @@ int main_audio(int argc, char *argv[])
 
 #ifdef DUMP_TUNING_SESSION
 	printf("dumping output to " DUMP_TUNING_SESSION "\n");
-	dump = fopen(DUMP_TUNING_SESSION, "wb");
-	if (dump == NULL) {
+	if (wav_dumper_begin(&dump, DUMP_TUNING_SESSION, 2, 16, PLAYBACK_SAMPLE_RATE, 6, PLAYBACK_SAMPLE_RATE)) {
 		Pa_Terminate();
 		fprintf(stderr, "could not open " DUMP_TUNING_SESSION " for writing\n");
 		return -1;
@@ -494,7 +490,8 @@ int main_audio(int argc, char *argv[])
 	} while (!finished);
 
 #ifdef DUMP_TUNING_SESSION
-	fclose(dump);
+	if (wav_dumper_end(&dump))
+		fprintf(stderr, "there were issues with the dump file\n");
 #endif
 
 	Pa_StopStream(astream);

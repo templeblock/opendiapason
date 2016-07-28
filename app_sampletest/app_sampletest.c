@@ -32,6 +32,7 @@
 #include "portaudio.h"
 #include "portmidi.h"
 #include "opendiapason/src/playeng.h"
+#include "opendiapason/src/wav_dumper.h"
 
 /* This is high not because I am a deluded "audiophile". It is high, because
  * it gives the playback system heaps of frequency headroom before aliasing
@@ -195,9 +196,9 @@ load_executors
 	return pipes;
 }
 
-struct playeng *engine;
-FILE           *dump_file;
-size_t          dump_file_size;
+struct playeng    *engine;
+struct wav_dumper  dump_file;
+int                dump_file_open;
 
 static
 unsigned
@@ -281,26 +282,8 @@ pa_callback
 		ob[2*samp+1] *= 1; /* 0.25 */
 	}
 
-	if (dump_file != NULL && frameCount < 1024) {
-		unsigned char data[3*2*1024];
-
-		for (samp = 0; samp < frameCount*2; samp++) {
-			int_fast32_t r1 = rand();
-			int_fast32_t r2 = rand();
-			float f1 = r1 * (0.5f / RAND_MAX) + r2 * (0.5f / RAND_MAX);
-			int_fast32_t sample = (int_fast32_t)(ob[samp] * (float)0x800000 + f1 + (float)0x800000) - (int_fast32_t)0x800000;
-
-			if (sample > (int_fast32_t)0x7FFFFF)
-				sample = (int_fast32_t)0x7FFFFF;
-			else if (sample < -(int_fast32_t)0x800000)
-				sample = -(int_fast32_t)0x800000;
-
-			cop_st_ule24(data + 3*samp, 0xFFFFFF & (uint_fast32_t)sample);
-		}
-
-		dump_file_size += 3*samp;
-		fwrite(data, 3*samp, 1, dump_file);
-	}
+	if (dump_file_open)
+		(void)wav_dumper_write_from_floats(&dump_file, ob, frameCount, 2, 1);
 
 	return paContinue;
 }
@@ -625,8 +608,7 @@ static int handle_arguments(int argc, char *argv[], PmDeviceID *devid)
 	argc--;
 	argv++;
 
-	dump_file = NULL;
-	dump_file_size = 44;
+	dump_file_open = 0;
 
 	while (argc > 0) {
 
@@ -672,14 +654,12 @@ static int handle_arguments(int argc, char *argv[], PmDeviceID *devid)
 
 			return 1;
 		} else if (!strcmp(*argv, "--dumpaudio")) {
-			unsigned char header[44];
-
 			if (argc <= 0) {
 				fprintf(stderr, "give an argument for --midiname\n");
 				return -1;
 			}
 
-			if (dump_file != NULL) {
+			if (dump_file_open) {
 				fprintf(stderr, "dump file already open\n");
 				return -1;
 			}
@@ -687,14 +667,12 @@ static int handle_arguments(int argc, char *argv[], PmDeviceID *devid)
 			argc--;
 			argv++;
 
-			dump_file = fopen(*argv, "wb");
-			if (dump_file == NULL) {
-				fprintf(stderr, "could not open '%s' for writing\n", *argv);
+			if (wav_dumper_begin(&dump_file, *argv, 2, 24, PLAYBACK_SAMPLE_RATE, 4, PLAYBACK_SAMPLE_RATE)) {
+				fprintf(stderr, "could not create dump file '%s'\n", *argv);
 				return -1;
 			}
 
-			memset(header, 0, sizeof(header));
-			fwrite(header, dump_file_size, 1, dump_file);
+			dump_file_open = 1;
 		}
 
 		argc--;
@@ -757,7 +735,8 @@ int main(int argc, char *argv[])
 	if (rv != 0) {
 		Pm_Terminate();
 		Pa_Terminate();
-		if (dump_file != NULL) fclose(dump_file);
+		if (dump_file_open)
+			wav_dumper_end(&dump_file);
 		return (rv < 0) ? rv : 0;
 	}
 
@@ -765,7 +744,8 @@ int main(int argc, char *argv[])
 	if (engine == NULL) {
 		Pm_Terminate();
 		Pa_Terminate();
-		if (dump_file != NULL) fclose(dump_file);
+		if (dump_file_open)
+			wav_dumper_end(&dump_file);
 		fprintf(stderr, "couldn't create playback engine. out of memory.\n");
 		return -1;
 	}
@@ -796,39 +776,9 @@ int main(int argc, char *argv[])
 		aalloc_free(&mem);
 	}
 
-	if (dump_file != NULL) {
-		unsigned char header[44];
-
-		header[0] = 'R';
-		header[1] = 'I';
-		header[2] = 'F';
-		header[3] = 'F';
-		cop_st_ule32(header + 4, dump_file_size - 8);
-		header[8] = 'W';
-		header[9] = 'A';
-		header[10] = 'V';
-		header[11] = 'E';
-		header[12] = 'f';
-		header[13] = 'm';
-		header[14] = 't';
-		header[15] = ' ';
-		cop_st_ule32(header + 16, 16);
-		cop_st_ule16(header + 20, 1);
-		cop_st_ule16(header + 22, 2);
-		cop_st_ule32(header + 24, PLAYBACK_SAMPLE_RATE);
-		cop_st_ule32(header + 28, PLAYBACK_SAMPLE_RATE * 2 * 3);
-		cop_st_ule16(header + 32, 2 * 3);
-		cop_st_ule16(header + 34, 24);
-		header[36] = 'd';
-		header[37] = 'a';
-		header[38] = 't';
-		header[39] = 'a';
-		cop_st_ule32(header + 40, dump_file_size - 44);
-
-		fseek(dump_file, 0, SEEK_SET);
-		fwrite(header, 44, 1, dump_file);
-		fclose(dump_file);
-	}
+	/* Close the dump file. */
+	if (dump_file_open)
+		wav_dumper_end(&dump_file);
 
 	/* Who cares? */
 	playeng_destroy(engine);

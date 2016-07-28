@@ -23,25 +23,78 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include "cop/cop_thread.h"
 
-#define WAV_DUMPER_WRITE_BUFFER_SIZE (4096)
+struct wav_dumper_buffer {
+	unsigned                   nb_frames;
+	float                     *buf;
+	struct wav_dumper_buffer  *next;
+};
 
 struct wav_dumper {
-	FILE          *f;
-	uint_fast64_t  riff_size;
-	unsigned       channels;
-	unsigned       bits_per_sample;
-	unsigned       block_align;
-	unsigned       buffer_size;
-	unsigned char  buffer[WAV_DUMPER_WRITE_BUFFER_SIZE];
+	/* Constants */
+	int                        is_multi_threaded;
+	uint_fast32_t              max_frames;
+	unsigned                   channels;
+	unsigned                   bits_per_sample;
+	unsigned                   block_align;
+
+	/* These are completely owned by the thread. */
+	uint_fast32_t              rseed;
+	unsigned                   buffer_frames;
+	unsigned char             *write_buffer;
+	int                        write_error;
+	FILE                      *f;
+
+	/* Don't touch unless thread_lock is held. */
+	struct wav_dumper_buffer  *towrite_first;
+	struct wav_dumper_buffer **towrite_last_next;
+	struct wav_dumper_buffer  *written_first;
+	struct wav_dumper_buffer **written_last_next;
+	int                        end_thread;
+
+	/* These are completely owned by the calling code. */
+	void                      *mem_base;
+	struct wav_dumper_buffer  *current_first;
+	struct wav_dumper_buffer  *avail_first;
+	struct wav_dumper_buffer **avail_last_next;
+	uint_fast32_t              nb_frames;
+
+	/* Synchronisation stuff. */
+	cop_thread                 thread;
+	cop_cond                   thread_cond;
+	cop_mutex                  thread_lock;
 };
 
 /* Starts a wave dumper with the given format configuration.
  * Return value is zero if the wave file was opened and initialised
  * successfully. */
-int wav_dumper_begin(struct wav_dumper *dump, const char *filename, size_t channels, unsigned bits_per_sample, uint_fast32_t rate);
+int
+wav_dumper_begin
+	(struct wav_dumper *dump
+	,const char        *filename
+	,size_t             channels
+	,unsigned           bits_per_sample
+	,uint_fast32_t      rate
+	,unsigned           nb_buffers
+	,unsigned           buffer_length
+	);
 
-unsigned wav_dumper_write_from_floats(struct wav_dumper *dump, const float *data, unsigned num_samples, unsigned sample_stride, unsigned channel_stride);
+/* Write the given floating point data into the wave file.
+ *
+ * The return value is the number of floats written. In the multi-threaded
+ * case, this represents the number of samples that were successfully queued
+ * for writing. In the single threaded case, this may be limited due to
+ * being unable to write any more samples into the file or if a write error
+ * has occured. */
+unsigned
+wav_dumper_write_from_floats
+	(struct wav_dumper *dump
+	,const float       *data
+	,unsigned           num_samples
+	,unsigned           sample_stride
+	,unsigned           channel_stride
+	);
 
 /* Close the wave dumper.
  * Undefined to close a dumper that is not opened.
