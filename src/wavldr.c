@@ -200,16 +200,20 @@ static float quantize_boost_interleave
 	if (channels == 2) {
 		unsigned j;
 		float minv = 0.0f;
+		float maxr = 0.0f;
+		float minr = 0.0f;
 
 		for (j = 0; j < in_length; j++) {
 			float s1 = in_bufs[j];
 			float s2 = in_bufs[chan_stride+j];
 			maxv = (s1 > maxv) ? s1 : maxv;
 			minv = (s1 < minv) ? s1 : minv;
-			maxv = (s2 > maxv) ? s2 : maxv;
-			minv = (s2 < minv) ? s2 : minv;
+			maxr = (s2 > maxr) ? s2 : maxr;
+			minr = (s2 < minr) ? s2 : minr;
 		}
 
+		maxv  = (maxv > maxr) ? maxv : maxr;
+		minv  = (minv < minr) ? minv : minr;
 		maxv += 1.0f;
 		maxv  = (maxv > -minv) ? maxv : -minv;
 
@@ -238,24 +242,33 @@ static float quantize_boost_interleave
 		} else if (fmtbits == 16 && channels == 2) {
 			int_least16_t *out_buf = obuf;
 			maxv  *= 1.0f / 32764.0f;
-			boost  = 1.0f / maxv;
+			boost  = ((float)((((uint_fast64_t)1u) << 33))) / maxv;
+
+			/* 4091ms */
 			for (j = 0; j < in_length; j++) {
-				float s1         = in_bufs[j] * boost;
-				float s2         = in_bufs[chan_stride+j] * boost;
-				int_fast32_t r1  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
-				int_fast32_t r2  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
-				int_fast32_t r3  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
-				int_fast32_t r4  = (rseed = update_rnd(rseed)) & 0x3FFFFFFFu;
-				float d1         = (r1 + r2) * (1.0f / 0x7FFFFFFF);
-				float d2         = (r3 + r4) * (1.0f / 0x7FFFFFFF);
-				int_fast32_t v1  = (int_fast32_t)(d1 + s1 + 32768.0f) - 32768;
-				int_fast32_t v2  = (int_fast32_t)(d2 + s2 + 32768.0f) - 32768;
+				uint_fast32_t d1, d2, d3, d4;
+				float f1, f2;
+				int_fast64_t lch, rch;
+				f1     = in_bufs[j];
+				f2     = in_bufs[chan_stride+j];
+				d1     = update_rnd(rseed);
+				d2     = update_rnd(d1);
+				d3     = update_rnd(d2);
+				d4     = update_rnd(d3);
+				f1    *= boost;
+				f2    *= boost;
+				rseed  = d4;
+				lch    = (int_fast64_t)f1;
+				rch    = (int_fast64_t)f2;
+				lch   += (int_fast64_t)(d1 & 0xFFFFFFFFu);
+				rch   += (int_fast64_t)(d2 & 0xFFFFFFFFu);
+				lch   += (int_fast64_t)(d3 & 0xFFFFFFFFu);
+				rch   += (int_fast64_t)(d4 & 0xFFFFFFFFu);
+				lch    = lch >> 33;
+				rch    = rch >> 33;
 
-				assert(v1 >= -(int_fast32_t)0x8000 && v1 <= (int_fast32_t)0x7FFF);
-				assert(v2 >= -(int_fast32_t)0x8000 && v2 <= (int_fast32_t)0x7FFF);
-
-				out_buf[2*j+0] = (int_least16_t)v1;
-				out_buf[2*j+1] = (int_least16_t)v2;
+				out_buf[2*j+0] = (int_least16_t)lch;
+				out_buf[2*j+1] = (int_least16_t)rch;
 			}
 			for (; j < out_length; j++) {
 				out_buf[2*j+0] = 0;
@@ -332,7 +345,7 @@ apply_prefilter
 			char              namebuf[1024];
 			struct wav_dumper dump;
 			sprintf(namebuf, "%s_prefilter_atk%02d.wav", debug_prefix, idx);
-			if (wav_dumper_begin(&dump, namebuf, channels, 24, rate) == 0) {
+			if (wav_dumper_begin(&dump, namebuf, channels, 24, rate, 1, rate) == 0) {
 				(void)wav_dumper_write_from_floats(&dump, as->data, as->length, 1, as->chan_stride);
 				wav_dumper_end(&dump);
 			}
@@ -365,7 +378,7 @@ apply_prefilter
 			char              namebuf[1024];
 			struct wav_dumper dump;
 			sprintf(namebuf, "%s_prefilter_rel%02d.wav", debug_prefix, idx);
-			if (wav_dumper_begin(&dump, namebuf, 2, 24, rate) == 0) {
+			if (wav_dumper_begin(&dump, namebuf, 2, 24, rate, 1, rate) == 0) {
 				(void)wav_dumper_write_from_floats(&dump, rel->data, rel->length, 1, rel->chan_stride);
 				wav_dumper_end(&dump);
 			}
@@ -642,7 +655,7 @@ load_smpl_lists
 			char      namebuf[1024];
 			struct wav_dumper dump;
 			sprintf(namebuf, "%s_reltable_inputs_nomin.wav", file_ref);
-			if (wav_dumper_begin(&dump, namebuf, 1 + nb_releases, 24, norm_rate) == 0) {
+			if (wav_dumper_begin(&dump, namebuf, 1 + nb_releases, 24, norm_rate, 1, norm_rate) == 0) {
 				(void)wav_dumper_write_from_floats(&dump, envelope_buf, as_bits->length, 1, buf_stride);
 				wav_dumper_end(&dump);
 			}

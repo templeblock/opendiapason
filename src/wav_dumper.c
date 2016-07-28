@@ -53,10 +53,10 @@ static int write_interleaved_buffer(struct wav_dumper *dump, struct wav_dumper_b
 			uint_fast32_t d2     = update_rnd(d1);
 			int_fast64_t  iq;
 			rseed  = d2;
-			iq     = (int_fast64_t)(d1 & 0x7FFFFFFFu);
-			iq    += (int_fast64_t)(d2 & 0x7FFFFFFFu);
-			iq    += (int_fast64_t)(sample * (float)0x80000000000000);
-			iq     = iq >> 32; /* Implementation defined... anything care? */
+			iq     = (int_fast64_t)(d1 & 0xFFFFFFFFu);
+			iq    += (int_fast64_t)(d2 & 0xFFFFFFFFu);
+			iq    += (int_fast64_t)(sample * (float)(((uint_fast64_t)1) << (33 + 23)));
+			iq     = iq >> 33; /* Implementation defined... anything care? */
 			if (iq < -(int_fast64_t)0x800000)
 				iq = -(int_fast64_t)0x800000;
 			else if (iq > (int_fast64_t)0x7FFFFF)
@@ -73,10 +73,10 @@ static int write_interleaved_buffer(struct wav_dumper *dump, struct wav_dumper_b
 			uint_fast32_t d2     = update_rnd(d1);
 			int_fast64_t  iq;
 			rseed  = d2;
-			iq     = (int_fast64_t)(d1 & 0x7FFFFFFFu);
-			iq    += (int_fast64_t)(d2 & 0x7FFFFFFFu);
-			iq    += (int_fast64_t)(sample * (float)0x800000000000);
-			iq     = iq >> 32; /* Implementation defined... anything care? */
+			iq     = (int_fast64_t)(d1 & 0xFFFFFFFFu);
+			iq    += (int_fast64_t)(d2 & 0xFFFFFFFFu);
+			iq    += (int_fast64_t)(sample * (float)(((uint_fast64_t)1) << (33 + 15)));
+			iq     = iq >> 33; /* Implementation defined... anything care? */
 			if (iq < -(int_fast64_t)0x8000)
 				iq = -(int_fast64_t)0x8000;
 			else if (iq > (int_fast64_t)0x7FFF)
