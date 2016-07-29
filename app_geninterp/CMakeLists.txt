@@ -28,9 +28,6 @@ endif()
 
 target_include_directories(geninterp PRIVATE "../..")
 target_link_libraries(geninterp svgplot fftset)
-if (UNIX)
-  target_link_libraries(geninterp m)
-endif()
 
 add_subdirectory("../../cop" "${CMAKE_CURRENT_BINARY_DIR}/cop_dep")
 add_subdirectory("../../fftset" "${CMAKE_CURRENT_BINARY_DIR}/fftset_dep")
