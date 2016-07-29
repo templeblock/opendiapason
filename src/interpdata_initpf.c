@@ -18,22 +18,20 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
  * DEALINGS IN THE SOFTWARE. */
 
-#ifndef INTERPDATA_H
-#define INTERPDATA_H
+#include "interpdata.h"
 
-/* The filter is symmetric and of odd order and introduces a latency of
- * (SMPL_INVERSE_FILTER_LEN-1)/2. */
-#define SMPL_INVERSE_FILTER_LEN (191u)
+int odfilter_interp_prefilter_init(struct odfilter *pf, struct aalloc *allocobj, struct fftset *fftset)
+{
+	struct odfilter_temporaries tmps;
+	if (odfilter_init_filter(pf, allocobj, fftset, SMPL_INVERSE_FILTER_LEN))
+		return 1;
+	aalloc_push(allocobj);
+	if (odfilter_init_temporaries(&tmps, allocobj, pf)) {
+		aalloc_pop(allocobj);
+		return 1;
+	}
+	odfilter_build_conv(pf, &tmps, SMPL_INVERSE_FILTER_LEN, SMPL_INVERSE_COEFS, 1.0f);
+	aalloc_pop(allocobj);
+	return 0;
+}
 
-#define SMPL_POSITION_SCALE     (16384u)
-#define SMPL_INTERP_TAPS        (8u)
-
-extern const float SMPL_INVERSE_COEFS[SMPL_INVERSE_FILTER_LEN];
-extern const float SMPL_INTERP[SMPL_POSITION_SCALE][SMPL_INTERP_TAPS];
-
-#include "cop/cop_attributes.h"
-#include "opendiapason/odfilter.h"
-
-int odfilter_interp_prefilter_init(struct odfilter *pf, struct aalloc *allocobj, struct fftset *fftset);
-
-#endif /* INTERPDATA_H */
