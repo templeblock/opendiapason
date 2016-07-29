@@ -662,19 +662,24 @@ int main(int argc, char *argv[])
 	}
 
 	ret = main_audio(argc, argv);
+	if (ret) {
+		playeng_destroy(engine);
+		cop_mutex_destroy(&at_param_lock);
+		return ret;
+	}
 
 	printf("\n");
 	for (i = 0; i < 1+at_last_midi-at_first_midi; i++) {
+		static const char *NAMES[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+		const char *err;
 		size_t sz;
 		unsigned char *buf;
 		void *db;
+		char namebuf[128];
 
 		if (fabs(pipe_frequencies[i] - old_pipe_frequencies[i]) < 0.01)
 			continue;
 
-		static const char *NAMES[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-		const char *err;
-		char namebuf[128];
 		sprintf(namebuf, "%s/%03d-%s.wav", ".", i + at_first_midi, NAMES[(i+at_first_midi)%12]);
 		printf("Updating tuning in %s from %f->%f\n", namebuf, old_pipe_frequencies[i], pipe_frequencies[i]);
 
@@ -717,15 +722,19 @@ int main(int argc, char *argv[])
 					store_le32(smpl + 16, frac_part);
 					err = write_entire_file(namebuf, sz + 12, db);
 					if (err != NULL) {
+						ret = -1;
 						fprintf(stderr, "failed to write %s: %s\n", namebuf, err);
 					}
 				} else {
+					ret = -1;
 					fprintf(stderr, "did not find sampler chunk in %s\n", namebuf);
 				}
 			} else {
+				ret = -1;
 				fprintf(stderr, "not a wave file %s\n", namebuf);
 			}
 		} else {
+			ret = -1;
 			fprintf(stderr, "failed to read %s: %s\n", namebuf, err);
 		}
 		aalloc_pop(&mem);
@@ -734,7 +743,7 @@ int main(int argc, char *argv[])
 	playeng_destroy(engine);
 	cop_mutex_destroy(&at_param_lock);
 
-	return 0;
+	return ret;
 }
 
 
