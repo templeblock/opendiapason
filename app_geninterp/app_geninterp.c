@@ -304,4 +304,6 @@ int main(int argc, char *argv[])
 		svgplot_finalise(&plot, &gi, 12, 12*3/4, 0.2, f);
 		fclose(f);
 	}
+
+	return 0;
 }
