@@ -19,7 +19,6 @@ endif()
 project(app_sampletune)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_LIST_DIR}/../cmakemodules)
-find_package(Portaudio REQUIRED)
 
 add_executable(sampletune app_sampletune.c)
 
@@ -29,10 +28,17 @@ else()
   set_property(TARGET sampletune APPEND_STRING PROPERTY COMPILE_FLAGS " -Wall")
 endif()
 
-target_include_directories(sampletune PRIVATE ${PORTAUDIO_INCLUDE_DIRS})
+if (EXISTS "../../../portaudio" AND IS_DIRECTORY "../../../portaudio")
+  target_link_libraries(sampletune portaudio_static)
+  add_subdirectory("../../portaudio" "${CMAKE_CURRENT_BINARY_DIR}/portaudio_dep")
+else ()
+  find_package(Portaudio REQUIRED)
+  target_include_directories(sampletune PRIVATE ${PORTAUDIO_INCLUDE_DIRS})
+  target_link_libraries(sampletune ${PORTAUDIO_LIBRARIES})
+endif ()
+
 target_include_directories(sampletune PRIVATE "../..")
 target_link_libraries(sampletune od_audioengine fftset smplwav)
-target_link_libraries(sampletune ${PORTAUDIO_LIBRARIES})
 
 add_subdirectory("../../cop" "${CMAKE_CURRENT_BINARY_DIR}/cop_dep")
 add_subdirectory("../../smplwav" "${CMAKE_CURRENT_BINARY_DIR}/smplwav_dep")

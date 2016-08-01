@@ -19,8 +19,6 @@ endif()
 project(app_sampletest)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_LIST_DIR}/../cmakemodules)
-find_package(Portaudio REQUIRED)
-find_package(Portmidi REQUIRED)
 
 add_executable(sampletest app_sampletest.c)
 
@@ -30,12 +28,21 @@ else()
   set_property(TARGET sampletest APPEND_STRING PROPERTY COMPILE_FLAGS " -Wall")
 endif()
 
-target_include_directories(sampletest PRIVATE ${PORTAUDIO_INCLUDE_DIRS})
+if (EXISTS "../../../portaudio" AND IS_DIRECTORY "../../../portaudio")
+  target_link_libraries(sampletest portaudio_static)
+  add_subdirectory("../../portaudio" "${CMAKE_CURRENT_BINARY_DIR}/portaudio_dep")
+else ()
+  find_package(Portaudio REQUIRED)
+  target_include_directories(sampletest PRIVATE ${PORTAUDIO_INCLUDE_DIRS})
+  target_link_libraries(sampletest ${PORTAUDIO_LIBRARIES})
+endif ()
+
+find_package(Portmidi REQUIRED)
 target_include_directories(sampletest PRIVATE ${PORTMIDI_INCLUDE_DIRS})
+target_link_libraries(sampletest ${PORTMIDI_LIBRARIES})
+
 target_include_directories(sampletest PRIVATE "../..")
 target_link_libraries(sampletest od_audioengine fftset smplwav)
-target_link_libraries(sampletest ${PORTAUDIO_LIBRARIES})
-target_link_libraries(sampletest ${PORTMIDI_LIBRARIES})
 
 add_subdirectory("../../cop" "${CMAKE_CURRENT_BINARY_DIR}/cop_dep")
 add_subdirectory("../../smplwav" "${CMAKE_CURRENT_BINARY_DIR}/smplwav_dep")
