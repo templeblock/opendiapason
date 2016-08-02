@@ -28,7 +28,7 @@ else()
   set_property(TARGET sampletest APPEND_STRING PROPERTY COMPILE_FLAGS " -Wall")
 endif()
 
-if (EXISTS "../../../portaudio" AND IS_DIRECTORY "../../../portaudio")
+if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../portaudio" AND IS_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/../../portaudio")
   target_link_libraries(sampletest portaudio_static)
   add_subdirectory("../../portaudio" "${CMAKE_CURRENT_BINARY_DIR}/portaudio_dep")
 else ()
