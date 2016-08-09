@@ -92,7 +92,7 @@ reltable_find
 void
 reltable_build
 	(struct reltable *reltable
-	,float           *envelope_buf
+	,const float     *envelope_buf
 	,const float     *correlation_bufs
 	,const float     *rel_powers
 	,unsigned         nb_rels
