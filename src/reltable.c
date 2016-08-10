@@ -342,18 +342,18 @@ reltable_build
 {
 	unsigned i;
 	float    rel_power = rel_powers[0];
-	unsigned *epos    = malloc(error_vec_len * sizeof(unsigned));
-	float    *emse    = malloc(error_vec_len * sizeof(float));
+	unsigned *epos     = malloc(error_vec_len * sizeof(unsigned));
+	float    *emse     = malloc(error_vec_len * sizeof(float));
 	unsigned positions = 0;
 
 	(void)debug_prefix;
 
 	{
-		unsigned  lf   = 2 * fmax(1.0, (unsigned)(period / 15.0));
-		unsigned  skip = (unsigned)fmax(1.0, period - lf/2);
+		unsigned  lf      = 2 * fmax(1.0, (unsigned)(period / 15.0));
+		unsigned  skip    = (unsigned)fmax(1.0, period - lf/2);
 		float    *emsebuf = malloc(error_vec_len * sizeof(float));
-		unsigned  errpos = 0;
-		float     err = 0.0;
+		unsigned  errpos  = 0;
+		float     err     = 0.0;
 
 		/* Find best release alignment position. */
 		err = rel_power;
@@ -377,7 +377,7 @@ reltable_build
 			for (j = 1; (j < lf) && (i >= j); j++) {
 				if (emsebuf[i-j] < le) {
 					lep = i-j;
-					le = emsebuf[lep];
+					le  = emsebuf[lep];
 				}
 			}
 			epos[positions++] = lep;

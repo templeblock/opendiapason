@@ -636,12 +636,6 @@ load_smpl_lists
 
 			rel_power /= env_width;
 
-#if 0
-			for (i = 0; i < buf_stride; i++) {
-				mse_buf[i] = envelope_buf[i] + rel_power - 2.0f * mse_buf[i];
-			}
-#endif
-
 			*powptr  = rel_power;
 			powptr  += 1;
 			mse_buf += buf_stride;
