@@ -124,43 +124,38 @@ build_relnode
 	)
 {
 	unsigned i;
+	double mean_y = 0.0;
+	double mean_x = 0.0;
+	double sum_n, sum_d;
 
 	assert(end_position > start_position);
 
-	if (end_position - start_position == 0) {
-		unsigned  sp = sync_positions[start_position];
-		rn->b        = sp;
-		rn->rel_gain = gain_vec[start_position];
-		rn->modfac   = 1.0;
-		rn->avg_err  = mse_vec[sp];
-	} else {
-		double mean_y = 0.0;
-		double mean_x = 0.0;
-		double sum_n, sum_d;
-		rn->rel_gain = 0.0f;
-		rn->avg_err  = 0.0f;
-		for (i = start_position; i <= end_position; i++) {
-			unsigned sp   = sync_positions[i];
-			float tmp     = mse_vec[sp];
-			mean_y       += sp;
-			mean_x       += i;
-			rn->rel_gain  = (gain_vec[i] > rn->rel_gain) ? gain_vec[i] : rn->rel_gain;
-			rn->avg_err  += tmp;
-		}
-		rn->avg_err /= (end_position - start_position + 1);
-		mean_y      /= (end_position - start_position + 1);
-		mean_x      /= (end_position - start_position + 1);
-		sum_n        = 0.0;
-		sum_d        = 0.0;
-		for (i = start_position; i <= end_position; i++) {
-			sum_n += (i - mean_x) * (sync_positions[i] - mean_y);
-			sum_d += (i - mean_x) * (i - mean_x);
-		}
-		rn->modfac = sum_n / sum_d;
-		rn->b = mean_y - rn->modfac * mean_x;
-
-		rn->b = rn->modfac * start_position + rn->b;
+	rn->rel_gain = 0.0f;
+	rn->avg_err  = 0.0f;
+	for (i = start_position; i <= end_position; i++) {
+		unsigned sp   = sync_positions[i];
+		float tmp     = mse_vec[sp];
+		mean_y       += sp;
+		mean_x       += i;
+		rn->rel_gain  = (gain_vec[i] > rn->rel_gain) ? gain_vec[i] : rn->rel_gain;
+		rn->avg_err  += tmp;
 	}
+	//rn->avg_err /= (end_position - start_position + 1);
+	mean_y      /= (end_position - start_position + 1);
+	mean_x      /= (end_position - start_position + 1);
+	sum_n        = 0.0;
+	sum_d        = 0.0;
+	for (i = start_position; i <= end_position; i++) {
+		sum_n += (i - mean_x) * (sync_positions[i] - mean_y);
+		sum_d += (i - mean_x) * (i - mean_x);
+	}
+	rn->modfac = sum_n / sum_d;
+	rn->b = mean_y - rn->modfac * mean_x;
+	rn->b = rn->modfac * start_position + rn->b;
+
+	/* TODO: CAN THIS BE CHANGED?? :( NEGATIVE VALUES CAUSE THE INTERPOLATION
+	 * BELOW TO GO MENTAL - THERE MUST BE A BETTER WAY! */
+	rn->b = fmax(rn->b, 0.0);
 
 	rn->startidx    = start_position;
 	rn->endidx      = end_position;
