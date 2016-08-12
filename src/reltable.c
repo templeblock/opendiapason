@@ -344,7 +344,7 @@ reltable_build
 	(void)debug_prefix;
 
 	{
-		unsigned  lf      = 2 * fmax(1.0, (unsigned)(period / 15.0));
+		unsigned  lf      = 2 * (unsigned)fmax(1.0, period / 15.0);
 		unsigned  skip    = (unsigned)fmax(1.0, period - lf/2);
 		float    *emsebuf = malloc(error_vec_len * sizeof(float));
 		unsigned  errpos  = 0;

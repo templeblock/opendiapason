@@ -11,7 +11,7 @@ endif()
 
 add_library(odfilter STATIC odfilter.c ../odfilter.h)
 
-if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+if (x${CMAKE_CXX_COMPILER_ID} STREQUAL "xMSVC")
   set_property(TARGET odfilter APPEND_STRING PROPERTY COMPILE_FLAGS " /W3")
 else()
   set_property(TARGET odfilter APPEND_STRING PROPERTY COMPILE_FLAGS " -Wall")

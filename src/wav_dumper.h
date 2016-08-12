@@ -73,7 +73,7 @@ int
 wav_dumper_begin
 	(struct wav_dumper *dump
 	,const char        *filename
-	,size_t             channels
+	,unsigned           channels
 	,unsigned           bits_per_sample
 	,uint_fast32_t      rate
 	,unsigned           nb_buffers
