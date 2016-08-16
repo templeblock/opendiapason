@@ -67,6 +67,7 @@ reltable_find
 	(const struct reltable *reltable
 	,double                 sample
 	,float                 *gain
+	,float                 *avgerr
 	)
 {
 	unsigned i;
@@ -88,6 +89,10 @@ reltable_find
 			unsigned es = reltable->entry[i].last_sample;
 			*gain = sg + (sample - (ss+1)) * (eg - sg) / (es - (ss+1));
 		}
+	}
+
+	if (avgerr != NULL) {
+		*avgerr = reltable->entry[i].avgerr;
 	}
 
 	/* TODO: FABS INSERTED TO PREVENT NEGATIVE OUTPUT! MAY BE A BUG ELSEWHERE. */

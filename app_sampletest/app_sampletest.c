@@ -228,8 +228,9 @@ engine_callback
 		unsigned newf;
 		float    f;
 		unsigned d = 128;
+		float err;
 
-		np   = reltable_find(&pd->data.reltable, states[0]->ipos + states[0]->fpos * (1.0 / SMPL_POSITION_SCALE), &f);
+		np   = reltable_find(&pd->data.reltable, states[0]->ipos + states[0]->fpos * (1.0 / SMPL_POSITION_SCALE), &f, &err);
 		newi = floor(np);
 		newf = (unsigned)((np - newi) * SMPL_POSITION_SCALE);
 		pd->data.release.instantiate(states[1], &pd->data.release, newi, newf);
