@@ -67,7 +67,6 @@ reltable_find
 	(const struct reltable *reltable
 	,double                 sample
 	,float                 *gain
-	,float                 *avgerr
 	)
 {
 	unsigned i;
@@ -89,10 +88,6 @@ reltable_find
 			unsigned es = reltable->entry[i].last_sample;
 			*gain = sg + (sample - (ss+1)) * (eg - sg) / (es - (ss+1));
 		}
-	}
-
-	if (avgerr != NULL) {
-		*avgerr = reltable->entry[i].avgerr;
 	}
 
 	/* TODO: FABS INSERTED TO PREVENT NEGATIVE OUTPUT! MAY BE A BUG ELSEWHERE. */
@@ -336,75 +331,96 @@ reltable_build
 	)
 {
 	unsigned i;
-	float    rel_power = rel_powers[0];
-	unsigned *epos     = malloc(error_vec_len * sizeof(unsigned));
-	float    *emse     = malloc(error_vec_len * sizeof(float));
-	unsigned positions = 0;
-
+	unsigned *eposs    = malloc(rel_stride * nb_rels * sizeof(unsigned));
+	float    *emses    = malloc(rel_stride * nb_rels * sizeof(float));
+	unsigned *nb_syncs = malloc(nb_rels * sizeof(unsigned));
 	(void)debug_prefix;
 
 	{
-		unsigned  lf      = 2 * fmax(1.0, (unsigned)(period / 15.0));
-		unsigned  skip    = (unsigned)fmax(1.0, period - lf/2);
-		float    *emsebuf = malloc(error_vec_len * sizeof(float));
-		unsigned  errpos  = 0;
-		float     err     = 0.0;
+		const unsigned  lf       = 2 * fmax(1.0, (unsigned)(period / 15.0));
+		const unsigned  skip     = (unsigned)fmax(1.0, period - lf/2);
+		float          *emsebufs = malloc(rel_stride * nb_rels * sizeof(float));
+		unsigned rel_idx;
 
-		/* Find best release alignment position. */
-		err = rel_power;
-		for (i = 0; i < error_vec_len; i++) {
-			float scale = rel_power + envelope_buf[i];
-			float f     = scale - 2.0f * correlation_bufs[i];
-			emse[i]     = f / scale;
-			emsebuf[i]  = f;
-			if (f < err) {
-				err    = f;
-				errpos = i;
-			}
-		}
+		for (rel_idx = 0; rel_idx < nb_rels; rel_idx++) {
+			float        rel_power = rel_powers[rel_idx];
+			float       *emsebuf   = emsebufs         + rel_idx * rel_stride;
+			float       *emse      = emses            + rel_idx * rel_stride;
+			const float *corrbuf   = correlation_bufs + rel_idx * rel_stride;
+			unsigned    *epos      = eposs            + rel_idx * rel_stride;
+			unsigned     errpos;
+			float        err;
+			unsigned     positions = 0;
 
-		/* Find positions before best sync position */
-		for (i = errpos; i > skip; ) {
-			unsigned lep = i - skip;
-			float    le  = emsebuf[lep];
-			unsigned j;
-			i = lep;
-			for (j = 1; (j < lf) && (i >= j); j++) {
-				if (emsebuf[i-j] < le) {
-					lep = i-j;
-					le  = emsebuf[lep];
+			/* Find best release alignment position. */
+			for (i = 0, err = rel_power, errpos = 0; i < error_vec_len; i++) {
+				float scale = rel_power + envelope_buf[i];
+				float f     = scale - 2.0f * corrbuf[i];
+				emse[i]     = f / scale;
+				emsebuf[i]  = f;
+				if (f < err) {
+					err    = f;
+					errpos = i;
 				}
 			}
-			epos[positions++] = lep;
-			i = lep;
-		}
 
-		/* Reverse initial position list */
-		for (i = 0; i < positions/2; i++) {
-			unsigned tmp         = epos[i];
-			epos[i]              = epos[positions-1-i];
-			epos[positions-1-i]  = tmp;
-		}
-
-		/* Insert best position */
-		epos[positions++] = errpos;
-
-		/* Insert all later positions. */
-		for (i = errpos + skip; i < error_vec_len; i += skip) {
-			unsigned lep = i;
-			float    le = emsebuf[lep];
-			unsigned j;
-			for (j = 1; (j < lf) && (i + j < error_vec_len); j++) {
-				if (emsebuf[i+j] < le) {
-					lep = i+j;
-					le = emsebuf[lep];
+			/* Find positions before best sync position */
+			for (i = errpos; i > skip; ) {
+				unsigned lep = i - skip;
+				float    le  = emsebuf[lep];
+				unsigned j;
+				i = lep;
+				for (j = 1; (j < lf) && (i >= j); j++) {
+					if (emsebuf[i-j] < le) {
+						lep = i-j;
+						le  = emsebuf[lep];
+					}
 				}
+				epos[positions++] = lep;
+				i = lep;
 			}
-			epos[positions++] = lep;
-			i = lep;
+
+			/* Reverse initial position list */
+			for (i = 0; i < positions/2; i++) {
+				unsigned tmp         = epos[i];
+				epos[i]              = epos[positions-1-i];
+				epos[positions-1-i]  = tmp;
+			}
+
+			/* Insert best position */
+			epos[positions++] = errpos;
+
+			/* Insert all later positions. */
+			for (i = errpos + skip; i < error_vec_len; i += skip) {
+				unsigned lep = i;
+				float    le = emsebuf[lep];
+				unsigned j;
+				for (j = 1; (j < lf) && (i + j < error_vec_len); j++) {
+					if (emsebuf[i+j] < le) {
+						lep = i+j;
+						le = emsebuf[lep];
+					}
+				}
+				epos[positions++] = lep;
+				i = lep;
+			}
+
+			nb_syncs[rel_idx] = positions;
 		}
 
-		free(emsebuf);
+#ifdef OPENDIAPASON_VERBOSE_DEBUG
+		if (strlen(debug_prefix) < 1024 - 50) {
+			char      namebuf[1024];
+			struct wav_dumper dump;
+			sprintf(namebuf, "%s_reltable_mses.wav", debug_prefix);
+			if (wav_dumper_begin(&dump, namebuf, nb_rels, 24, 44100, 1, 44100) == 0) {
+				(void)wav_dumper_write_from_floats(&dump, emses, error_vec_len, 1, rel_stride);
+				wav_dumper_end(&dump);
+			}
+		}
+#endif
+
+		free(emsebufs);
 
 #ifdef OPENDIAPASON_VERBOSE_DEBUG
 		printf("period: %f,%u,%u\n", period, skip, lf);
@@ -412,41 +428,30 @@ reltable_build
 	}
 
 	{
-		float  rel_scale = 1.0f / rel_power;
-		float *egain     = malloc(positions * sizeof(float));
+		float  rel_scale = 1.0f / rel_powers[0];
+		float *egain     = malloc(nb_syncs[0] * sizeof(float));
 
-		for (i = 0; i < positions; i++) {
-			unsigned j = epos[i];
+		for (i = 0; i < nb_syncs[0]; i++) {
+			unsigned j = eposs[0*rel_stride + i];
 			float cbj  = correlation_bufs[j];
 			egain[i]   = cbj * rel_scale;
 		}
 
-#if OPENDIAPASON_VERBOSE_DEBUG
-		if (strlen(debug_prefix) < 1024 - 50) {
-			char              namebuf[1024];
-			struct wav_dumper dump;
-			sprintf(namebuf, "%s_reltable_samples.wav", debug_prefix);
-			if (wav_dumper_begin(&dump, namebuf, 1, 24, 44100, 1, 44100) == 0) {
-				(void)wav_dumper_write_from_floats(&dump, emse, error_vec_len, 1, error_vec_len);
-				wav_dumper_end(&dump);
-			}
-		}
-#endif
-
 		reltable_int
 			(reltable
-			,epos
-			,positions
+			,eposs + 0 * rel_stride
+			,nb_syncs[0]
 			,egain
-			,emse
+			,emses + 0 * rel_stride
 			,error_vec_len
 			);
 
 		free(egain);
 	}
 
-	free(epos);
-	free(emse);
+	free(nb_syncs);
+	free(eposs);
+	free(emses);
 
 #ifdef OPENDIAPASON_VERBOSE_DEBUG
 	for (i = 0; i < reltable->nb_entry; i++) {

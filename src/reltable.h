@@ -41,7 +41,6 @@ reltable_find
 	(const struct reltable *reltable
 	,double                 sample
 	,float                 *gain
-	,float                 *avgerr
 	);
 
 /* Creates a release alignment table for aligning a release with an

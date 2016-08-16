@@ -228,26 +228,24 @@ engine_callback
 		unsigned newf;
 		float    f;
 		unsigned d = 128;
-		float err;
-		unsigned derror;
 
-		np   = reltable_find(&pd->data.reltable, states[0]->ipos + states[0]->fpos * (1.0 / SMPL_POSITION_SCALE), &f, &err);
-		err  = -10.0 * log10(err + 1e-18);
+		np   = reltable_find(&pd->data.reltable, states[0]->ipos + states[0]->fpos * (1.0 / SMPL_POSITION_SCALE), &f);
 		newi = floor(np);
 		newf = (unsigned)((np - newi) * SMPL_POSITION_SCALE);
 		pd->data.release.instantiate(states[1], &pd->data.release, newi, newf);
 		
-		if (f < 0.8) {
-			d = (8192 * (0.8 - f) + 128 + 0.5f);
-		} if (f > 1.1) {
-			d = (8192 * fmin((f - 1.1) / (1.3 - 1.1), 1.0) + 128 + 0.5f);
+		if (f < 0.95f) {
+			d = (unsigned)(8192.0f * (0.95f - f) + 128.0f + 0.5f);
+		} if (f > 1.05f) {
+			d = (unsigned)(8192.0f * fmin((f - 1.05f) / (1.3f - 1.05f), 1.0f) + 128.0f + 0.5f);
 		}
 
-		f = (f > 1.05) ? 1.05 : f;
+		f = (f > 1.1f) ? 1.1f : f;
 
-		derror = (unsigned)((err > 0.5f) ? (err - 0.5f) * (16384.0f / 20.0f) : 0.0f);
-		d = (derror > d) ? derror : d;
-		
+#if OPENDIAPASON_VERBOSE_DEBUG
+		printf("release gain=%f xfade=%u, offset=%f\n", f, d, np);
+#endif
+
 		states[1]->rate = pd->rate;
 		states[1]->setfade(states[1], 0, 0.0f);
 		states[1]->setfade(states[1], d, f);

@@ -101,7 +101,7 @@ load_executors
 			bits[2].load_flags = SMPL_COMP_LOADFLAG_R;
 			bits[3].load_flags = SMPL_COMP_LOADFLAG_R;
 
-			err = load_smpl_comp(&(pipes[i].pd.data), bits, 2, mem, fftset, prefilter);
+			err = load_smpl_comp(&(pipes[i].pd.data), bits, 4, mem, fftset, prefilter);
 
 			if (err != NULL) {
 				printf("WAVE ERR: %s-%s\n", namebuf, err);
