@@ -140,7 +140,7 @@ build_relnode
 		rn->rel_gain  = (gain_vec[i] > rn->rel_gain) ? gain_vec[i] : rn->rel_gain;
 		rn->avg_err  += tmp;
 	}
-	//rn->avg_err /= (end_position - start_position + 1);
+	rn->avg_err /= (end_position - start_position + 1);
 	mean_y      /= (end_position - start_position + 1);
 	mean_x      /= (end_position - start_position + 1);
 	sum_n        = 0.0;
@@ -336,23 +336,23 @@ reltable_build
 	)
 {
 	unsigned i;
-	unsigned *eposs    = malloc(rel_stride * nb_rels * sizeof(unsigned));
-	float    *emses    = malloc(rel_stride * nb_rels * sizeof(float));
-	unsigned *nb_syncs = malloc(nb_rels * sizeof(unsigned));
+	unsigned rel_idx;
+	unsigned *error_positions = malloc(rel_stride * nb_rels * sizeof(unsigned));
+	float    *shape_errors    = malloc(rel_stride * nb_rels * sizeof(float));
+	unsigned *nb_syncs        = malloc(nb_rels * sizeof(unsigned));
 	(void)debug_prefix;
 
 	{
-		const unsigned  lf       = 2 * fmax(1.0, (unsigned)(period / 15.0));
+		const unsigned  lf       = 2 * fmax(1.0, (unsigned)(period / 8.0));
 		const unsigned  skip     = (unsigned)fmax(1.0, period - lf/2);
-		float          *emsebufs = malloc(rel_stride * nb_rels * sizeof(float));
-		unsigned rel_idx;
+		float          *ms_errors = malloc(rel_stride * nb_rels * sizeof(float));
 
 		for (rel_idx = 0; rel_idx < nb_rels; rel_idx++) {
-			float        rel_power = rel_powers[rel_idx];
-			float       *emsebuf   = emsebufs         + rel_idx * rel_stride;
-			float       *emse      = emses            + rel_idx * rel_stride;
-			const float *corrbuf   = correlation_bufs + rel_idx * rel_stride;
-			unsigned    *epos      = eposs            + rel_idx * rel_stride;
+			float        rel_power   = rel_powers[rel_idx];
+			float       *ms_error    = ms_errors        + rel_idx * rel_stride;
+			float       *shape_error = shape_errors     + rel_idx * rel_stride;
+			const float *corrbuf     = correlation_bufs + rel_idx * rel_stride;
+			unsigned    *epos        = error_positions  + rel_idx * rel_stride;
 			unsigned     errpos;
 			float        err;
 			unsigned     positions = 0;
@@ -361,8 +361,8 @@ reltable_build
 			for (i = 0, err = rel_power, errpos = 0; i < error_vec_len; i++) {
 				float scale = rel_power + envelope_buf[i];
 				float f     = scale - 2.0f * corrbuf[i];
-				emse[i]     = f / scale;
-				emsebuf[i]  = f;
+				shape_error[i] = f / scale;
+				ms_error[i]    = f;
 				if (f < err) {
 					err    = f;
 					errpos = i;
@@ -372,13 +372,13 @@ reltable_build
 			/* Find positions before best sync position */
 			for (i = errpos; i > skip; ) {
 				unsigned lep = i - skip;
-				float    le  = emsebuf[lep];
+				float    le  = ms_error[lep];
 				unsigned j;
 				i = lep;
 				for (j = 1; (j < lf) && (i >= j); j++) {
-					if (emsebuf[i-j] < le) {
+					if (ms_error[i-j] < le) {
 						lep = i-j;
-						le  = emsebuf[lep];
+						le  = ms_error[lep];
 					}
 				}
 				epos[positions++] = lep;
@@ -398,12 +398,12 @@ reltable_build
 			/* Insert all later positions. */
 			for (i = errpos + skip; i < error_vec_len; i += skip) {
 				unsigned lep = i;
-				float    le = emsebuf[lep];
+				float    le = ms_error[lep];
 				unsigned j;
 				for (j = 1; (j < lf) && (i + j < error_vec_len); j++) {
-					if (emsebuf[i+j] < le) {
+					if (ms_error[i+j] < le) {
 						lep = i+j;
-						le = emsebuf[lep];
+						le = ms_error[lep];
 					}
 				}
 				epos[positions++] = lep;
@@ -419,44 +419,56 @@ reltable_build
 			struct wav_dumper dump;
 			sprintf(namebuf, "%s_reltable_mses.wav", debug_prefix);
 			if (wav_dumper_begin(&dump, namebuf, nb_rels, 24, 44100, 1, 44100) == 0) {
-				(void)wav_dumper_write_from_floats(&dump, emses, error_vec_len, 1, rel_stride);
+				(void)wav_dumper_write_from_floats(&dump, ms_errors, error_vec_len, 1, rel_stride);
 				wav_dumper_end(&dump);
 			}
 		}
 #endif
 
-		free(emsebufs);
+		free(ms_errors);
 
 #ifdef OPENDIAPASON_VERBOSE_DEBUG
 		printf("period: %f,%u,%u\n", period, skip, lf);
 #endif
 	}
 
-	{
-		float  rel_scale = 1.0f / rel_powers[0];
-		float *egain     = malloc(nb_syncs[0] * sizeof(float));
+	for (rel_idx = 0; rel_idx < nb_rels; rel_idx++) {
+		struct reltable tmp;
+		float           rel_scale = 1.0f / rel_powers[rel_idx];
+		float          *egain     = malloc(nb_syncs[rel_idx] * sizeof(float));
+		const float    *ecorr     = correlation_bufs + rel_idx * rel_stride;
+		unsigned       *epos      = error_positions + rel_idx * rel_stride;
 
-		for (i = 0; i < nb_syncs[0]; i++) {
-			unsigned j = eposs[0*rel_stride + i];
-			float cbj  = correlation_bufs[j];
+		for (i = 0; i < nb_syncs[rel_idx]; i++) {
+			unsigned j = epos[i];
+			float cbj  = ecorr[j];
 			egain[i]   = cbj * rel_scale;
 		}
 
 		reltable_int
-			(reltable
-			,eposs + 0 * rel_stride
-			,nb_syncs[0]
+			((rel_idx == 0) ? reltable : &tmp
+			,epos
+			,nb_syncs[rel_idx]
 			,egain
-			,emses + 0 * rel_stride
+			,shape_errors + rel_idx * rel_stride
 			,error_vec_len
 			);
+
+#ifdef OPENDIAPASON_VERBOSE_DEBUG
+		if (rel_idx != 0) {
+			for (i = 0; i < tmp.nb_entry; i++) {
+				printf("%u) %f,%f,%f,%f\n", tmp.entry[i].last_sample, tmp.entry[i].m, tmp.entry[i].b, tmp.entry[i].gain, tmp.entry[i].avgerr);
+			}
+		}
+#endif
+
 
 		free(egain);
 	}
 
 	free(nb_syncs);
-	free(eposs);
-	free(emses);
+	free(error_positions);
+	free(shape_errors);
 
 #ifdef OPENDIAPASON_VERBOSE_DEBUG
 	for (i = 0; i < reltable->nb_entry; i++) {
