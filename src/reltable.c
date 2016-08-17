@@ -238,7 +238,7 @@ reltable_int
 	,const unsigned  *sync_positions
 	,unsigned         nb_sync_positions
 	,const float     *gain_vec
-	,const float     *mse_vec
+	,const float     *shape_error_vec
 	,unsigned         error_vec_len
 	)
 {
@@ -248,7 +248,7 @@ reltable_int
 
 	assert(nb_sync_positions);
 
-	build_relnode(&root, sync_positions, gain_vec, mse_vec, 0, nb_sync_positions-1, error_vec_len);
+	build_relnode(&root, sync_positions, gain_vec, shape_error_vec, 0, nb_sync_positions-1, error_vec_len);
 
 	while (nbuf > 2) {
 		struct relnode *w = find_worst_node(&root);
@@ -269,7 +269,7 @@ reltable_int
 			x1 = (x1 >= error_vec_len) ? (error_vec_len - 1) : x1;
 			x2 = (x2 >= error_vec_len) ? (error_vec_len - 1) : x2;
 
-			eh += 2.0 * (mse_vec[x1] * (1.0 - interp) + mse_vec[x2] * interp);
+			eh += 2.0 * (shape_error_vec[x1] * (1.0 - interp) + shape_error_vec[x2] * interp);
 		}
 
 		i--;
@@ -293,8 +293,8 @@ reltable_int
 		w->left = &(nodebuf[--nbuf]);
 		w->right = &(nodebuf[--nbuf]);
 
-		build_relnode(w->left, sync_positions, gain_vec, mse_vec, w->startidx, stop1, error_vec_len);
-		build_relnode(w->right, sync_positions, gain_vec, mse_vec, start2, w->endidx, error_vec_len);
+		build_relnode(w->left, sync_positions, gain_vec, shape_error_vec, w->startidx, stop1, error_vec_len);
+		build_relnode(w->right, sync_positions, gain_vec, shape_error_vec, start2, w->endidx, error_vec_len);
 	}
 
 	reltable->nb_entry = 0;
@@ -322,6 +322,36 @@ reltable_int
  *      positions which we would ideally jump into the release at sample 0
  *      from.
  * TODO: finish this. */
+static
+unsigned
+search_best
+	(unsigned  search_start
+	,unsigned  search_width
+	,unsigned  data_length
+	,float    *mse
+	)
+{
+	unsigned min_idx;
+	float    err;
+	unsigned i;
+
+	assert(search_start < data_length);
+	assert(search_start + search_width <= data_length);
+
+	mse     += search_start;
+	min_idx  = 0;
+	err      = mse[0];
+
+	for (i = 1; i < search_width; i++) {
+		if (mse[i] < err) {
+			min_idx = i;
+			err     = mse[i];
+		}
+	}
+
+	return search_start + min_idx;
+}
+
 void
 reltable_build
 	(struct reltable *reltable
@@ -343,8 +373,8 @@ reltable_build
 	(void)debug_prefix;
 
 	{
-		const unsigned  lf       = 2 * fmax(1.0, (unsigned)(period / 8.0));
-		const unsigned  skip     = (unsigned)fmax(1.0, period - lf/2);
+		const unsigned  lf        = 2 * fmax(1.0, (unsigned)(period / 8.0));
+		const unsigned  skip      = (unsigned)fmax(1.0, period - lf/2);
 		float          *ms_errors = malloc(rel_stride * nb_rels * sizeof(float));
 
 		for (rel_idx = 0; rel_idx < nb_rels; rel_idx++) {
@@ -370,17 +400,8 @@ reltable_build
 			}
 
 			/* Find positions before best sync position */
-			for (i = errpos; i > skip; ) {
-				unsigned lep = i - skip;
-				float    le  = ms_error[lep];
-				unsigned j;
-				i = lep;
-				for (j = 1; (j < lf) && (i >= j); j++) {
-					if (ms_error[i-j] < le) {
-						lep = i-j;
-						le  = ms_error[lep];
-					}
-				}
+			for (i = errpos; i > skip + lf; ) {
+				unsigned lep = search_best(i - skip - lf, lf, error_vec_len, ms_error);
 				epos[positions++] = lep;
 				i = lep;
 			}
@@ -396,16 +417,8 @@ reltable_build
 			epos[positions++] = errpos;
 
 			/* Insert all later positions. */
-			for (i = errpos + skip; i < error_vec_len; i += skip) {
-				unsigned lep = i;
-				float    le = ms_error[lep];
-				unsigned j;
-				for (j = 1; (j < lf) && (i + j < error_vec_len); j++) {
-					if (ms_error[i+j] < le) {
-						lep = i+j;
-						le = ms_error[lep];
-					}
-				}
+			for (i = errpos; i + skip + lf <= error_vec_len; ) {
+				unsigned lep = search_best(i + skip, lf, error_vec_len, ms_error);
 				epos[positions++] = lep;
 				i = lep;
 			}
