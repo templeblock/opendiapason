@@ -35,28 +35,20 @@ struct relnode {
 	unsigned         startidx;
 	unsigned         endidx;
 
-	/* ideal_error is the sum of all of the errors of the "ideal" positions
-	 * to align the release starting at release sample zero. actual_error is
-	 * the sum of the errors when the release is aligned according to b and
-	 * modfac as defined in this node.
-	 *
-	 * These factors are used when building the release node tree to figure
-	 * out the next node which should be split. While this method seems to
-	 * work almost all of the time, it does have some issues with high-
-	 * frequency pipes. Because we do not interpolate the correlation signal,
-	 * the peaks that we find (i.e. points where the release would align "the-
-	 * best" are almost always going to be slightly wrong). We mitigate this
-	 * a tiny bit by using linear interpolation between errors, but this only
-	 * gets you so far. The end result is that ideal_error could end up being
-	 * smaller than actual_error, but actual_error in reality would be smaller
-	 * if the signal had been upsampled prior to this operation taking
-	 * place. Gross. */
-	double           ideal_error;
-	double           actual_error;
+	/* The number of sync positions used to build the node. */
+	unsigned         nb_sync_positions;
 
-	/* The gain associated with this node. */
-	float            rel_gain;
-	float            avg_err;
+	/* The gain information associated with this node. */
+	float            min_gain;
+	float            max_gain;
+	float            avg_gain;
+	float            ideal_avg_gain;
+
+	/* Error information associated with this node. */
+	float            min_error;
+	float            max_error;
+	float            avg_error;
+	float            ideal_avg_error;
 
 	struct relnode  *left;
 	struct relnode  *right;
@@ -111,13 +103,15 @@ reltable_find
 #endif
 }
 
+/* Use the shape error to break the relnode into components (maybe also use
+ * the gain vector)... */
 static
 void
 build_relnode
 	(struct relnode *rn
 	,const unsigned *sync_positions
 	,const float    *gain_vec
-	,const float    *mse_vec
+	,const float    *shape_error_vec
 	,unsigned        start_position
 	,unsigned        end_position
 	,unsigned        error_vec_len
@@ -130,59 +124,87 @@ build_relnode
 
 	assert(end_position > start_position);
 
-	rn->rel_gain = 0.0f;
-	rn->avg_err  = 0.0f;
+	rn->nb_sync_positions  = (end_position - start_position) + 1;
+	rn->startidx           = start_position;
+	rn->endidx             = end_position;
+
 	for (i = start_position; i <= end_position; i++) {
 		unsigned sp   = sync_positions[i];
-		float tmp     = mse_vec[sp];
 		mean_y       += sp;
 		mean_x       += i;
-		rn->rel_gain  = (gain_vec[i] > rn->rel_gain) ? gain_vec[i] : rn->rel_gain;
-		rn->avg_err  += tmp;
 	}
-	rn->avg_err /= (end_position - start_position + 1);
-	mean_y      /= (end_position - start_position + 1);
-	mean_x      /= (end_position - start_position + 1);
-	sum_n        = 0.0;
-	sum_d        = 0.0;
+
+	/* Compute modfac and b as the least-squares line fit through all of the
+	 * sync positions. So the position we jump to inside the release will be
+	 *        (current_position + b) % modfac
+	 */
+	mean_y                /= rn->nb_sync_positions;
+	mean_x                /= rn->nb_sync_positions;
+	sum_n                  = 0.0;
+	sum_d                  = 0.0;
 	for (i = start_position; i <= end_position; i++) {
 		sum_n += (i - mean_x) * (sync_positions[i] - mean_y);
 		sum_d += (i - mean_x) * (i - mean_x);
 	}
 	rn->modfac = sum_n / sum_d;
-	rn->b = mean_y - rn->modfac * mean_x;
-	rn->b = rn->modfac * start_position + rn->b;
+	rn->b      = mean_y - rn->modfac * mean_x;
+	rn->b      = rn->modfac * start_position + rn->b;
 
 	/* TODO: CAN THIS BE CHANGED?? :( NEGATIVE VALUES CAUSE THE INTERPOLATION
 	 * BELOW TO GO MENTAL - THERE MUST BE A BETTER WAY! */
 	rn->b = fmax(rn->b, 0.0);
 
-	rn->startidx    = start_position;
-	rn->endidx      = end_position;
+	{
+		float min_tmp = 1.0f;
+		float max_tmp = 0.0f;
+		float avg_tmp = 0.0f;
+		float min_tmp2 = 1.0f;
+		float max_tmp2 = 0.0f;
+		float avg_tmp2 = 0.0f;
+		float act_serr = 0.0f;
+		float act_gerr = 0.0f;
 
-	double emin = 0.0;
-	double eapprox = 0.0;
-	for (i = start_position; i <= end_position; i++) {
-		double   approx = (rn->b + (i-start_position) * rn->modfac);
-		unsigned actual = sync_positions[i];
+		for (i = start_position; i <= end_position; i++) {
+			double   approx = (rn->b + (i-start_position) * rn->modfac);
+			unsigned actual = sync_positions[i];
 
-		unsigned x1 = (unsigned)floor(approx);
-		double   interp = fmin(1.0, fmax(0.0, approx - x1));
-		unsigned x2 = x1 + 1;
+			unsigned x1 = (unsigned)floor(approx);
+			float    interp = fmin(1.0f, fmax(0.0f, approx - x1));
+			unsigned x2 = x1 + 1;
+			float    ethis;
+			float    gthis;
 
-		x1 = (x1 >= error_vec_len) ? (error_vec_len - 1) : x1;
-		x2 = (x2 >= error_vec_len) ? (error_vec_len - 1) : x2;
+			x1 = (x1 >= error_vec_len) ? (error_vec_len - 1) : x1;
+			x2 = (x2 >= error_vec_len) ? (error_vec_len - 1) : x2;
 
-		emin    += mse_vec[actual];
-		eapprox += mse_vec[x1] * (1.0 - interp) + mse_vec[x2] * interp;
+			ethis     = shape_error_vec[x1] * (1.0f - interp) + shape_error_vec[x2] * interp;
+			gthis     = gain_vec[x1]        * (1.0f - interp) + gain_vec[x2] * interp;
+
+			min_tmp   = (ethis < min_tmp) ? ethis : min_tmp;
+			min_tmp2  = (gthis < min_tmp) ? gthis : min_tmp;
+			max_tmp   = (ethis > max_tmp) ? ethis : max_tmp;
+			max_tmp2  = (gthis > max_tmp) ? gthis : max_tmp;
+			avg_tmp  += ethis;
+			avg_tmp2 += gthis;
+			act_serr += shape_error_vec[actual];
+			act_gerr += gain_vec[actual];
+		}
+
+		rn->min_gain        = fmax(min_tmp2, 0.0f);
+		rn->max_gain        = max_tmp2;
+		rn->avg_gain        = avg_tmp2 / rn->nb_sync_positions;
+		rn->ideal_avg_gain  = act_gerr / rn->nb_sync_positions;
+		rn->min_error       = min_tmp;
+		rn->max_error       = max_tmp;
+		rn->avg_error       = avg_tmp / rn->nb_sync_positions;
+		rn->ideal_avg_error = act_serr / rn->nb_sync_positions;
 	}
 
-	rn->ideal_error = emin;
-	rn->actual_error = eapprox;
-	rn->left = NULL;
-	rn->right = NULL;
+	rn->left            = NULL;
+	rn->right           = NULL;
 }
 
+/* Find a target node to split. */
 static
 struct relnode *
 find_worst_node
@@ -192,11 +214,20 @@ find_worst_node
 	if (root->left != NULL && root->right != NULL) {
 		struct relnode *w1 = find_worst_node(root->left);
 		struct relnode *w2 = find_worst_node(root->right);
-		if (w1->startidx == w1->endidx)
+		
+		if (w1->nb_sync_positions <= 4)
 			return w2;
-		if (w2->startidx == w2->endidx)
+		if (w2->nb_sync_positions <= 4)
 			return w1;
-		return (w1->actual_error - w1->ideal_error > w2->actual_error - w2->ideal_error) ? w1 : w2;
+
+		assert(w1->ideal_avg_gain > 0.0f);
+		assert(w2->ideal_avg_gain > 0.0f);
+
+		return (fabsf(w1->ideal_avg_gain - w1->avg_gain) > fabsf(w2->ideal_avg_gain - w2->avg_gain)) ? w1 : w2;
+
+
+
+		return (w1->max_gain / (w1->min_gain + 0.01f) > w2->max_gain / (w2->min_gain + 0.01f)) ? w1 : w2;
 	}
 	return root;
 }
@@ -224,8 +255,8 @@ recursive_construct_table
 	b = node->b;
 	table->entry[table->nb_entry].b = b;
 	table->entry[table->nb_entry].m = m;
-	table->entry[table->nb_entry].gain = node->rel_gain;
-	table->entry[table->nb_entry].avgerr = node->avg_err;
+	table->entry[table->nb_entry].gain   = node->avg_gain;
+	table->entry[table->nb_entry].avgerr = node->avg_error;
 	table->nb_entry++;
 }
 
@@ -257,10 +288,13 @@ reltable_int
 
 		unsigned stop1, start2;
 
-		if (w->actual_error - w->ideal_error < 0.005 || (w->endidx - w->startidx < 3))
+		/* If find_worst_node returns too short a node, then we've actually
+		 * used all the sync positions or have reached a termination
+		 * condition. */
+		if (w->endidx - w->startidx < 3)
 			break;
 
-		for (i = w->startidx, eh = 0.0; i <= w->endidx && eh < w->actual_error; i++) {
+		for (i = w->startidx, eh = 0.0; i <= w->endidx && eh < w->ideal_avg_error * w->nb_sync_positions; i++) {
 			double   approx = (w->b + (i - w->startidx) * w->modfac);
 			unsigned x1     = (unsigned)approx;
 			double   interp = approx - x1;
@@ -329,6 +363,8 @@ search_best
 	,unsigned  search_width
 	,unsigned  data_length
 	,float    *mse
+	,float    *correlation
+	,int       extend_backwards
 	)
 {
 	unsigned min_idx;
@@ -396,14 +432,16 @@ reltable_build
 				if (f < err) {
 					err    = f;
 					errpos = i;
+					assert(corrbuf[i] > 0.0f);
 				}
 			}
 
 			/* Find positions before best sync position */
 			for (i = errpos; i > skip + lf; ) {
-				unsigned lep = search_best(i - skip - lf, lf, error_vec_len, ms_error);
+				unsigned lep = search_best(i - skip - lf, lf, error_vec_len, ms_error, corrbuf, 1);
 				epos[positions++] = lep;
 				i = lep;
+				assert(corrbuf[lep] > 0.0f);
 			}
 
 			/* Reverse initial position list */
@@ -418,9 +456,10 @@ reltable_build
 
 			/* Insert all later positions. */
 			for (i = errpos; i + skip + lf <= error_vec_len; ) {
-				unsigned lep = search_best(i + skip, lf, error_vec_len, ms_error);
+				unsigned lep = search_best(i + skip, lf, error_vec_len, ms_error, corrbuf, 0);
 				epos[positions++] = lep;
 				i = lep;
+				assert(corrbuf[lep] > 0.0f);
 			}
 
 			nb_syncs[rel_idx] = positions;
@@ -432,7 +471,7 @@ reltable_build
 			struct wav_dumper dump;
 			sprintf(namebuf, "%s_reltable_mses.wav", debug_prefix);
 			if (wav_dumper_begin(&dump, namebuf, nb_rels, 24, 44100, 1, 44100) == 0) {
-				(void)wav_dumper_write_from_floats(&dump, ms_errors, error_vec_len, 1, rel_stride);
+				(void)wav_dumper_write_from_floats(&dump, shape_errors, error_vec_len, 1, rel_stride);
 				wav_dumper_end(&dump);
 			}
 		}
@@ -448,14 +487,12 @@ reltable_build
 	for (rel_idx = 0; rel_idx < nb_rels; rel_idx++) {
 		struct reltable tmp;
 		float           rel_scale = 1.0f / rel_powers[rel_idx];
-		float          *egain     = malloc(nb_syncs[rel_idx] * sizeof(float));
+		float          *egain     = malloc(error_vec_len * sizeof(float));
 		const float    *ecorr     = correlation_bufs + rel_idx * rel_stride;
 		unsigned       *epos      = error_positions + rel_idx * rel_stride;
 
-		for (i = 0; i < nb_syncs[rel_idx]; i++) {
-			unsigned j = epos[i];
-			float cbj  = ecorr[j];
-			egain[i]   = cbj * rel_scale;
+		for (i = 0; i < error_vec_len; i++) {
+			egain[i] = ecorr[i] * rel_scale;
 		}
 
 		reltable_int
