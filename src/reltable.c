@@ -339,53 +339,51 @@ reltable_int
 		);
 }
 
-/* See doucmentation in the API for how to call this function.
- *
- * Alignment of releases to the playback position is pretty important in organ
- * simulation. When a release is not aligned properly, cancellation of the
- * signal can occur during the crossfade into the release leading to
- * artefacts. Also, if the release is transitioned in very shortly after the
- * attack, we may end up with a gain mismatch - this is also a significant
- * problem. This module is trying to solve these issues.
- *
- * What this thing does:
- *   1) Find the best position in the attack to align the release.
- *   2) Starting at that position, go backwards in increments of "period"
- *      samples searching a small region for the best alignment position. Then
- *      do the same thing going forwards. After this we have a list of
- *      positions which we would ideally jump into the release at sample 0
- *      from.
- * TODO: finish this. */
+/* TODO: This algorithm is garbage. */
 static
 unsigned
-search_best
-	(unsigned  search_start
-	,unsigned  search_width
-	,unsigned  data_length
-	,float    *mse
-	,float    *correlation
-	,int       extend_backwards
+reltable_find_correlation_peaks
+	(const float *cbuf
+	,const float *mbuf
+	,unsigned    *obuf
+	,unsigned     length
+	,unsigned     tgt_period
 	)
 {
-	unsigned min_idx;
-	float    err;
+	unsigned opos = 0;
+	unsigned olast;
 	unsigned i;
+	float a, b, c;
 
-	assert(search_start < data_length);
-	assert(search_start + search_width <= data_length);
-
-	mse     += search_start;
-	min_idx  = 0;
-	err      = mse[0];
-
-	for (i = 1; i < search_width; i++) {
-		if (mse[i] < err) {
-			min_idx = i;
-			err     = mse[i];
+	olast = 0;
+	while (olast + 2 < length) {
+		a      = mbuf[olast];
+		b      = mbuf[olast+1];
+		olast += 2;
+		while (olast < length) {
+			c = mbuf[olast];
+			if (b <= c && b < a && cbuf[olast] > 0.0f)
+				break;
+			a = b;
+			b = c;
+			olast++;
 		}
+		if (olast == length)
+			break;
+
+		olast--;
+
+		if (opos > 0 && mbuf[olast] < mbuf[obuf[opos-1]] && olast - obuf[opos-1] < (7*tgt_period)/8) {
+			obuf[opos-1] = olast;
+		} else if (opos == 0 || olast - obuf[opos-1] > (7*tgt_period)/8) {
+			obuf[opos++] = olast;
+		}
+
+		/* Make olast point at the index of the peak (b). */
+		olast++;
 	}
 
-	return search_start + min_idx;
+	return opos;
 }
 
 void
@@ -421,7 +419,6 @@ reltable_build
 			unsigned    *epos        = error_positions  + rel_idx * rel_stride;
 			unsigned     errpos;
 			float        err;
-			unsigned     positions = 0;
 
 			/* Find best release alignment position. */
 			for (i = 0, err = rel_power, errpos = 0; i < error_vec_len; i++) {
@@ -429,40 +426,9 @@ reltable_build
 				float f     = scale - 2.0f * corrbuf[i];
 				shape_error[i] = f / scale;
 				ms_error[i]    = f;
-				if (f < err) {
-					err    = f;
-					errpos = i;
-					assert(corrbuf[i] > 0.0f);
-				}
 			}
 
-			/* Find positions before best sync position */
-			for (i = errpos; i > skip + lf; ) {
-				unsigned lep = search_best(i - skip - lf, lf, error_vec_len, ms_error, corrbuf, 1);
-				epos[positions++] = lep;
-				i = lep;
-				assert(corrbuf[lep] > 0.0f);
-			}
-
-			/* Reverse initial position list */
-			for (i = 0; i < positions/2; i++) {
-				unsigned tmp         = epos[i];
-				epos[i]              = epos[positions-1-i];
-				epos[positions-1-i]  = tmp;
-			}
-
-			/* Insert best position */
-			epos[positions++] = errpos;
-
-			/* Insert all later positions. */
-			for (i = errpos; i + skip + lf <= error_vec_len; ) {
-				unsigned lep = search_best(i + skip, lf, error_vec_len, ms_error, corrbuf, 0);
-				epos[positions++] = lep;
-				i = lep;
-				assert(corrbuf[lep] > 0.0f);
-			}
-
-			nb_syncs[rel_idx] = positions;
+			nb_syncs[rel_idx] = reltable_find_correlation_peaks(corrbuf, ms_error, epos, error_vec_len, (unsigned)(period + 0.5));
 		}
 
 #ifdef OPENDIAPASON_VERBOSE_DEBUG
@@ -471,7 +437,7 @@ reltable_build
 			struct wav_dumper dump;
 			sprintf(namebuf, "%s_reltable_mses.wav", debug_prefix);
 			if (wav_dumper_begin(&dump, namebuf, nb_rels, 24, 44100, 1, 44100) == 0) {
-				(void)wav_dumper_write_from_floats(&dump, shape_errors, error_vec_len, 1, rel_stride);
+				(void)wav_dumper_write_from_floats(&dump, ms_errors, error_vec_len, 1, rel_stride);
 				wav_dumper_end(&dump);
 			}
 		}

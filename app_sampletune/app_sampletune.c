@@ -150,24 +150,19 @@ engine_callback
 		int      mn = get_target_note(pd->target_freq, at_rank_harmonic64);
 		double   op = states[0]->ipos + states[0]->fpos * (1.0 / SMPL_POSITION_SCALE);
 		float    error;
-		int      derror;
 
 		np    = reltable_find(&pd->data.reltable, op, &f, &error);
-		error = -10.0 * log10(error + 1e-18);
 		newi  = floor(np);
 		newf  = (unsigned)((np - newi) * SMPL_POSITION_SCALE);
 		pd->data.release.instantiate(states[1], &pd->data.release, newi, newf);
 
-		if (f < 0.8) {
-			d = (8192 * (0.8 - f) + 128 + 0.5f);
-		} if (f > 1.1) {
-			d = (8192 * fmin((f - 1.1) / (1.3 - 1.1), 1.0) + 128 + 0.5f);
+		if (f < 0.95f) {
+			d = (unsigned)(8192.0f * (0.95f - f) + 128.0f + 0.5f);
+		} if (f > 1.05f) {
+			d = (unsigned)(8192.0f * fmin((f - 1.05f) / (1.3f - 1.05f), 1.0f) + 128.0f + 0.5f);
 		}
 
-		f = (f > 1.05) ? 1.05 : f;
-
-		derror = (int)((error > 0.5f) ? (error - 0.5f) * (16384.0f / 20.0f) : 0.0f);
-		d = (derror > d) ? derror : d;
+		f = (f > 1.1f) ? 1.1f : f;
 		
 		printf("%03d-%s RELEASED ipos=%f,rpos=%f,rgain=%f,mserr=%f,xfade=%d\n", mn, NAMES[mn%12], op, np, (double)f, error, d);
 
