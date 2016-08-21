@@ -120,7 +120,7 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, size_t fsz
 		smplwav_convert_deinterleave_floats
 			(buffers
 			,mw->chan_stride
-			,wav.data + mw->rel.position*block_align
+			,(const unsigned char *)wav.data + mw->rel.position*block_align
 			,mw->rel.length
 			,mw->channels
 			,wav.format.format

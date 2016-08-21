@@ -103,8 +103,8 @@ static void COP_ATTR_ALWAYSINLINE decode2x12(const void *buf, float *a, float *b
 #else
 	uint32_t v = cop_ld_ule24(buf);
 #endif
-	*a = ((int32_t)(v << 8)) >> 20;
-	*b = ((int32_t)(v << 20)) >> 20;
+	*a = (float)(((int32_t)(v << 8)) >> 20);
+	*b = (float)(((int32_t)(v << 20)) >> 20);
 }
 static void COP_ATTR_ALWAYSINLINE encode2x12(void *buf, int a, int b)
 {

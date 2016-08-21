@@ -22,10 +22,14 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_LIST_DIR}/../cmakemod
 
 add_executable(sampletune app_sampletune.c)
 
-if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+if (x${CMAKE_CXX_COMPILER_ID} STREQUAL "xMSVC")
   set_property(TARGET sampletune APPEND_STRING PROPERTY COMPILE_FLAGS " /W3")
 else()
   set_property(TARGET sampletune APPEND_STRING PROPERTY COMPILE_FLAGS " -Wall")
+endif()
+
+if(WIN32)
+  set_property(TARGET sampletune APPEND_STRING PROPERTY COMPILE_FLAGS " -D_CRT_SECURE_NO_WARNINGS")
 endif()
 
 if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../portaudio" AND IS_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/../../portaudio")
