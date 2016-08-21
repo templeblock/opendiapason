@@ -37,13 +37,20 @@ struct reltable {
 	} entry[RELTABLE_MAX_ENTRIES];
 };
 
-double
+struct reltable_data {
+	unsigned  id;
+	unsigned  pos_int;
+	unsigned  pos_frac;
+	unsigned  crossfade;
+	float     gain;
+};
+
+void
 reltable_find
 	(const struct reltable *reltable
-	,double                 sample
-	,float                 *gain
-	,float                 *avgerr
-	,unsigned              *rel_id
+	,struct reltable_data  *reldata
+	,unsigned               sus_pos_int
+	,unsigned               sus_pos_frac
 	);
 
 /* Creates a release alignment table for aligning a release with an

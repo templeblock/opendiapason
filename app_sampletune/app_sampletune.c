@@ -142,36 +142,21 @@ engine_callback
 
 	/* End sample */
 	if (sigmask & 0x2) {
-		double   np;
-		unsigned newi;
-		unsigned newf;
-		float    f;
-		unsigned d = 128;
-		int      mn = get_target_note(pd->target_freq, at_rank_harmonic64);
-		double   op = states[0]->ipos + states[0]->fpos * (1.0 / SMPL_POSITION_SCALE);
-		float    error;
-		unsigned relid;
+		int                  mn = get_target_note(pd->target_freq, at_rank_harmonic64);
+		struct reltable_data rtd;
 
-		np    = reltable_find(&pd->data.reltable, op, &f, &error, &relid);
-		newi  = floor(np);
-		newf  = (unsigned)((np - newi) * SMPL_POSITION_SCALE);
-		pd->data.releases[relid].instantiate(states[1], &pd->data.releases[relid], newi, newf);
+		reltable_find(&pd->data.reltable, &rtd, states[0]->ipos, states[0]->fpos);
 
-		if (f < 0.95f) {
-			d = (unsigned)(8192.0f * (0.95f - f) + 128.0f + 0.5f);
-		} if (f > 1.05f) {
-			d = (unsigned)(8192.0f * fmin((f - 1.05f) / (1.3f - 1.05f), 1.0f) + 128.0f + 0.5f);
-		}
+#if OPENDIAPASON_VERBOSE_DEBUG
+		printf("%03d-%s RELEASED pos=(%u,%u),rgain=%f,xfade=%d,id=%d\n", mn, NAMES[mn%12], rtd.pos_int, rtd.pos_frac, rtd.gain, rtd.crossfade, rtd.id);
+#endif
 
-		f = (f > 1.1f) ? 1.1f : f;
-		
-		printf("%03d-%s RELEASED ipos=%f,rpos=%f,rgain=%f,mserr=%f,xfade=%d,id=%d\n", mn, NAMES[mn%12], op, np, (double)f, error, d, relid);
-
-
+		pd->data.releases[rtd.id].instantiate(states[1], &pd->data.releases[rtd.id], rtd.pos_int, rtd.pos_frac);
 		states[1]->rate = states[0]->rate;
 		states[1]->setfade(states[1], 0, 0.0f);
-		states[1]->setfade(states[1], d, f);
-		states[0]->setfade(states[0], d, 0.0f);
+		states[1]->setfade(states[1], rtd.crossfade, rtd.gain);
+		states[0]->setfade(states[0], rtd.crossfade, 0.0f);
+
 		/* Both state 0 and state 1 are enabled.
 		 * State 0 terminates on fade completion.
 		 * State 1 terminates on entering of loop. */

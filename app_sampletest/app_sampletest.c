@@ -223,35 +223,19 @@ engine_callback
 
 	/* End sample */
 	if (sigmask & 0x2) {
-		double   np;
-		unsigned newi;
-		unsigned newf;
-		float    f;
-		unsigned d = 128;
-		float err;
-		unsigned rel_id;
-
-		np   = reltable_find(&pd->data.reltable, states[0]->ipos + states[0]->fpos * (1.0 / SMPL_POSITION_SCALE), &f, &err, &rel_id);
-		newi = floor(np);
-		newf = (unsigned)((np - newi) * SMPL_POSITION_SCALE);
-		pd->data.releases[rel_id].instantiate(states[1], &pd->data.releases[rel_id], newi, newf);
-		
-		if (f < 0.95f) {
-			d = (unsigned)(8192.0f * (0.95f - f) + 128.0f + 0.5f);
-		} if (f > 1.05f) {
-			d = (unsigned)(8192.0f * fmin((f - 1.05f) / (1.3f - 1.05f), 1.0f) + 128.0f + 0.5f);
-		}
-
-		f = (f > 1.1f) ? 1.1f : f;
+		struct reltable_data rtd;
+		reltable_find(&pd->data.reltable, &rtd, states[0]->ipos, states[0]->fpos);
 
 #if OPENDIAPASON_VERBOSE_DEBUG
 		printf("release gain=%f xfade=%u, offset=%f\n", f, d, np);
 #endif
 
+		pd->data.releases[rtd.id].instantiate(states[1], &pd->data.releases[rtd.id], rtd.pos_int, rtd.pos_frac);
 		states[1]->rate = pd->rate;
 		states[1]->setfade(states[1], 0, 0.0f);
-		states[1]->setfade(states[1], d, f);
-		states[0]->setfade(states[0], d, 0.0f);
+		states[1]->setfade(states[1], rtd.crossfade, rtd.gain);
+		states[0]->setfade(states[0], rtd.crossfade, 0.0f);
+
 		/* Both state 0 and state 1 are enabled.
 		 * State 0 terminates on fade completion.
 		 * State 1 terminates on entering of loop. */

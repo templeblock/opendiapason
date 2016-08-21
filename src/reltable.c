@@ -54,43 +54,48 @@ struct relnode {
 	struct relnode  *right;
 };
 
-double
+void
 reltable_find
 	(const struct reltable *reltable
-	,double                 sample
-	,float                 *gain
-	,float                 *avgerr
-	,unsigned              *rel_id
+	,struct reltable_data  *reldata
+	,unsigned               sus_pos_int
+	,unsigned               sus_pos_frac
 	)
 {
 	unsigned i;
-	float tmp;
+	float    tmp;
+	float    gain;
+	double   sample = sus_pos_int + sus_pos_frac * (1.0 / SMPL_POSITION_SCALE);
 
+	assert(reltable);
 	assert(reltable->nb_entry);
+	assert(reldata);
+
 	for (i = 0; i < reltable->nb_entry-1; i++) {
 		if (sample <= reltable->entry[i].last_sample)
 			break;
 	}
 
-	if (gain != NULL) {
-		if (i == 0) {
-			*gain = reltable->entry[i].gain;
-		} else {
-			float sg    = reltable->entry[i-1].gain;
-			float eg    = reltable->entry[i].gain;
-			unsigned ss = reltable->entry[i-1].last_sample;
-			unsigned es = reltable->entry[i].last_sample;
-			*gain = sg + (sample - (ss+1)) * (eg - sg) / (es - (ss+1));
-		}
+	if (i == 0) {
+		gain        = reltable->entry[i].gain;
+	} else {
+		float sg    = reltable->entry[i-1].gain;
+		float eg    = reltable->entry[i].gain;
+		unsigned ss = reltable->entry[i-1].last_sample;
+		unsigned es = reltable->entry[i].last_sample;
+		gain        = sg + (sample - (ss+1)) * (eg - sg) / (es - (ss+1));
 	}
 
-	if (avgerr != NULL) {
-		*avgerr = reltable->entry[i].avgerr;
+	if (gain < 0.95f) {
+		reldata->crossfade = (unsigned)(8192.0f * (0.95f - gain) + 128.0f + 0.5f);
+	} else if (gain > 1.05f) {
+		reldata->crossfade = (unsigned)(8192.0f * fmin((gain - 1.05f) / (1.3f - 1.05f), 1.0f) + 128.0f + 0.5f);
+	} else {
+		reldata->crossfade = 128;
 	}
 
-	if (rel_id != NULL) {
-		*rel_id = reltable->entry[i].rel_id;
-	}
+	reldata->gain = (gain > 1.1f) ? 1.1f : gain;
+	reldata->id   = reltable->entry[i].rel_id;
 
 	/* TODO: FABS INSERTED TO PREVENT NEGATIVE OUTPUT! MAY BE A BUG ELSEWHERE. */
 #if 0
@@ -104,7 +109,12 @@ reltable_find
 	tmp = sample - reltable->entry[i].b - (double)SMPL_INTERP_TAPS;
 	while (tmp < 0.0)
 		tmp += reltable->entry[i].m;
-	return (double)SMPL_INTERP_TAPS + fmod(tmp, reltable->entry[i].m);
+	tmp = (double)SMPL_INTERP_TAPS + fmod(tmp, reltable->entry[i].m);
+
+	reldata->pos_int  = (unsigned)floor(tmp);
+	reldata->pos_frac = (unsigned)((tmp - reldata->pos_int) * SMPL_POSITION_SCALE);
+
+
 #endif
 }
 
@@ -476,7 +486,7 @@ reltable_build
 		free(ms_errors);
 
 #ifdef OPENDIAPASON_VERBOSE_DEBUG
-		printf("period: %f,%u,%u\n", period, skip, lf);
+		printf("period: %f\n", period);
 #endif
 	}
 
