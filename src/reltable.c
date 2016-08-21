@@ -86,7 +86,7 @@ reltable_find
 		gain        = sg + (sample - (ss+1)) * (eg - sg) / (es - (ss+1));
 	}
 
-	gain = (gain < 0.125f) ? 0.125f : gain;
+	gain = (gain < 0.25f*0.25f) ? 0.25f*0.25f : gain;
 	gain = (gain > 1.25f) ? 1.25f : gain;
 
 	if (gain < 0.95f) {
