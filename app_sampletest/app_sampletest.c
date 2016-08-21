@@ -174,7 +174,7 @@ load_executors
 		bits[2].load_flags = SMPL_COMP_LOADFLAG_R;
 		bits[3].load_flags = SMPL_COMP_LOADFLAG_R;
 
-		err = load_smpl_comp(&(pipes[i].pd.data), bits, 2, mem, fftset, prefilter);
+		err = load_smpl_comp(&(pipes[i].pd.data), bits, 4, mem, fftset, prefilter);
 
 		if (err != NULL) {
 			printf("WAVE ERR: %s-%s\n", namebuf, err);
@@ -229,11 +229,12 @@ engine_callback
 		float    f;
 		unsigned d = 128;
 		float err;
+		unsigned rel_id;
 
-		np   = reltable_find(&pd->data.reltable, states[0]->ipos + states[0]->fpos * (1.0 / SMPL_POSITION_SCALE), &f, &err);
+		np   = reltable_find(&pd->data.reltable, states[0]->ipos + states[0]->fpos * (1.0 / SMPL_POSITION_SCALE), &f, &err, &rel_id);
 		newi = floor(np);
 		newf = (unsigned)((np - newi) * SMPL_POSITION_SCALE);
-		pd->data.release.instantiate(states[1], &pd->data.release, newi, newf);
+		pd->data.releases[rel_id].instantiate(states[1], &pd->data.releases[rel_id], newi, newf);
 		
 		if (f < 0.95f) {
 			d = (unsigned)(8192.0f * (0.95f - f) + 128.0f + 0.5f);

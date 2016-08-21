@@ -60,6 +60,7 @@ reltable_find
 	,double                 sample
 	,float                 *gain
 	,float                 *avgerr
+	,unsigned              *rel_id
 	)
 {
 	unsigned i;
@@ -85,6 +86,10 @@ reltable_find
 
 	if (avgerr != NULL) {
 		*avgerr = reltable->entry[i].avgerr;
+	}
+
+	if (rel_id != NULL) {
+		*rel_id = reltable->entry[i].rel_id;
 	}
 
 	/* TODO: FABS INSERTED TO PREVENT NEGATIVE OUTPUT! MAY BE A BUG ELSEWHERE. */
@@ -253,8 +258,9 @@ recursive_construct_table
 	table->entry[table->nb_entry].last_sample = sync_positions[node->endidx];
 	m = node->modfac;
 	b = node->b;
-	table->entry[table->nb_entry].b = b;
-	table->entry[table->nb_entry].m = m;
+	table->entry[table->nb_entry].rel_id = 0;
+	table->entry[table->nb_entry].b      = b;
+	table->entry[table->nb_entry].m      = m;
 	table->entry[table->nb_entry].gain   = node->avg_gain;
 	table->entry[table->nb_entry].avgerr = node->avg_error;
 	table->nb_entry++;
@@ -352,7 +358,6 @@ reltable_find_correlation_peaks
 {
 	unsigned opos = 0;
 	unsigned olast;
-	unsigned i;
 	float a, b, c;
 
 	olast = 0;
@@ -386,6 +391,29 @@ reltable_find_correlation_peaks
 	return opos;
 }
 
+static
+void
+merge_reltables
+	(struct reltable *rt_dest
+	,struct reltable *rt_src
+	,unsigned         new_src_id
+	)
+{
+	unsigned src_entry = 0;
+	unsigned i;
+	for (i = 0; i < rt_dest->nb_entry; i++) {
+		while (src_entry+1 < rt_src->nb_entry && rt_src->entry[src_entry+1].last_sample <= rt_dest->entry[i].last_sample)
+			src_entry++;
+		if (src_entry >= rt_src->nb_entry)
+			break;
+		/*  fabsf(1.0f-rt_src->entry[src_entry].gain) < fabsf(1.0f-rt_dest->entry[i].gain) */
+		if (rt_src->entry[src_entry].avgerr < rt_dest->entry[i].avgerr) {
+			rt_dest->entry[i]        = rt_src->entry[src_entry++];
+			rt_dest->entry[i].rel_id = new_src_id;
+		}
+	}
+}
+
 void
 reltable_build
 	(struct reltable *reltable
@@ -407,8 +435,6 @@ reltable_build
 	(void)debug_prefix;
 
 	{
-		const unsigned  lf        = 2 * fmax(1.0, (unsigned)(period / 8.0));
-		const unsigned  skip      = (unsigned)fmax(1.0, period - lf/2);
 		float          *ms_errors = malloc(rel_stride * nb_rels * sizeof(float));
 
 		for (rel_idx = 0; rel_idx < nb_rels; rel_idx++) {
@@ -424,7 +450,11 @@ reltable_build
 			for (i = 0, err = rel_power, errpos = 0; i < error_vec_len; i++) {
 				float scale = rel_power + envelope_buf[i];
 				float f     = scale - 2.0f * corrbuf[i];
-				shape_error[i] = f / scale;
+
+				/* TODO: WE ARE USING MS ERROR AGAIN TO BUILD TABLES - THIS
+				 * GIVES THE BEST RESULT WHEN USING MULTIPLE RELEASES...
+				 * CLEAN UP THE MESS! */
+				shape_error[i] = f;
 				ms_error[i]    = f;
 			}
 
@@ -470,14 +500,18 @@ reltable_build
 			,error_vec_len
 			);
 
-#ifdef OPENDIAPASON_VERBOSE_DEBUG
 		if (rel_idx != 0) {
+#ifdef OPENDIAPASON_VERBOSE_DEBUG
 			for (i = 0; i < tmp.nb_entry; i++) {
 				printf("%u) %f,%f,%f,%f\n", tmp.entry[i].last_sample, tmp.entry[i].m, tmp.entry[i].b, tmp.entry[i].gain, tmp.entry[i].avgerr);
 			}
-		}
 #endif
-
+			merge_reltables
+				(reltable
+				,&tmp
+				,rel_idx
+				);
+		}
 
 		free(egain);
 	}
@@ -488,7 +522,7 @@ reltable_build
 
 #ifdef OPENDIAPASON_VERBOSE_DEBUG
 	for (i = 0; i < reltable->nb_entry; i++) {
-		printf("%u) %f,%f,%f,%f\n", reltable->entry[i].last_sample, reltable->entry[i].m, reltable->entry[i].b, reltable->entry[i].gain, reltable->entry[i].avgerr);
+		printf("%u) %f,%f,%f,%f,%d\n", reltable->entry[i].last_sample, reltable->entry[i].m, reltable->entry[i].b, reltable->entry[i].gain, reltable->entry[i].avgerr, reltable->entry[i].rel_id);
 	}
 #endif
 }

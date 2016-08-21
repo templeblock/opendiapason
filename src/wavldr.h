@@ -93,9 +93,11 @@ struct memory_wave {
 	struct rel_data  rel;
 };
 
+#define WAVLDR_MAX_RELEASES (4)
+
 struct pipe_v1 {
 	struct dec_smpl attack;
-	struct dec_smpl release;
+	struct dec_smpl releases[WAVLDR_MAX_RELEASES];
 	struct reltable reltable;
 	double          frequency;
 	unsigned long   sample_rate;

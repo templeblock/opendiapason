@@ -439,10 +439,10 @@ load_smpl_lists
 		}
 
 		for (nb_releases = 0, tmp2 = rel_bits; tmp2 != NULL; nb_releases++, tmp2 = tmp2->next);
-		if (nb_releases != 1) {
-			fprintf(stderr, "sample contained %d release blocks. the max is 1.\n", nb_releases);
+//		if (nb_releases != 1) {
+//			fprintf(stderr, "sample contained %d release blocks. the max is 1.\n", nb_releases);
 //			abort();
-		}
+//		}
 	}
 
 	/* Prefilter and adjust audio. */
@@ -492,29 +492,53 @@ load_smpl_lists
 	assert(pipe->attack.ends[as_bits->nloop-1].end_smpl+1 == as_bits->length);
 	assert(pipe->attack.starts[pipe->attack.ends[as_bits->nloop-1].start_idx].start_smpl == as_bits->atk_end_loop_start);
 
-	pipe->release.nloop                     = 1;
-	pipe->release.starts[0].start_smpl      = rel_bits->length;
-	pipe->release.starts[0].first_valid_end = 0;
-	pipe->release.ends[0].end_smpl          = rel_bits->length + release_slop - 1;
-	pipe->release.ends[0].start_idx         = 0;
+	{
+		struct rel_data *rel = rel_bits;
+		for (i = 0; i < nb_releases; i++, rel = rel->next) {
+			pipe->releases[i].nloop                     = 1;
+			pipe->releases[i].starts[0].start_smpl      = rel->length;
+			pipe->releases[i].starts[0].first_valid_end = 0;
+			pipe->releases[i].ends[0].end_smpl          = rel->length + release_slop - 1;
+			pipe->releases[i].ends[0].start_idx         = 0;
 
-	if (rel_bits->load_format == 12 && channels == 2) {
-		void *buf = aalloc_alloc(allocator, sizeof(unsigned char) * (rel_bits->length + release_slop + 1) * 3);
-		pipe->release.gain =
-			quantize_boost_interleave
-				(buf
-				,rel_bits->data
-				,rel_bits->chan_stride
-				,2
-				,rel_bits->length
-				,rel_bits->length + release_slop + 1
-				,&rseed
-				,12
-				);
-		pipe->release.data = buf;
-		pipe->release.instantiate = u12c2_instantiate;
+			if (rel->load_format == 12 && channels == 2) {
+				void *buf = aalloc_alloc(allocator, sizeof(unsigned char) * (rel->length + release_slop + 1) * 3);
+				pipe->releases[i].gain =
+					quantize_boost_interleave
+						(buf
+						,rel->data
+						,rel->chan_stride
+						,2
+						,rel->length
+						,rel->length + release_slop + 1
+						,&rseed
+						,12
+						);
+				pipe->releases[i].data = buf;
+				pipe->releases[i].instantiate = u12c2_instantiate;
+			} else if (rel->load_format == 16 && channels == 2) {
+				void *buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (rel->length + release_slop + 1) * 2);
+				pipe->releases[i].gain =
+					quantize_boost_interleave
+						(buf
+						,rel->data
+						,rel->chan_stride
+						,2
+						,rel->length
+						,rel->length + release_slop + 1
+						,&rseed
+						,16
+						);
+				pipe->releases[i].data = buf;
+				pipe->releases[i].instantiate = u16c2_instantiate;
+			} else {
+				abort();
+			}
+		}
+	}
 
-		buf = aalloc_alloc(allocator, sizeof(unsigned char) * (as_bits->length + 1) * 3);
+	if (as_bits->load_format == 12 && channels == 2) {
+		void *buf = aalloc_alloc(allocator, sizeof(unsigned char) * (as_bits->length + 1) * 3);
 		pipe->attack.gain =
 			quantize_boost_interleave
 				(buf
@@ -528,23 +552,8 @@ load_smpl_lists
 				);
 		pipe->attack.data = buf;
 		pipe->attack.instantiate = u12c2_instantiate;
-	} else if (rel_bits->load_format == 16 && channels == 2) {
-		void *buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (rel_bits->length + release_slop + 1) * 2);
-		pipe->release.gain =
-			quantize_boost_interleave
-				(buf
-				,rel_bits->data
-				,rel_bits->chan_stride
-				,2
-				,rel_bits->length
-				,rel_bits->length + release_slop + 1
-				,&rseed
-				,16
-				);
-		pipe->release.data = buf;
-		pipe->release.instantiate = u16c2_instantiate;
-
-		buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (as_bits->length + 1) * 2);
+	} else if (as_bits->load_format == 16 && channels == 2) {
+		void *buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (as_bits->length + 1) * 2);
 		pipe->attack.gain =
 			quantize_boost_interleave
 				(buf

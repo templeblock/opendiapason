@@ -28,6 +28,7 @@
 struct reltable {
 	unsigned nb_entry;
 	struct {
+		int      rel_id;
 		unsigned last_sample;
 		double   m;
 		double   b;
@@ -42,6 +43,7 @@ reltable_find
 	,double                 sample
 	,float                 *gain
 	,float                 *avgerr
+	,unsigned              *rel_id
 	);
 
 /* Creates a release alignment table for aligning a release with an
