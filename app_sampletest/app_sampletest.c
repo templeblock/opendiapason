@@ -88,6 +88,7 @@ static const struct test_load_entry TEST_ENTRY_LIST[] =
 //,	{"Prestant4",      36, 53, GT | PED, 4}
 //,	{"Doublette2",     36, 53, GT | PED, 6}
 //,	{"Pleinjeu3",      36, 53, GT | PED, 2}
+#if 1
 	{"III Trompette Harmonique 8", 36, 53, SW,        2, '1'}
 ,	{"III Hautbois 8",             36, 53, SW,        2, '2'}
 ,	{"III Aeoline 8",              36, 53, SW,        2, '3'}
@@ -96,6 +97,7 @@ static const struct test_load_entry TEST_ENTRY_LIST[] =
 ,	{"III Fugara 4",               36, 53, SW,        4, '6'}
 ,	{"III Flute Octaviante 4",     36, 53, SW,        4, '7'}
 ,	{"III Doublette 2",            36, 53, SW,        8, '8'}
+#endif
 //	{"II Clarinette 8",     36, 53, SW,        2, '1'}
 //,	{"II Cromorne 8",       36, 53, SW,        2, '2'}
 //,	{"II Salicional 8",     36, 53, SW,        2, '3'}
@@ -227,7 +229,7 @@ engine_callback
 		reltable_find(&pd->data.reltable, &rtd, states[0]->ipos, states[0]->fpos);
 
 #if OPENDIAPASON_VERBOSE_DEBUG
-		printf("release gain=%f xfade=%u, offset=%f\n", f, d, np);
+		printf("Release pos=(%u,%u),rgain=%f,xfade=%d,id=%d\n", rtd.pos_int, rtd.pos_frac, rtd.gain, rtd.crossfade, rtd.id);
 #endif
 
 		pd->data.releases[rtd.id].instantiate(states[1], &pd->data.releases[rtd.id], rtd.pos_int, rtd.pos_frac);

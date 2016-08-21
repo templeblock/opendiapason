@@ -86,15 +86,18 @@ reltable_find
 		gain        = sg + (sample - (ss+1)) * (eg - sg) / (es - (ss+1));
 	}
 
+	gain = (gain < 0.125f) ? 0.125f : gain;
+	gain = (gain > 1.25f) ? 1.25f : gain;
+
 	if (gain < 0.95f) {
 		reldata->crossfade = (unsigned)(8192.0f * (0.95f - gain) + 128.0f + 0.5f);
 	} else if (gain > 1.05f) {
-		reldata->crossfade = (unsigned)(8192.0f * fmin((gain - 1.05f) / (1.3f - 1.05f), 1.0f) + 128.0f + 0.5f);
+		reldata->crossfade = (unsigned)(8192.0f * fmin((gain - 1.05f) / (1.25f - 1.05f), 1.0f) + 128.0f + 0.5f);
 	} else {
 		reldata->crossfade = 128;
 	}
 
-	reldata->gain = (gain > 1.1f) ? 1.1f : gain;
+	reldata->gain = gain;
 	reldata->id   = reltable->entry[i].rel_id;
 
 	/* TODO: FABS INSERTED TO PREVENT NEGATIVE OUTPUT! MAY BE A BUG ELSEWHERE. */
@@ -196,9 +199,9 @@ build_relnode
 			gthis     = gain_vec[x1]        * (1.0f - interp) + gain_vec[x2] * interp;
 
 			min_tmp   = (ethis < min_tmp) ? ethis : min_tmp;
-			min_tmp2  = (gthis < min_tmp) ? gthis : min_tmp;
+			min_tmp2  = (gthis < min_tmp2) ? gthis : min_tmp2;
 			max_tmp   = (ethis > max_tmp) ? ethis : max_tmp;
-			max_tmp2  = (gthis > max_tmp) ? gthis : max_tmp;
+			max_tmp2  = (gthis > max_tmp2) ? gthis : max_tmp2;
 			avg_tmp  += ethis;
 			avg_tmp2 += gthis;
 			act_serr += shape_error_vec[actual];
@@ -237,8 +240,7 @@ find_worst_node
 
 		assert(w1->ideal_avg_gain > 0.0f);
 		assert(w2->ideal_avg_gain > 0.0f);
-
-		return (fabsf(w1->ideal_avg_gain - w1->avg_gain) > fabsf(w2->ideal_avg_gain - w2->avg_gain)) ? w1 : w2;
+		return (fabsf(w1->max_gain - w1->min_gain) > fabsf(w2->max_gain - w2->min_gain)) ? w1 : w2;
 //		return (w1->max_gain / (w1->min_gain + 0.01f) > w2->max_gain / (w2->min_gain + 0.01f)) ? w1 : w2;
 	}
 	return root;
@@ -320,7 +322,7 @@ reltable_int
 			x1 = (x1 >= error_vec_len) ? (error_vec_len - 1) : x1;
 			x2 = (x2 >= error_vec_len) ? (error_vec_len - 1) : x2;
 
-			g = 2.0 * (gain_vec[x1] * (1.0 - interp) + gain_vec[x2] * interp);
+			g = (gain_vec[x1] * (1.0 - interp) + gain_vec[x2] * interp);
 
 			if (i == w->startidx) {
 				gain_min = g;
@@ -334,6 +336,11 @@ reltable_int
 		}
 
 		i--;
+
+#if 0
+		/* Always split in half. */
+		i = (w->startidx + w->endidx) / 2;
+#endif
 
 		assert(i >= w->startidx);
 
