@@ -239,10 +239,7 @@ find_worst_node
 		assert(w2->ideal_avg_gain > 0.0f);
 
 		return (fabsf(w1->ideal_avg_gain - w1->avg_gain) > fabsf(w2->ideal_avg_gain - w2->avg_gain)) ? w1 : w2;
-
-
-
-		return (w1->max_gain / (w1->min_gain + 0.01f) > w2->max_gain / (w2->min_gain + 0.01f)) ? w1 : w2;
+//		return (w1->max_gain / (w1->min_gain + 0.01f) > w2->max_gain / (w2->min_gain + 0.01f)) ? w1 : w2;
 	}
 	return root;
 }
@@ -302,6 +299,9 @@ reltable_int
 		unsigned i;
 		double eh;
 
+		double gain_min = 0.0f;
+		double gain_max = 0.0f;
+
 		unsigned stop1, start2;
 
 		/* If find_worst_node returns too short a node, then we've actually
@@ -310,16 +310,27 @@ reltable_int
 		if (w->endidx - w->startidx < 3)
 			break;
 
-		for (i = w->startidx, eh = 0.0; i <= w->endidx && eh < w->ideal_avg_error * w->nb_sync_positions; i++) {
+		for (i = w->startidx, eh = 0.0; i <= w->endidx && ((gain_max - gain_min) < 0.5f * (w->max_gain - w->min_gain)); i++) {
 			double   approx = (w->b + (i - w->startidx) * w->modfac);
 			unsigned x1     = (unsigned)approx;
 			double   interp = approx - x1;
 			unsigned x2     = x1 + 1;
+			double g;
 
 			x1 = (x1 >= error_vec_len) ? (error_vec_len - 1) : x1;
 			x2 = (x2 >= error_vec_len) ? (error_vec_len - 1) : x2;
 
-			eh += 2.0 * (shape_error_vec[x1] * (1.0 - interp) + shape_error_vec[x2] * interp);
+			g = 2.0 * (gain_vec[x1] * (1.0 - interp) + gain_vec[x2] * interp);
+
+			if (i == w->startidx) {
+				gain_min = g;
+				gain_max = g;
+			} else {
+				gain_max = (g > gain_max) ? g : gain_max;
+				gain_min = (g < gain_min) ? g : gain_min;
+			}
+
+			eh += g;
 		}
 
 		i--;
@@ -461,11 +472,15 @@ reltable_build
 				float scale = rel_power + envelope_buf[i];
 				float f     = scale - 2.0f * corrbuf[i];
 
+				float g = corrbuf[i] / rel_power;
+				if (g > 1.1f) g = 1.1f;
+				else if (g < 0.1f) g = 0.1f;
+
 				/* TODO: WE ARE USING MS ERROR AGAIN TO BUILD TABLES - THIS
 				 * GIVES THE BEST RESULT WHEN USING MULTIPLE RELEASES...
 				 * CLEAN UP THE MESS! */
 				shape_error[i] = f;
-				ms_error[i]    = f;
+				ms_error[i]    = (g * g * rel_power + envelope_buf[i] - g * 2.0f * corrbuf[i]);
 			}
 
 			nb_syncs[rel_idx] = reltable_find_correlation_peaks(corrbuf, ms_error, epos, error_vec_len, (unsigned)(period + 0.5));
