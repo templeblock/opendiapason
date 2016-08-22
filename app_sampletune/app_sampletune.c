@@ -652,73 +652,80 @@ int main(int argc, char *argv[])
 	printf("\n");
 	for (i = 0; i < 1+at_last_midi-at_first_midi; i++) {
 		static const char *NAMES[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+		static const char *FMTS[4] = {"%s/A0/%03d-%s.wav", "%s/R0/%03d-%s.wav", "%s/R1/%03d-%s.wav", "%s/R2/%03d-%s.wav"};
 		const char *err;
 		size_t sz;
 		unsigned char *buf;
 		void *db;
 		char namebuf[128];
+		unsigned fidx;
 
 		if (fabs(pipe_frequencies[i] - old_pipe_frequencies[i]) < 0.01)
 			continue;
 
-		sprintf(namebuf, "%s/%03d-%s.wav", ".", i + at_first_midi, NAMES[(i+at_first_midi)%12]);
-		printf("Updating tuning in %s from %f->%f\n", namebuf, old_pipe_frequencies[i], pipe_frequencies[i]);
+		for (fidx = 0; fidx < 4; fidx++) {
+			sprintf(namebuf, FMTS[fidx], ".", i + at_first_midi, NAMES[(i+at_first_midi)%12]);
+			printf("Updating tuning in %s from %f->%f\n", namebuf, old_pipe_frequencies[i], pipe_frequencies[i]);
 
-		aalloc_push(&mem);
-		err = read_entire_file(&mem, namebuf, &sz, &db);
-		if (err == NULL) {
-			size_t riffsz;
-			buf = db;
-			if ((sz >= 12) && ((riffsz = parse_le32(buf + 4)) >= 4)) {
-				unsigned char *smpl = NULL;
-				sz     -= 12;
-				riffsz -= 4;
-				if (riffsz > sz)
-					riffsz = sz;
-				buf += 12;
-				while (riffsz > 8 && smpl == NULL) {
-					char   *ckid   = (char *)buf;
-					size_t  cksz   = parse_le32(buf + 4);
-					void   *ckdata = buf + 8;
-					size_t  padsz  = cksz + (cksz & 1);
-					riffsz -= 8;
-					buf    += 8;
-					if (cksz >= riffsz) {
-						cksz   = riffsz;
-						riffsz = 0;
+			aalloc_push(&mem);
+			err = read_entire_file(&mem, namebuf, &sz, &db);
+			if (err == NULL) {
+				size_t riffsz;
+				buf = db;
+				if ((sz >= 12) && ((riffsz = parse_le32(buf + 4)) >= 4)) {
+					unsigned char *smpl = NULL;
+					sz     -= 12;
+					riffsz -= 4;
+					if (riffsz > sz)
+						riffsz = sz;
+					buf += 12;
+					while (riffsz > 8 && smpl == NULL) {
+						char   *ckid   = (char *)buf;
+						size_t  cksz   = parse_le32(buf + 4);
+						void   *ckdata = buf + 8;
+						size_t  padsz  = cksz + (cksz & 1);
+						riffsz -= 8;
+						buf    += 8;
+						if (cksz >= riffsz) {
+							cksz   = riffsz;
+							riffsz = 0;
+						} else {
+							assert(padsz < riffsz && "if this gets hit, I can't do logic.");
+							riffsz -= padsz;
+							buf    += padsz;
+						}
+						if (ckid[0] == 's' && ckid[1] == 'm' && ckid[2] == 'p' && ckid[3] == 'l' && cksz >= 36) {
+							smpl = ckdata;
+						}
+					}
+					if (smpl != NULL) {
+						double note = 12 * log2(pipe_frequencies[i] / 440.0) + 69;
+						unsigned long int_part  = note;
+						unsigned long frac_part = (note - int_part) * (65536.0 * 65536.0);
+						store_le32(smpl + 12, int_part);
+						store_le32(smpl + 16, frac_part);
+						err = write_entire_file(namebuf, sz + 12, db);
+						if (err != NULL) {
+							ret = -1;
+							fprintf(stderr, "failed to write %s: %s\n", namebuf, err);
+						}
 					} else {
-						assert(padsz < riffsz && "if this gets hit, I can't do logic.");
-						riffsz -= padsz;
-						buf    += padsz;
-					}
-					if (ckid[0] == 's' && ckid[1] == 'm' && ckid[2] == 'p' && ckid[3] == 'l' && cksz >= 36) {
-						smpl = ckdata;
-					}
-				}
-				if (smpl != NULL) {
-					double note = 12 * log2(pipe_frequencies[i] / 440.0) + 69;
-					unsigned long int_part  = note;
-					unsigned long frac_part = (note - int_part) * (65536.0 * 65536.0);
-					store_le32(smpl + 12, int_part);
-					store_le32(smpl + 16, frac_part);
-					err = write_entire_file(namebuf, sz + 12, db);
-					if (err != NULL) {
 						ret = -1;
-						fprintf(stderr, "failed to write %s: %s\n", namebuf, err);
+						fprintf(stderr, "did not find sampler chunk in %s\n", namebuf);
 					}
 				} else {
 					ret = -1;
-					fprintf(stderr, "did not find sampler chunk in %s\n", namebuf);
+					fprintf(stderr, "not a wave file %s\n", namebuf);
 				}
 			} else {
 				ret = -1;
-				fprintf(stderr, "not a wave file %s\n", namebuf);
+				fprintf(stderr, "failed to read %s: %s\n", namebuf, err);
 			}
-		} else {
-			ret = -1;
-			fprintf(stderr, "failed to read %s: %s\n", namebuf, err);
+			aalloc_pop(&mem);
+
 		}
-		aalloc_pop(&mem);
+
+
 	}
 
 	playeng_destroy(engine);

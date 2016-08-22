@@ -62,6 +62,7 @@ struct test_load_entry {
 	unsigned        midi_channel_mask;
 	unsigned        harmonic16;
 	int             shortcut;
+	unsigned        midi_shortcut;
 };
 
 #define GT_MIDICH  (0)
@@ -82,53 +83,46 @@ struct test_load_entry {
  * number of pipe samples, the third is a mask of which MIDI channels activate
  * samples, the final is the harmonic base pitch relative to 16. */
 static const struct test_load_entry TEST_ENTRY_LIST[] =
-{//	{"Bourdon8",       36, 53, GT | PED, 2}
-//,	{"Montre8",        36, 53, GT | PED, 2}
-//,	{"Salicional8_go", 36, 53, GT | PED, 2}
-//,	{"Prestant4",      36, 53, GT | PED, 4}
-//,	{"Doublette2",     36, 53, GT | PED, 6}
-//,	{"Pleinjeu3",      36, 53, GT | PED, 2}
 #if 1
-	{"III Trompette Harmonique 8", 36, 53, SW,        2, '1'}
-,	{"III Hautbois 8",             36, 53, SW,        2, '2'}
-,	{"III Aeoline 8",              36, 53, SW,        2, '3'}
-,	{"III Bourdon 8",              36, 53, SW,        2, '4'}
-,	{"III Flute Traversiere 8",    36, 53, SW,        2, '5'}
-,	{"III Fugara 4",               36, 53, SW,        4, '6'}
-,	{"III Flute Octaviante 4",     36, 53, SW,        4, '7'}
-,	{"III Doublette 2",            36, 53, SW,        8, '8'}
-#endif
-//	{"II Clarinette 8",     36, 53, SW,        2, '1'}
-//,	{"II Cromorne 8",       36, 53, SW,        2, '2'}
-//,	{"II Salicional 8",     36, 53, SW,        2, '3'}
-//,	{"II Dolce 4",          36, 53, SW,        4, '4'}
-,	{"I Trompette 8",       36, 53, PED | GT,  2, 'a'}
-,	{"I Montre 8",          36, 53, PED | GT,  2, 's'}
-,	{"I Bourdon 8",         36, 53, PED | GT,  2, 'd'}
-,	{"I Viole de Gambe 8",  36, 53, PED | GT,  2, 'f'}
-,	{"I Prestant 4",        36, 53, PED | GT,  4, 'g'}
-,	{"I Flute Douce 4",     36, 53, PED | GT,  4, 'h'}
-,	{"I Doublette 2",       36, 53, PED | GT,  8, 'j'}
-,	{"P Bombarde 16",       36, 27, PED,       1, 'z'}
-,	{"P Contrebasse 16",    36, 27, PED,       1, 'x'}
-,	{"P Soubasse 16",       36, 27, PED,       1, 'c'}
-,	{"P Violoncelle 8",     36, 27, PED,       2, 'v'}
-/*	{"I Bordun 16",         36, 53, PED | GT,  1, 'a'}
-,	{"I Principal 8",       36, 53, PED | GT,  2, 's'}
-,	{"I Octave 4",          36, 53, PED | GT,  4, 'd'}
-,	{"I Quinte 2 23",       36, 53, GT,        6, 'f'}
-,	{"I Octave 2",          36, 53, PED | GT,  8, 'g'}
-,	{"I Mixtur 3f",         36, 53, PED | GT,  2, 'h'}
-,	{"P Posaune 16",        36, 27, PED,       1, 'z'}
-,	{"P Violon 16",         36, 27, PED,       1, 'x'}
-,	{"P Subbass 16",        36, 27, PED,       1, 'c'}
-,	{"P Octavbass 8",       36, 27, PED,       2, 'v'}
-,	{"P Bassflote 8",       36, 27, PED,       2, 'b'}
-,	{"II Viola di Gamba 8", 36, 53, SW,        2, '1'}
-,	{"II Gedact 8",         36, 53, SW,        2, '2'}
-,	{"II Geigen-principal 8", 36, 53, SW,      2, '3'}
-,	{"II Praestant 4",      36, 53, SW,        4, '4'}*/
+{	{"III Trompette Harmonique 8", 36, 53, SW,       2, '1', 48}
+,	{"III Hautbois 8",             36, 53, SW,       2, '2', 49}
+,	{"III Aeoline 8",              36, 53, SW,       2, '3', 50}
+,	{"III Bourdon 8",              36, 53, SW,       2, '4', 51}
+,	{"III Flute Traversiere 8",    36, 53, SW,       2, '5', 52}
+,	{"III Fugara 4",               36, 53, SW,       4, '6', 53}
+,	{"III Flute Octaviante 4",     36, 53, SW,       4, '7', 54}
+,	{"III Doublette 2",            36, 53, SW,       8, '8', 55}
+,	{"I Trompette 8",              36, 53, GT,       2, 'a', 64}
+,	{"I Montre 8",                 36, 53, GT,       2, 's', 65}
+,	{"I Bourdon 8",                36, 53, GT,       2, 'd', 66}
+,	{"I Viole de Gambe 8",         36, 53, GT,       2, 'f', 67}
+,	{"I Prestant 4",               36, 53, GT,       4, 'g', 68}
+,	{"I Flute Douce 4",            36, 53, GT,       4, 'h', 69}
+,	{"I Doublette 2",              36, 53, GT,       8, 'j', 70}
+,	{"I Plein Jeu 5x",             36, 53, GT,       2, 'k', 71}
+,	{"P Bombarde 16",              36, 27, PED | GT, 1, 'z', 80}
+,	{"P Contrebasse 16",           36, 27, PED | GT, 1, 'x', 81}
+,	{"P Soubasse 16",              36, 27, PED | GT, 1, 'c', 82}
+,	{"P Violoncelle 8",            36, 27, PED | GT, 2, 'v', 83}
 };
+#else
+{	{"I Bordun 16",                36, 53, PED | GT,  1, 'a'}
+,	{"I Principal 8",              36, 53, PED | GT,  2, 's'}
+,	{"I Octave 4",                 36, 53, PED | GT,  4, 'd'}
+,	{"I Quinte 2 23",              36, 53, GT,        6, 'f'}
+,	{"I Octave 2",                 36, 53, PED | GT,  8, 'g'}
+,	{"I Mixtur 3f",                36, 53, PED | GT,  2, 'h'}
+,	{"P Posaune 16",               36, 27, PED,       1, 'z'}
+,	{"P Violon 16",                36, 27, PED,       1, 'x'}
+,	{"P Subbass 16",               36, 27, PED,       1, 'c'}
+,	{"P Octavbass 8",              36, 27, PED,       2, 'v'}
+,	{"P Bassflote 8",              36, 27, PED,       2, 'b'}
+,	{"II Viola di Gamba 8",        36, 53, SW,        2, '1'}
+,	{"II Gedact 8",                36, 53, SW,        2, '2'}
+,	{"II Geigen-principal 8",      36, 53, SW,        2, '3'}
+,	{"II Praestant 4",             36, 53, SW,        4, '4'}
+};
+#endif
 
 #define NUM_TEST_ENTRY_LIST (sizeof(TEST_ENTRY_LIST) / sizeof(TEST_ENTRY_LIST[0]))
 
@@ -312,6 +306,32 @@ static void *midi_thread_proc(void *argument)
 
 				for (j = 0; j < NUM_TEST_ENTRY_LIST; j++) {
 					unsigned midx = idx;
+
+					if (evtid == 176) {
+						unsigned k;
+
+						if (idx != TEST_ENTRY_LIST[j].midi_shortcut)
+							continue;
+
+						if (velocity == 0 && loaded_ranks[j][0].enabled) {
+							for (k = 0; k < TEST_ENTRY_LIST[j].nb_pipes; k++) {
+								if (loaded_ranks[j][k].nb_insts && loaded_ranks[j][k].instance) {
+									playeng_signal_instance(engine, loaded_ranks[j][k].instance, 0x02);
+								}
+								loaded_ranks[j][k].instance = NULL;
+								loaded_ranks[j][k].nb_insts = 0;
+								loaded_ranks[j][k].enabled = 0;
+							}
+							printf("%s OFF\n", TEST_ENTRY_LIST[j].directory_name);
+						} else if (velocity && !loaded_ranks[j][0].enabled) {
+							for (k = 0; k < TEST_ENTRY_LIST[j].nb_pipes; k++) {
+								loaded_ranks[j][k].enabled = 1;
+							}
+							printf("%s ON\n", TEST_ENTRY_LIST[j].directory_name);
+						}
+
+						continue;
+					}
 
 					if ((TEST_ENTRY_LIST[j].midi_channel_mask & (1ul << channel)) == 0)
 						continue;
