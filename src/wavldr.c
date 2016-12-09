@@ -794,3 +794,83 @@ load_smpl_f
 			,prefilter
 			);
 }
+
+#define LOAD_SET_GROW_RATE (500)
+
+int sample_load_set_init(struct sample_load_set *load_set)
+{
+	load_set->max_nb_elems = LOAD_SET_GROW_RATE;
+	load_set->nb_elems = 0;
+	load_set->elems = malloc(sizeof(struct sample_load_info) * load_set->max_nb_elems);
+	if (load_set->elems == NULL)
+		return -1;
+	if (cop_mutex_create(&load_set->pop_lock)) {
+		free(load_set->elems);
+		return -1;
+	}
+	return 0;
+}
+
+struct sample_load_info *sample_load_set_push(struct sample_load_set *load_set)
+{
+	struct sample_load_info *ns;
+	unsigned new_ele_count;
+
+	if (load_set->nb_elems < load_set->max_nb_elems)
+		return load_set->elems + load_set->nb_elems++;
+
+	assert(load_set->nb_elems == load_set->max_nb_elems);
+
+	new_ele_count = load_set->max_nb_elems + LOAD_SET_GROW_RATE;
+	ns = realloc(load_set->elems, sizeof(struct sample_load_info) * new_ele_count);
+	if (ns != NULL) {
+		load_set->elems = ns;
+		load_set->max_nb_elems = new_ele_count;
+		return load_set->elems + load_set->nb_elems++;
+	}
+
+	return NULL;
+}
+
+static struct sample_load_info *sample_load_set_pop(struct sample_load_set *load_set)
+{
+	struct sample_load_info *ret = NULL;
+	cop_mutex_lock(&load_set->pop_lock);
+	if (load_set->nb_elems)
+		ret = load_set->elems + --load_set->nb_elems;
+	cop_mutex_unlock(&load_set->pop_lock);
+	return ret;
+}
+
+
+const char *
+load_samples
+	(struct sample_load_set *load_set
+	,struct aalloc          *allocator
+	,struct fftset          *fftset
+	,const struct odfilter *prefilter
+	)
+{
+	struct sample_load_info *li;
+	while ((li = sample_load_set_pop(load_set)) != NULL) {
+		const char *err;
+		struct smpl_comp comps[1+WAVLDR_MAX_RELEASES];
+		unsigned i;
+
+		assert(li->num_files <= 1+WAVLDR_MAX_RELEASES);
+
+		for (i = 0; i < li->num_files; i++) {
+			comps[i].filename    = li->filenames[i];
+			comps[i].load_flags  = li->load_flags[i];
+			comps[i].load_format = li->load_format;
+		}
+
+		err = load_smpl_comp(li->dest, comps, li->num_files, allocator, fftset, prefilter);
+		if (err != NULL)
+			return err;
+
+		if (li->on_loaded != NULL)
+			li->on_loaded(li);
+	}
+	return NULL;
+}

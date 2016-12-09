@@ -33,6 +33,7 @@
 #include "portmidi.h"
 #include "opendiapason/src/playeng.h"
 #include "opendiapason/src/wav_dumper.h"
+#include "opendiapason/src/strset.h"
 
 /* This is high not because I am a deluded "audiophile". It is high, because
  * it gives the playback system heaps of frequency headroom before aliasing
@@ -53,6 +54,7 @@ struct pipe_executor {
 	struct playeng_instance *instance;
 	int                      nb_insts;
 	int                      enabled;
+	double                   target_freq;
 };
 
 struct test_load_entry {
@@ -92,18 +94,18 @@ static const struct test_load_entry TEST_ENTRY_LIST[] =
 ,	{"III Fugara 4",               36, 53, SW,       4, '6', 53}
 ,	{"III Flute Octaviante 4",     36, 53, SW,       4, '7', 54}
 ,	{"III Doublette 2",            36, 53, SW,       8, '8', 55}
-,	{"I Trompette 8",              36, 53, GT,       2, 'a', 64}
-,	{"I Montre 8",                 36, 53, GT,       2, 's', 65}
-,	{"I Bourdon 8",                36, 53, GT,       2, 'd', 66}
-,	{"I Viole de Gambe 8",         36, 53, GT,       2, 'f', 67}
-,	{"I Prestant 4",               36, 53, GT,       4, 'g', 68}
-,	{"I Flute Douce 4",            36, 53, GT,       4, 'h', 69}
-,	{"I Doublette 2",              36, 53, GT,       8, 'j', 70}
-,	{"I Plein Jeu 5x",             36, 53, GT,       2, 'k', 71}
-,	{"P Bombarde 16",              36, 27, PED | GT, 1, 'z', 80}
-,	{"P Contrebasse 16",           36, 27, PED | GT, 1, 'x', 81}
-,	{"P Soubasse 16",              36, 27, PED | GT, 1, 'c', 82}
-,	{"P Violoncelle 8",            36, 27, PED | GT, 2, 'v', 83}
+,	{"I Trompette 8",              36, 53, PED | GT, 2, 'a', 64}
+,	{"I Montre 8",                 36, 53, PED | GT, 2, 's', 65}
+,	{"I Bourdon 8",                36, 53, PED | GT, 2, 'd', 66}
+,	{"I Viole de Gambe 8",         36, 53, PED | GT, 2, 'f', 67}
+,	{"I Prestant 4",               36, 53, PED | GT, 4, 'g', 68}
+,	{"I Flute Douce 4",            36, 53, PED | GT, 4, 'h', 69}
+,	{"I Doublette 2",              36, 53, PED | GT, 8, 'j', 70}
+,	{"I Plein Jeu 5x",             36, 53, PED | GT, 2, 'k', 71}
+,	{"P Bombarde 16",              36, 27, PED,      1, 'z', 80}
+,	{"P Contrebasse 16",           36, 27, PED,      1, 'x', 81}
+,	{"P Soubasse 16",              36, 27, PED,      1, 'c', 82}
+,	{"P Violoncelle 8",            36, 27, PED,      2, 'v', 83}
 };
 #else
 {	{"I Bordun 16",                36, 53, PED | GT,  1, 'a'}
@@ -128,67 +130,59 @@ static const struct test_load_entry TEST_ENTRY_LIST[] =
 
 static struct pipe_executor *loaded_ranks[NUM_TEST_ENTRY_LIST];
 
+static void on_sample_load(const struct sample_load_info *ld_info)
+{
+	struct pipe_executor *pipe = ld_info->ctx;
+	pipe->pd.rate = (pipe->target_freq * pipe->pd.data.sample_rate) * SMPL_POSITION_SCALE / (PLAYBACK_SAMPLE_RATE * pipe->pd.data.frequency) + 0.5;
+}
+
 static struct pipe_executor *
 load_executors
 	(const char              *path
-	,struct aalloc           *mem
-	,struct fftset           *fftset
-	,const struct odfilter   *prefilter
 	,unsigned                 first_midi
 	,unsigned                 nb_pipes
-	,double                   organ_pitch16
 	,unsigned                 harmonic16
+	,struct sample_load_set  *lset
+	,struct strset           *sset
 	)
 {
 	struct pipe_executor *pipes = malloc(sizeof(*pipes) * nb_pipes);
 	unsigned i;
 	for (i = 0; i < nb_pipes; i++) {
-		float pipe_freq;
-		float target_freq;
 		static const char *NAMES[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-		const char * err;
-		char namebuf[128];
-		char namebuf2[128];
-		char namebuf3[128];
-		char namebuf4[128];
-		struct smpl_comp bits[4];
 
-		sprintf(namebuf,  "%s/A0/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
-		sprintf(namebuf2, "%s/R0/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
-		sprintf(namebuf3, "%s/R1/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
-		sprintf(namebuf4, "%s/R2/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
-		bits[0].filename = namebuf;
-		bits[1].filename = namebuf2;
-		bits[2].filename = namebuf3;
-		bits[3].filename = namebuf4;
-		bits[0].load_format = 16;
-		bits[1].load_format = 16;
-		bits[2].load_format = 16;
-		bits[3].load_format = 16;
-		bits[0].load_flags = SMPL_COMP_LOADFLAG_AS;
-		bits[1].load_flags = SMPL_COMP_LOADFLAG_R;
-		bits[2].load_flags = SMPL_COMP_LOADFLAG_R;
-		bits[3].load_flags = SMPL_COMP_LOADFLAG_R;
+		struct sample_load_info *sli = sample_load_set_push(lset);
 
-		err = load_smpl_comp(&(pipes[i].pd.data), bits, 4, mem, fftset, prefilter);
-
-		if (err != NULL) {
-			printf("WAVE ERR: %s-%s\n", namebuf, err);
+		if (sli == NULL) {
+			printf("out of memory\n");
 			abort();
 		}
+	
+		pipes[i].instance     = NULL;
+		pipes[i].nb_insts     = 0;
+		pipes[i].enabled      = 0;
+		pipes[i].target_freq  = ORGAN_PITCH16 * harmonic16 * pow(2.0, (i + first_midi - 36) / 12.0);
+		sli->filenames[0]     = strset_sprintf(sset, "%s/A0/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
+		sli->load_flags[0]    = SMPL_COMP_LOADFLAG_AS;
+		sli->filenames[1]     = strset_sprintf(sset, "%s/R0/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
+		sli->load_flags[1]    = SMPL_COMP_LOADFLAG_R;
+		sli->filenames[2]     = strset_sprintf(sset, "%s/R1/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
+		sli->load_flags[2]    = SMPL_COMP_LOADFLAG_R;
+		sli->filenames[3]     = strset_sprintf(sset, "%s/R2/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
+		sli->load_flags[3]    = SMPL_COMP_LOADFLAG_R;
+		sli->num_files        = 4;
+		sli->harmonic_number  = harmonic16;
+		sli->load_format      = 16;
+		sli->dest             = &(pipes[i].pd.data);
+		sli->ctx              = pipes + i;
+		sli->on_loaded        = on_sample_load;
 
-		target_freq = organ_pitch16 * harmonic16 * pow(2.0, (i + first_midi - 36) / 12.0);
-		pipe_freq   = pipes[i].pd.data.frequency;
-
-		pipes[i].pd.rate = (target_freq * pipes[i].pd.data.sample_rate) * SMPL_POSITION_SCALE / (PLAYBACK_SAMPLE_RATE * pipe_freq) + 0.5;
-		pipes[i].instance = NULL;
-		pipes[i].nb_insts = 0;
-		pipes[i].enabled = 0;
-
-#if OPENDIAPASON_VERBOSE_DEBUG
-		printf("%s:%d FREQUENCIES: %f,%f,%u\n", path, i, target_freq, pipe_freq, pipes[i].pd.rate);
-#endif
+		if  (   sli->filenames[0] == NULL || sli->filenames[1] == NULL
+		    ||  sli->filenames[2] == NULL || sli->filenames[3] == NULL) {
+			abort();
+		}
 	}
+
 	return pipes;
 }
 
@@ -758,26 +752,47 @@ int main(int argc, char *argv[])
 
 
 	{
-		unsigned        i;
-		struct aalloc   mem;
-		struct fftset   fftset;
-		struct odfilter prefilter;
-		size_t sysmem = pool_size();
+		unsigned               i;
+		struct aalloc          mem;
+		struct fftset          fftset;
+		struct odfilter        prefilter;
+		struct sample_load_set ls;
+		struct strset          ss;
+		size_t sysmem;
+		const char *err;
 
-		/* Build the interpolation pre-filter */
+		/* Setup memory pool. */
+		sysmem = pool_size();
 		aalloc_init(&mem, sysmem, 32, 16*1024*1024);
 		fftset_init(&fftset);
+		strset_init(&ss);
 
-		/*TODO */
+		/* Build the interpolation pre-filter. */
 		(void)odfilter_interp_prefilter_init(&prefilter, &mem, &fftset);
 
+		/* Setup the load list. */
+		(void)sample_load_set_init(&ls);
 		for (i = 0; i < NUM_TEST_ENTRY_LIST; i++) {
 			printf("loading '%s'\n", TEST_ENTRY_LIST[i].directory_name);
-			loaded_ranks[i] = load_executors(TEST_ENTRY_LIST[i].directory_name, &mem, &fftset, &prefilter, TEST_ENTRY_LIST[i].first_midi, TEST_ENTRY_LIST[i].nb_pipes, ORGAN_PITCH16, TEST_ENTRY_LIST[i].harmonic16);
+			loaded_ranks[i] = load_executors(TEST_ENTRY_LIST[i].directory_name, TEST_ENTRY_LIST[i].first_midi, TEST_ENTRY_LIST[i].nb_pipes, TEST_ENTRY_LIST[i].harmonic16, &ls, &ss);
+		}
+		
+		/* Execute the load list. */
+		err =
+			load_samples
+				(&ls
+				,&mem
+				,&fftset
+				,&prefilter
+				);
+		if (err != NULL) {
+			fprintf(stderr, "load error: %s\n", err);
+			abort();
 		}
 
 		rv = setup_sound(midi_devid);
 
+		strset_free(&ss);
 		fftset_destroy(&fftset);
 		aalloc_free(&mem);
 	}

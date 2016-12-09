@@ -24,6 +24,7 @@
 #include "decode_types.h"
 #include "reltable.h"
 #include "cop/cop_alloc.h"
+#include "cop/cop_thread.h"
 #include "fftset/fftset.h"
 #include "opendiapason/odfilter.h"
 
@@ -127,6 +128,44 @@ const char *load_smpl_mem(struct memory_wave *smpl, unsigned char *buf, size_t f
 
 const char *load_smpl(struct memory_wave *smpl, const char *fname, double *frequency);
 
+
+#define LOAD_SET_GROW_RATE (500)
+
+struct sample_load_info {
+	const char              *filenames[1+WAVLDR_MAX_RELEASES];
+	int                      load_flags[1+WAVLDR_MAX_RELEASES];
+	unsigned                 num_files;
+	unsigned                 harmonic_number;
+	unsigned                 load_format;
+
+	/* Where to load the data. */
+	struct pipe_v1          *dest;
+
+	void                    *ctx;
+	void                   (*on_loaded)(const struct sample_load_info *ld_info);
+};
+
+struct sample_load_set {
+	struct sample_load_info *elems;
+	unsigned                 nb_elems;
+	unsigned                 max_nb_elems;
+
+	cop_mutex                pop_lock;
+
+
+};
+
+int sample_load_set_init(struct sample_load_set *load_set);
+
+struct sample_load_info *sample_load_set_push(struct sample_load_set *load_set);
+
+const char *
+load_samples
+	(struct sample_load_set *load_set
+	,struct aalloc          *allocator
+	,struct fftset          *fftset
+	,const struct odfilter *prefilter
+	);
 
 
 #endif /* WAVELDR_H */

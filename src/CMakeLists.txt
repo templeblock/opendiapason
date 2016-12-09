@@ -9,7 +9,7 @@ if(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_CURRENT_LIST_DIR})
   project(od_audioengine VERSION 0.1.0 LANGUAGES C)
 endif()
 
-add_library(od_audioengine STATIC decode_least16x1.h decode_least16x2.h decode_types.h interpdata.c interpdata.h interpdata_initpf.c playeng.c playeng.h reltable.c reltable.h wav_dumper.c wav_dumper.h wavldr.c wavldr.h)
+add_library(od_audioengine STATIC decode_least16x1.h decode_least16x2.h decode_types.h interpdata.c interpdata.h interpdata_initpf.c playeng.c playeng.h reltable.c reltable.h strset.c strset.h wav_dumper.c wav_dumper.h wavldr.c wavldr.h)
 
 if(x${CMAKE_CXX_COMPILER_ID} STREQUAL "xMSVC")
   set_property(TARGET od_audioengine APPEND_STRING PROPERTY COMPILE_FLAGS " /W3")
