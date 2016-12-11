@@ -29,7 +29,7 @@
 #include "smplwav/smplwav_mount.h"
 #include "smplwav/smplwav_convert.h"
 
-const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, size_t fsz, unsigned load_format)
+static const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, size_t fsz, unsigned load_format)
 {
 	unsigned        i, ch;
 	float          *buffers;

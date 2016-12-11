@@ -124,11 +124,6 @@ load_smpl_f
 	,int                         load_type
 	);
 
-const char *load_smpl_mem(struct memory_wave *smpl, unsigned char *buf, size_t fsz, unsigned load_format);
-
-const char *load_smpl(struct memory_wave *smpl, const char *fname, double *frequency);
-
-
 #define LOAD_SET_GROW_RATE (500)
 
 struct sample_load_info {
