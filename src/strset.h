@@ -23,21 +23,36 @@
 
 #include <stddef.h>
 
+/* The intention of this component is to hold what is likely to be many
+ * thousands of strings without fragmenting memory too much. Strings will
+ * never be removed from the set and if a string already exists in the set,
+ * it *may* re-use the string pointer (doesn't at the moment because I hacked
+ * this together quickly). */
+struct strset;
+
+/* Initialize an empty string set. */
+void strset_init(struct strset *s);
+
+/* Free all memory associated with a string set. */
+void strset_free(struct strset *s);
+
+/* All the following functions add strings into the set. The return value is
+ * a pointer to the string. If the return value is NULL, memory was
+ * exhausted. */
+
+/* Add a new string into the set using a printf() style format string. */
+const char *strset_sprintf(struct strset *s, const char *fmt, ...);
+
+/* ---------------------------------------------------------------------------
+ * Private parts. These are defined here so you can put them on the stack -
+ * not so you can meddle with their bits. */
 struct strset_buf {
 	size_t             size;
 	size_t             pos;
 	struct strset_buf *next;
 };
-
-/* TODO: Might be worth turning this into a "proper" set. */
 struct strset {
 	struct strset_buf *mem;
 };
-
-/* Initialize an empty string set. */
-void strset_init(struct strset *s);
-void strset_free(struct strset *s);
-
-const char *strset_sprintf(struct strset *s, const char *fmt, ...);
 
 #endif /* STRSET_H */
