@@ -139,16 +139,8 @@ const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, size_t fsz
 	return NULL;
 }
 
-const char *mw_load_from_file(struct memory_wave *mw, const char *fname, unsigned load_format)
+static void *load_file_to_memory(const char *fname, size_t *pfsz)
 {
-	const char *err = NULL;
-	/* Reminder, we are deliberately not memory mapping samples as the intent
-	 * is to have a single thread reading file-at-a-time. My gut feel is that
-	 * this will perform better than memory-mapping once we start doing multi-
-	 * threaded loading (which would cause random IO accesses). This forces
-	 * linear IO accesses. Also, I've found that using a memory map here ends
-	 * up introducing more overhead than using the read... I can't explain
-	 * this. */
 	FILE *f = fopen(fname, "rb");
 	if (f != NULL) {
 		if (fseek(f, 0, SEEK_END) == 0) {
@@ -158,27 +150,30 @@ const char *mw_load_from_file(struct memory_wave *mw, const char *fname, unsigne
 					unsigned char *fbuf = malloc(fsz);
 					if (fbuf != NULL) {
 						if (fread(fbuf, 1, fsz, f) == fsz) {
-							err = load_smpl_mem(mw, fbuf, fsz, load_format);
-						} else {
-							err = "failed to read file";
+							fclose(f);
+							*pfsz = (size_t)fsz;
+							return fbuf;
 						}
 						free(fbuf);
-					} else {
-						err = "out of memory";
+						fbuf = NULL;
 					}
-				} else {
-					err = "failed to see to start of file";
 				}
-			} else {
-				err = "stream empty or ftell failed";
 			}
-		} else {
-			err = "failed to seek to eof";
 		}
 		fclose(f);
-	} else {
-		err = "failed to open file";
 	}
+	return NULL;
+}
+
+const char *mw_load_from_file(struct memory_wave *mw, const char *fname, unsigned load_format)
+{
+	const char *err = NULL;
+	size_t fsz;
+	void *data = load_file_to_memory(fname, &fsz);
+	if (data == NULL)
+		return "failed to load file";
+	err = load_smpl_mem(mw, data, fsz, load_format);
+	free(data);
 	return err;
 }
 
@@ -808,6 +803,11 @@ int sample_load_set_init(struct sample_load_set *load_set)
 		free(load_set->elems);
 		return -1;
 	}
+	if (cop_mutex_create(&load_set->file_lock)) {
+		cop_mutex_destroy(&load_set->pop_lock);
+		free(load_set->elems);
+		return -1;
+	}
 	return 0;
 }
 
@@ -841,7 +841,6 @@ static struct sample_load_info *sample_load_set_pop(struct sample_load_set *load
 	cop_mutex_unlock(&load_set->pop_lock);
 	return ret;
 }
-
 
 const char *
 load_samples

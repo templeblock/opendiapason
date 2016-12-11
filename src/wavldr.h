@@ -151,7 +151,7 @@ struct sample_load_set {
 	unsigned                 max_nb_elems;
 
 	cop_mutex                pop_lock;
-
+	cop_mutex                file_lock;
 
 };
 
