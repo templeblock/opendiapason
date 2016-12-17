@@ -19,6 +19,9 @@
  * DEALINGS IN THE SOFTWARE. */
 
 #include "opendiapason/odfilter.h"
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
 
 int odfilter_init_filter(struct odfilter *pf, struct aalloc *allocobj, struct fftset *fftset, unsigned length)
 {
