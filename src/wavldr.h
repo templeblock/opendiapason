@@ -109,7 +109,7 @@ load_smpl_comp
 	(struct pipe_v1             *pipe
 	,const struct smpl_comp     *components
 	,unsigned                    nb_components
-	,struct aalloc              *allocator
+	,struct cop_salloc_iface    *allocator
 	,struct fftset              *fftset
 	,const struct odfilter      *prefilter
 	);
@@ -118,7 +118,7 @@ const char *
 load_smpl_f
 	(struct pipe_v1             *pipe
 	,const char                 *filename
-	,struct aalloc              *allocator
+	,struct cop_salloc_iface    *allocator
 	,struct fftset              *fftset
 	,const struct odfilter      *prefilter
 	,int                         load_type
@@ -156,10 +156,10 @@ struct sample_load_info *sample_load_set_push(struct sample_load_set *load_set);
 
 const char *
 load_samples
-	(struct sample_load_set *load_set
-	,struct aalloc          *allocator
-	,struct fftset          *fftset
-	,const struct odfilter *prefilter
+	(struct sample_load_set  *load_set
+	,struct cop_salloc_iface *allocator
+	,struct fftset           *fftset
+	,const struct odfilter   *prefilter
 	);
 
 

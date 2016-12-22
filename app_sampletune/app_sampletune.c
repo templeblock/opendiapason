@@ -55,7 +55,7 @@ static double get_target_frequency(int midi_note, unsigned rank_harmonic64)
 	return 440.0f * powf(2.0f, (midi_note - 69.0f) / 12.0f) * rank_harmonic64 / 8.0f;
 }
 
-static int get_target_note(float target_freq, unsigned rank_harmonic64)
+static COP_ATTR_UNUSED int get_target_note(float target_freq, unsigned rank_harmonic64)
 {
 	return 12.0f * log2f(target_freq * 8.0f / (440.0f * rank_harmonic64)) + 69.0f;
 }
@@ -65,7 +65,7 @@ static const char *NAMES[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "
 static struct pipe_executor *
 load_executors
 	(const char                 *path
-	,struct aalloc              *mem
+	,struct cop_salloc_iface    *mem
 	,struct fftset              *fftset
 	,const struct odfilter      *prefilter
 	,unsigned                    first_midi
@@ -142,13 +142,15 @@ engine_callback
 
 	/* End sample */
 	if (sigmask & 0x2) {
-		int                  mn = get_target_note(pd->target_freq, at_rank_harmonic64);
 		struct reltable_data rtd;
 
 		reltable_find(&pd->data.reltable, &rtd, states[0]->ipos, states[0]->fpos);
 
 #if OPENDIAPASON_VERBOSE_DEBUG
-		printf("%03d-%s RELEASED pos=(%u,%u),rgain=%f,xfade=%d,id=%d\n", mn, NAMES[mn%12], rtd.pos_int, rtd.pos_frac, rtd.gain, rtd.crossfade, rtd.id);
+		{
+			int mn = get_target_note(pd->target_freq, at_rank_harmonic64);
+			printf("%03d-%s RELEASED pos=(%u,%u),rgain=%f,xfade=%d,id=%d\n", mn, NAMES[mn%12], rtd.pos_int, rtd.pos_frac, rtd.gain, rtd.crossfade, rtd.id);
+		}
 #endif
 
 		pd->data.releases[rtd.id].instantiate(states[1], &pd->data.releases[rtd.id], rtd.pos_int, rtd.pos_frac);
@@ -482,7 +484,7 @@ int main_audio(int argc, char *argv[])
 	return 0;
 }
 
-const char *read_entire_file(struct aalloc *a, const char *filename, size_t *sz, void **buf)
+const char *read_entire_file(struct cop_salloc_iface *a, const char *filename, size_t *sz, void **buf)
 {
 	const char *err = NULL;
 	FILE *f = fopen(filename, "rb");
@@ -492,19 +494,18 @@ const char *read_entire_file(struct aalloc *a, const char *filename, size_t *sz,
 			if (fsz >= 0) {
 				if (fseek(f, 0, SEEK_SET) == 0) {
 					void *fbuf;
-					aalloc_push(a);
-					fbuf = aalloc_alloc(a, fsz+1);
+					size_t save = cop_salloc_save(a);
+					fbuf = cop_salloc(a, fsz+1, 0);
 					if (fbuf != NULL) {
 						if (fread(fbuf, 1, fsz, f) == fsz) {
 							*sz = fsz;
 							*buf = fbuf;
-							aalloc_merge_pop(a);
 						} else {
-							aalloc_pop(a);
+							cop_salloc_restore(a, save);
 							err = "failed to read file";
 						}
 					} else {
-						aalloc_pop(a);
+						cop_salloc_restore(a, save);
 						err = "out of memory";
 					}
 				} else {
@@ -562,7 +563,8 @@ int main(int argc, char *argv[])
 {
 	int ret;
 	unsigned i;
-	struct aalloc mem;
+	struct cop_alloc_virtual mem_impl;
+	struct cop_salloc_iface  mem;
 	size_t sysmem = cop_memory_query_system_memory();
 
 	if (sysmem == 0) {
@@ -621,7 +623,7 @@ int main(int argc, char *argv[])
 	} else {
 		sysmem = 3 * (sysmem / 4);
 	}
-	aalloc_init(&mem, sysmem, 32, 16*1024*1024);
+	cop_alloc_virtual_init(&mem_impl, &mem, sysmem, 32, 16*1024*1024);
 
 	{
 		struct fftset    fftset;
@@ -664,10 +666,12 @@ int main(int argc, char *argv[])
 			continue;
 
 		for (fidx = 0; fidx < 4; fidx++) {
+			size_t save;
+
 			sprintf(namebuf, FMTS[fidx], ".", i + at_first_midi, NAMES[(i+at_first_midi)%12]);
 			printf("Updating tuning in %s from %f->%f\n", namebuf, old_pipe_frequencies[i], pipe_frequencies[i]);
 
-			aalloc_push(&mem);
+			save = cop_salloc_save(&mem);
 			err = read_entire_file(&mem, namebuf, &sz, &db);
 			if (err == NULL) {
 				size_t riffsz;
@@ -721,8 +725,7 @@ int main(int argc, char *argv[])
 				ret = -1;
 				fprintf(stderr, "failed to read %s: %s\n", namebuf, err);
 			}
-			aalloc_pop(&mem);
-
+			cop_salloc_restore(&mem, save);
 		}
 
 

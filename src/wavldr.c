@@ -308,7 +308,7 @@ apply_prefilter
 	,struct rel_data            *rel
 	,unsigned                    channels
 	,uint_fast32_t               rate
-	,struct aalloc              *allocator
+	,struct cop_salloc_iface    *allocator
 	,const struct odfilter      *prefilter
 	,const char                 *debug_prefix
 	)
@@ -316,9 +316,9 @@ apply_prefilter
 	unsigned ch;
 	unsigned idx;
 	struct odfilter_temporaries tmps;
+	const size_t save = cop_salloc_save(allocator);
 
-	aalloc_push(allocator);
-	odfilter_init_temporaries(&tmps, allocator, prefilter);
+	odfilter_init_temporaries(&tmps, &(allocator->iface), prefilter);
 
 	/* Convolve the attack/sustain segments. */
 	idx = 0;
@@ -383,7 +383,7 @@ apply_prefilter
 		rel = rel->next;
 		idx++;
 	}
-	aalloc_pop(allocator);
+	cop_salloc_restore(allocator, save);
 }
 
 const char *
@@ -393,7 +393,7 @@ load_smpl_lists
 	,struct rel_data            *rel_bits
 	,unsigned                    channels
 	,uint_fast32_t               norm_rate
-	,struct aalloc              *allocator
+	,struct cop_salloc_iface    *allocator
 	,struct fftset              *fftset
 	,const struct odfilter      *prefilter
 	,const char                 *file_ref
@@ -497,7 +497,7 @@ load_smpl_lists
 			pipe->releases[i].ends[0].start_idx         = 0;
 
 			if (rel->load_format == 12 && channels == 2) {
-				void *buf = aalloc_alloc(allocator, sizeof(unsigned char) * (rel->length + release_slop + 1) * 3);
+				void *buf = cop_salloc(allocator, sizeof(unsigned char) * (rel->length + release_slop + 1) * 3, 0);
 				pipe->releases[i].gain =
 					quantize_boost_interleave
 						(buf
@@ -512,7 +512,7 @@ load_smpl_lists
 				pipe->releases[i].data = buf;
 				pipe->releases[i].instantiate = u12c2_instantiate;
 			} else if (rel->load_format == 16 && channels == 2) {
-				void *buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (rel->length + release_slop + 1) * 2);
+				void *buf = cop_salloc(allocator, sizeof(int_least16_t) * (rel->length + release_slop + 1) * 2, 0);
 				pipe->releases[i].gain =
 					quantize_boost_interleave
 						(buf
@@ -533,7 +533,7 @@ load_smpl_lists
 	}
 
 	if (as_bits->load_format == 12 && channels == 2) {
-		void *buf = aalloc_alloc(allocator, sizeof(unsigned char) * (as_bits->length + 1) * 3);
+		void *buf = cop_salloc(allocator, sizeof(unsigned char) * (as_bits->length + 1) * 3, 0);
 		pipe->attack.gain =
 			quantize_boost_interleave
 				(buf
@@ -548,7 +548,7 @@ load_smpl_lists
 		pipe->attack.data = buf;
 		pipe->attack.instantiate = u12c2_instantiate;
 	} else if (as_bits->load_format == 16 && channels == 2) {
-		void *buf = aalloc_alloc(allocator, sizeof(int_least16_t) * (as_bits->length + 1) * 2);
+		void *buf = cop_salloc(allocator, sizeof(int_least16_t) * (as_bits->length + 1) * 2, 0);
 		pipe->attack.gain =
 			quantize_boost_interleave
 				(buf
@@ -579,14 +579,14 @@ load_smpl_lists
 		size_t buf_stride = VLF_PAD_LENGTH(as_bits->length);
 		struct rel_data *r;
 
-		aalloc_push(allocator);
+		const size_t save = cop_salloc_save(allocator);
 
 		env_width    = (unsigned)(as_bits->period * 2.0f + 0.5f);
 
-		odfilter_init_filter(&filt, allocator, fftset, env_width);
-		odfilter_init_temporaries(&filt_tmps, allocator, &filt);
+		odfilter_init_filter(&filt, &(allocator->iface), fftset, env_width);
+		odfilter_init_temporaries(&filt_tmps, &(allocator->iface), &filt);
 
-		envelope_buf = aalloc_align_alloc(allocator, sizeof(float) * (buf_stride * (1 + nb_releases)), 64);
+		envelope_buf = cop_salloc(allocator, sizeof(float) * (buf_stride * (1 + nb_releases)), 64);
 		mse_buf      = envelope_buf + buf_stride;
 
 		if (channels == 2) {
@@ -662,7 +662,7 @@ load_smpl_lists
 
 		reltable_build(&pipe->reltable, envelope_buf, mse_buf, relpowers, nb_releases, buf_stride, as_bits->length, as_bits->period, file_ref);
 
-		aalloc_pop(allocator);
+		cop_salloc_restore(allocator, save);
 	}
 #endif
 
@@ -681,7 +681,7 @@ load_smpl_comp
 	(struct pipe_v1             *pipe
 	,const struct smpl_comp     *components
 	,unsigned                    nb_components
-	,struct aalloc              *allocator
+	,struct cop_salloc_iface    *allocator
 	,struct fftset              *fftset
 	,const struct odfilter      *prefilter
 	)
@@ -769,7 +769,7 @@ const char *
 load_smpl_f
 	(struct pipe_v1             *pipe
 	,const char                 *filename
-	,struct aalloc              *allocator
+	,struct cop_salloc_iface    *allocator
 	,struct fftset              *fftset
 	,const struct odfilter      *prefilter
 	,int                         load_type
@@ -844,10 +844,10 @@ static struct sample_load_info *sample_load_set_pop(struct sample_load_set *load
 
 const char *
 load_samples
-	(struct sample_load_set *load_set
-	,struct aalloc          *allocator
-	,struct fftset          *fftset
-	,const struct odfilter *prefilter
+	(struct sample_load_set  *load_set
+	,struct cop_salloc_iface *allocator
+	,struct fftset           *fftset
+	,const struct odfilter   *prefilter
 	)
 {
 	struct sample_load_info *li;

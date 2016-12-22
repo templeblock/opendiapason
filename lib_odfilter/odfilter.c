@@ -23,22 +23,22 @@
 #include <stdlib.h>
 #include <string.h>
 
-int odfilter_init_filter(struct odfilter *pf, struct aalloc *allocobj, struct fftset *fftset, unsigned length)
+int odfilter_init_filter(struct odfilter *pf, struct cop_alloc_iface *allocobj, struct fftset *fftset, unsigned length)
 {
 	pf->kern_len = length;
 	pf->conv_len = fftset_recommend_conv_length(length, 512) * 2;
 	return
 		(   (pf->conv = fftset_create_fft(fftset, FFTSET_MODULATION_FREQ_OFFSET_REAL, pf->conv_len / 2)) == NULL
-		||  (pf->kernel = aalloc_align_alloc(allocobj, sizeof(float) * pf->conv_len, 64)) == NULL
+		||  (pf->kernel = cop_alloc(allocobj, sizeof(float) * pf->conv_len, 64)) == NULL
 		);
 }
 
-int odfilter_init_temporaries(struct odfilter_temporaries *tmps, struct aalloc *allocobj, const struct odfilter *filter)
+int odfilter_init_temporaries(struct odfilter_temporaries *tmps, struct cop_alloc_iface *allocobj, const struct odfilter *filter)
 {
 	return
-		(   (tmps->tmp1 = aalloc_align_alloc(allocobj, sizeof(float) * filter->conv_len, 64)) == NULL
-		||  (tmps->tmp2 = aalloc_align_alloc(allocobj, sizeof(float) * filter->conv_len, 64)) == NULL
-		||  (tmps->tmp3 = aalloc_align_alloc(allocobj, sizeof(float) * filter->conv_len, 64)) == NULL
+		(   (tmps->tmp1 = cop_alloc(allocobj, sizeof(float) * filter->conv_len, 64)) == NULL
+		||  (tmps->tmp2 = cop_alloc(allocobj, sizeof(float) * filter->conv_len, 64)) == NULL
+		||  (tmps->tmp3 = cop_alloc(allocobj, sizeof(float) * filter->conv_len, 64)) == NULL
 		);
 }
 

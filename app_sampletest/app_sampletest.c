@@ -752,18 +752,19 @@ int main(int argc, char *argv[])
 
 
 	{
-		unsigned               i;
-		struct aalloc          mem;
-		struct fftset          fftset;
-		struct odfilter        prefilter;
-		struct sample_load_set ls;
-		struct strset          ss;
-		size_t sysmem;
-		const char *err;
+		unsigned                 i;
+		struct cop_alloc_virtual mem_impl;
+		struct cop_salloc_iface  mem;
+		struct fftset            fftset;
+		struct odfilter          prefilter;
+		struct sample_load_set   ls;
+		struct strset            ss;
+		size_t                   sysmem;
+		const char              *err;
 
 		/* Setup memory pool. */
 		sysmem = pool_size();
-		aalloc_init(&mem, sysmem, 32, 16*1024*1024);
+		cop_alloc_virtual_init(&mem_impl, &mem, sysmem, 32, 16*1024*1024);
 		fftset_init(&fftset);
 		strset_init(&ss);
 
@@ -794,7 +795,7 @@ int main(int argc, char *argv[])
 
 		strset_free(&ss);
 		fftset_destroy(&fftset);
-		aalloc_free(&mem);
+		cop_alloc_virtual_free(&mem_impl);
 	}
 
 	/* Close the dump file. */

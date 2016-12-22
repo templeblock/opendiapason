@@ -34,6 +34,6 @@ extern const float SMPL_INTERP[SMPL_POSITION_SCALE][SMPL_INTERP_TAPS];
 #include "cop/cop_attributes.h"
 #include "opendiapason/odfilter.h"
 
-int odfilter_interp_prefilter_init(struct odfilter *pf, struct aalloc *allocobj, struct fftset *fftset);
+int odfilter_interp_prefilter_init(struct odfilter *pf, struct cop_salloc_iface *allocobj, struct fftset *fftset);
 
 #endif /* INTERPDATA_H */

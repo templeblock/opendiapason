@@ -76,13 +76,14 @@ struct playeng {
 	float     *COP_ATTR_RESTRICT *reblock_buffers;
 
 	/* Memory allocator for everything in engine. */
-	struct aalloc                 allocator;
+	struct cop_alloc_virtual      allocator;
 };
 
 
 struct playeng *playeng_init(unsigned max_poly, unsigned nb_channels, unsigned nb_threads)
 {
-	struct aalloc            a;
+	struct cop_alloc_virtual a;
+	struct cop_salloc_iface  mem;
 	struct playeng_instance *insts_mem;
 	struct dec_state        *decodes_mem;
 	struct playeng          *pe;
@@ -91,25 +92,25 @@ struct playeng *playeng_init(unsigned max_poly, unsigned nb_channels, unsigned n
 	if (nb_threads < 2)
 		nb_threads = 1;
 
-	aalloc_init(&a, 33554432, 16, 16384);
-	if ((pe = aalloc_alloc(&a, sizeof(*pe))) == NULL)
+	cop_alloc_virtual_init(&a, &mem, 33554432, 16, 16384);
+	if ((pe = cop_salloc(&mem, sizeof(*pe), 0)) == NULL)
 		return NULL;
 
 
 	pe->next_thread_idx  = 0;
 	pe->nb_threads       = nb_threads;
-	insts_mem            = aalloc_alloc(&a, sizeof(insts_mem[0]) * max_poly);
-	decodes_mem          = aalloc_alloc(&a, sizeof(decodes_mem[0]) * max_poly);
-	pe->inactive_decodes = aalloc_alloc(&a, sizeof(pe->inactive_decodes[0]) * max_poly);
-	pe->threads          = aalloc_alloc(&a, sizeof(pe->threads[0]) * nb_threads);
+	insts_mem            = cop_salloc(&mem, sizeof(insts_mem[0]) * max_poly, 0);
+	decodes_mem          = cop_salloc(&mem, sizeof(decodes_mem[0]) * max_poly, 0);
+	pe->inactive_decodes = cop_salloc(&mem, sizeof(pe->inactive_decodes[0]) * max_poly, 0);
+	pe->threads          = cop_salloc(&mem, sizeof(pe->threads[0]) * nb_threads, 0);
 	if (insts_mem == NULL || decodes_mem == NULL || pe->inactive_decodes == NULL || pe->threads == NULL) {
-		aalloc_free(&a);
+		cop_alloc_virtual_free(&a);
 		return NULL;
 	}
 
 	for (i = 0; i < nb_threads; i++) {
-		if ((pe->threads[i].buffers = aalloc_alloc(&a, sizeof(pe->threads[i].buffers[0]) * nb_channels)) == NULL) {
-			aalloc_free(&a);
+		if ((pe->threads[i].buffers = cop_salloc(&mem, sizeof(pe->threads[i].buffers[0]) * nb_channels, 0)) == NULL) {
+			cop_alloc_virtual_free(&a);
 			return NULL;
 		};
 	}
@@ -117,32 +118,32 @@ struct playeng *playeng_init(unsigned max_poly, unsigned nb_channels, unsigned n
 	for (i = 0; i < nb_threads; i++) {
 		unsigned j;
 		for (j = 0; j < nb_channels; j++) {
-			if ((pe->threads[i].buffers[j] = aalloc_align_alloc(&a, sizeof(pe->threads[i].buffers[0][0]) * OUTPUT_SAMPLES, 64)) == NULL) {
-				aalloc_free(&a);
+			if ((pe->threads[i].buffers[j] = cop_salloc(&mem, sizeof(pe->threads[i].buffers[0][0]) * OUTPUT_SAMPLES, 64)) == NULL) {
+				cop_alloc_virtual_free(&a);
 				return NULL;
 			}
 		}
 	}
 
 	/* Create buffers for reblocking (nb_channels * OUTPUT_SAMPLES) */
-	if ((pe->reblock_buffers = aalloc_alloc(&a, sizeof(pe->reblock_buffers[0]) * nb_channels)) == NULL) {
-		aalloc_free(&a);
+	if ((pe->reblock_buffers = cop_salloc(&mem, sizeof(pe->reblock_buffers[0]) * nb_channels, 0)) == NULL) {
+		cop_alloc_virtual_free(&a);
 		return NULL;
 	}
 	for (i = 0; i < nb_channels; i++) {
-		if ((pe->reblock_buffers[i] = aalloc_align_alloc(&a, sizeof(pe->reblock_buffers[0][0]) * OUTPUT_SAMPLES, 64)) == NULL) {
-			aalloc_free(&a);
+		if ((pe->reblock_buffers[i] = cop_salloc(&mem, sizeof(pe->reblock_buffers[0][0]) * OUTPUT_SAMPLES, 64)) == NULL) {
+			cop_alloc_virtual_free(&a);
 			return NULL;
 		}
 	}
 
 	if (cop_mutex_create(&pe->signal_lock)) {
-		aalloc_free(&a);
+		cop_alloc_virtual_free(&a);
 		return NULL;
 	}
 	if (cop_mutex_create(&pe->list_lock)) {
 		cop_mutex_destroy(&pe->signal_lock);
-		aalloc_free(&a);
+		cop_alloc_virtual_free(&a);
 		return NULL;
 	}
 
@@ -173,10 +174,10 @@ struct playeng *playeng_init(unsigned max_poly, unsigned nb_channels, unsigned n
 
 void playeng_destroy(struct playeng *eng)
 {
-	struct aalloc a = eng->allocator;
+	struct cop_alloc_virtual a = eng->allocator;
 	cop_mutex_destroy(&eng->signal_lock);
 	cop_mutex_destroy(&eng->list_lock);
-	aalloc_free(&a);
+	cop_alloc_virtual_free(&a);
 }
 
 static

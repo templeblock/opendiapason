@@ -73,12 +73,12 @@ struct odfilter_temporaries {
  * this either manually (see documentation for odfilter structure) or use one
  * of the odfilter_build_*() functions which have been provided for
  * convenience. */
-int odfilter_init_filter(struct odfilter *pf, struct aalloc *allocobj, struct fftset *fftset, unsigned length);
+int odfilter_init_filter(struct odfilter *pf, struct cop_alloc_iface *allocobj, struct fftset *fftset, unsigned length);
 
 /* Allocate the temporary pointers required for performing a convolution using
  * the given allocation object based on the supplied filter. The filter kernel
  * is not required to have been allocated nor configured at this point. */
-int odfilter_init_temporaries(struct odfilter_temporaries *tmps, struct aalloc *allocobj, const struct odfilter *filter);
+int odfilter_init_temporaries(struct odfilter_temporaries *tmps, struct cop_alloc_iface *allocobj, const struct odfilter *filter);
 
 /* Builds a kernel that is a rectangle. This filter will have the effect of
  * summing length elements together. length must be less than or equal to

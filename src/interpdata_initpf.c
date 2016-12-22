@@ -20,18 +20,19 @@
 
 #include "interpdata.h"
 
-int odfilter_interp_prefilter_init(struct odfilter *pf, struct aalloc *allocobj, struct fftset *fftset)
+int odfilter_interp_prefilter_init(struct odfilter *pf, struct cop_salloc_iface *allocobj, struct fftset *fftset)
 {
 	struct odfilter_temporaries tmps;
-	if (odfilter_init_filter(pf, allocobj, fftset, SMPL_INVERSE_FILTER_LEN))
+	size_t save;
+	if (odfilter_init_filter(pf, &(allocobj->iface), fftset, SMPL_INVERSE_FILTER_LEN))
 		return 1;
-	aalloc_push(allocobj);
-	if (odfilter_init_temporaries(&tmps, allocobj, pf)) {
-		aalloc_pop(allocobj);
+	save = cop_salloc_save(allocobj);
+	if (odfilter_init_temporaries(&tmps, &(allocobj->iface), pf)) {
+		cop_salloc_restore(allocobj, save);
 		return 1;
 	}
 	odfilter_build_conv(pf, &tmps, SMPL_INVERSE_FILTER_LEN, SMPL_INVERSE_COEFS, 1.0f);
-	aalloc_pop(allocobj);
+	cop_salloc_restore(allocobj, save);
 	return 0;
 }
 
