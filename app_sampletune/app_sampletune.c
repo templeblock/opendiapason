@@ -640,7 +640,7 @@ int main(int argc, char *argv[])
 
 		at_pipes = load_executors(&ls, &sset, ".", &mem, &fftset, &prefilter, at_first_midi, 1+at_last_midi-at_first_midi, at_rank_harmonic64);
 
-		err = load_samples(&ls, &mem, &fftset, &prefilter);
+		err = load_samples(&ls, &(mem.iface), &fftset, &prefilter);
 		if (err != NULL) {
 			fprintf(stderr, "load error: %s\n", err);
 			abort();

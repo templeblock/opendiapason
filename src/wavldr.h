@@ -33,65 +33,16 @@
 #define SMPL_COMP_LOADFLAG_R    (2)
 
 struct smpl_comp {
-	const char *filename;
+	const char    *filename;
+
+	unsigned char *data;
+	size_t         size;
 
 	/* Either SMPL_COMP_LOADFLAG_AUTO or a set of
 	 * SMPL_COMP_LOADFLAG_* flags or'ed together. */
-	unsigned    load_flags;
+	unsigned       load_flags;
 
-	int         load_format;
-};
-
-struct rel_data {
-	float           *data;
-	size_t           chan_stride;
-	uint_fast32_t    length;
-
-	float            period;   /* in samples. 0.0 = unknown. */
-
-	int              load_format;
-
-	uint_fast32_t    position;
-
-	struct rel_data *next;
-};
-
-struct as_data {
-	/* Attack and sustain data. May be null. */
-	float           *data;
-	size_t           chan_stride;
-	uint_fast32_t    length;
-
-	float            period;   /* in samples. 0.0 = unknown. */
-
-	int              load_format;
-
-	uint_fast32_t    atk_end_loop_start;
-
-	/* Populated by sampler chunk */
-	unsigned         nloop;
-	uint_fast32_t    loops[2*MAX_LOOP];
-
-	struct as_data  *next;
-};
-
-struct memory_wave {
-	float           *buffers; /* channels*chan_stride elements long */
-
-	/* Format details. */
-	unsigned         channels;
-	unsigned         native_bits;
-	uint_fast32_t    rate;
-
-	/* Number of elements to stride over to get to the same time value for the
-	 * next channel. */
-	size_t           chan_stride;
-
-	/* Attack sustain data. Set as.data_ptr to indicate there is no attack/sustain segment. */
-	struct as_data   as;
-
-	/* Release data. Set rel.data_ptr to indicate there is no release. */
-	struct rel_data  rel;
+	int            load_format;
 };
 
 #define WAVLDR_MAX_RELEASES (4)
@@ -103,34 +54,6 @@ struct pipe_v1 {
 	double          frequency;
 	unsigned long   sample_rate;
 };
-
-#if 0
-const char *
-load_smpl_comp
-	(struct pipe_v1              *pipe
-	,const struct smpl_comp      *components
-	,unsigned                     nb_components
-	,struct cop_salloc_iface     *tls1
-	,struct cop_salloc_iface     *tls2
-	,struct cop_salloc_iface     *allocator
-	,struct fftset               *fftset
-	,const struct odfilter       *prefilter
-	,struct odfilter_temporaries *tmps
-	);
-
-const char *
-load_smpl_f
-	(struct pipe_v1              *pipe
-	,const char                  *filename
-	,struct cop_salloc_iface     *tls1
-	,struct cop_salloc_iface     *tls2
-	,struct cop_salloc_iface     *allocator
-	,struct fftset               *fftset
-	,const struct odfilter       *prefilter
-	,struct odfilter_temporaries *tmps
-	,int                          load_type
-	);
-#endif
 
 #define LOAD_SET_GROW_RATE (500)
 
@@ -165,7 +88,7 @@ struct sample_load_info *sample_load_set_push(struct sample_load_set *load_set);
 const char *
 load_samples
 	(struct sample_load_set  *load_set
-	,struct cop_salloc_iface *allocator
+	,struct cop_alloc_iface  *allocator
 	,struct fftset           *fftset
 	,const struct odfilter   *prefilter
 	);
