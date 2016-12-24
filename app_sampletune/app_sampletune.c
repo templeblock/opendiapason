@@ -9,21 +9,19 @@
 #include "opendiapason/src/wav_dumper.h"
 #include "opendiapason/src/wavldr.h"
 #include "opendiapason/src/playeng.h"
+#include "opendiapason/src/strset.h"
 #include <math.h>
 
 #define DUMP_TUNING_SESSION "out.wav"
 
 #define PLAYBACK_SAMPLE_RATE (48000)
 
-struct simple_pipe {
-	struct pipe_v1 data;
-	double         target_freq;
-};
-
 struct pipe_executor {
-	struct simple_pipe       pd;
+	struct pipe_v1           data;
+
 	struct playeng_instance *instance;
 	int                      nb_insts;
+	double                   target_freq;
 };
 
 static struct playeng *engine;
@@ -60,11 +58,11 @@ static COP_ATTR_UNUSED int get_target_note(float target_freq, unsigned rank_harm
 	return 12.0f * log2f(target_freq * 8.0f / (440.0f * rank_harmonic64)) + 69.0f;
 }
 
-static const char *NAMES[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-
 static struct pipe_executor *
 load_executors
-	(const char                 *path
+	(struct sample_load_set     *load_set
+	,struct strset              *sset
+	,const char                 *path
 	,struct cop_salloc_iface    *mem
 	,struct fftset              *fftset
 	,const struct odfilter      *prefilter
@@ -77,39 +75,37 @@ load_executors
 	if (pipes != NULL) {
 		unsigned i;
 		for (i = 0; i < nb_pipes; i++) {
-			const char * err;
-			char namebuf[128];
-			char namebuf2[128];
-			char namebuf3[128];
-			char namebuf4[128];
-			struct smpl_comp bits[4];
+			static const char *NAMES[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 
-			sprintf(namebuf,  "%s/A0/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
-			sprintf(namebuf2, "%s/R0/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
-			sprintf(namebuf3, "%s/R1/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
-			sprintf(namebuf4, "%s/R2/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
-			bits[0].filename = namebuf;
-			bits[1].filename = namebuf2;
-			bits[2].filename = namebuf3;
-			bits[3].filename = namebuf4;
-			bits[0].load_format = 16;
-			bits[1].load_format = 16;
-			bits[2].load_format = 16;
-			bits[3].load_format = 16;
-			bits[0].load_flags = SMPL_COMP_LOADFLAG_AS;
-			bits[1].load_flags = SMPL_COMP_LOADFLAG_R;
-			bits[2].load_flags = SMPL_COMP_LOADFLAG_R;
-			bits[3].load_flags = SMPL_COMP_LOADFLAG_R;
+			struct sample_load_info *sli = sample_load_set_push(load_set);
 
-			err = load_smpl_comp(&(pipes[i].pd.data), bits, 4, mem, fftset, prefilter);
-
-			if (err != NULL) {
-				printf("WAVE ERR: %s-%s\n", namebuf, err);
+			if (sli == NULL) {
+				printf("out of memory\n");
 				abort();
 			}
-			pipes[i].pd.target_freq = get_target_frequency(i + first_midi, rank_harmonic64);
-			pipes[i].instance = NULL;
-			pipes[i].nb_insts = 0;
+		
+			pipes[i].instance     = NULL;
+			pipes[i].nb_insts     = 0;
+			pipes[i].target_freq  = get_target_frequency(i + first_midi, rank_harmonic64);
+			sli->filenames[0]     = strset_sprintf(sset, "%s/A0/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
+			sli->load_flags[0]    = SMPL_COMP_LOADFLAG_AS;
+			sli->filenames[1]     = strset_sprintf(sset, "%s/R0/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
+			sli->load_flags[1]    = SMPL_COMP_LOADFLAG_R;
+			sli->filenames[2]     = strset_sprintf(sset, "%s/R1/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
+			sli->load_flags[2]    = SMPL_COMP_LOADFLAG_R;
+			sli->filenames[3]     = strset_sprintf(sset, "%s/R2/%03d-%s.wav", path, i + first_midi, NAMES[(i+first_midi)%12]);
+			sli->load_flags[3]    = SMPL_COMP_LOADFLAG_R;
+			sli->num_files        = 4;
+			sli->harmonic_number  = rank_harmonic64;
+			sli->load_format      = 16;
+			sli->dest             = &(pipes[i].data);
+			sli->ctx              = pipes + i;
+			sli->on_loaded        = NULL;
+
+			if  (   sli->filenames[0] == NULL || sli->filenames[1] == NULL
+			    ||  sli->filenames[2] == NULL || sli->filenames[3] == NULL) {
+				abort();
+			}
 		}
 	}
 	return pipes;
@@ -125,7 +121,7 @@ engine_callback
 	,unsigned           sampler_time
 	)
 {
-	struct simple_pipe *pd = userdata;
+	struct pipe_executor *pd = userdata;
 
 	/* Initialize sample */
 	if (sigmask & 0x1) {
@@ -200,16 +196,16 @@ pa_callback
 			for (i = at_first_midi; i <= at_last_midi; i++) {
 				int pen = at_current_midi == i;
 				if (at_pipes[i-at_first_midi].instance == NULL && pen) {
-					at_pipes[i-at_first_midi].instance = playeng_insert(engine, 2, 0x01, engine_callback, &(at_pipes[i-at_first_midi].pd));
+					at_pipes[i-at_first_midi].instance = playeng_insert(engine, 2, 0x01, engine_callback, &(at_pipes[i-at_first_midi].data));
 				}
 				if (at_pipes[i-at_first_midi].instance != NULL && !pen) {
 					playeng_signal_instance(engine, at_pipes[i-at_first_midi].instance, 0x02);
 					at_pipes[i-at_first_midi].instance = NULL;
 				}
 			}
-		} else if (at_pipes[current_midi-at_first_midi].instance != NULL && pipe_frequencies[current_midi-at_first_midi] != at_pipes[current_midi-at_first_midi].pd.data.frequency) {
+		} else if (at_pipes[current_midi-at_first_midi].instance != NULL && pipe_frequencies[current_midi-at_first_midi] != at_pipes[current_midi-at_first_midi].data.frequency) {
 			/* Update frequency. */
-			at_pipes[current_midi-at_first_midi].pd.data.frequency = pipe_frequencies[current_midi-at_first_midi];
+			at_pipes[current_midi-at_first_midi].data.frequency = pipe_frequencies[current_midi-at_first_midi];
 			playeng_signal_instance(engine, at_pipes[current_midi-at_first_midi].instance, 0x04);
 		}
 		cop_mutex_unlock(&at_param_lock);
@@ -400,7 +396,7 @@ int main_audio(int argc, char *argv[])
 
 		switch (c) {
 		case 'r':
-			pipe_frequencies[current_midi-at_first_midi] = at_pipes[current_midi-at_first_midi].pd.target_freq;
+			pipe_frequencies[current_midi-at_first_midi] = at_pipes[current_midi-at_first_midi].target_freq;
 			printf("pipe frequency reset: %.3f           \r", pipe_frequencies[current_midi-at_first_midi]);
 			break;
 		case 'a':
@@ -626,21 +622,35 @@ int main(int argc, char *argv[])
 	cop_alloc_virtual_init(&mem_impl, &mem, sysmem, 32, 16*1024*1024);
 
 	{
-		struct fftset    fftset;
-		struct odfilter  prefilter;
+		struct fftset          fftset;
+		struct odfilter        prefilter;
+		struct sample_load_set ls;
+		struct strset          sset;
+		const char            *err;
 
 		/* Build the interpolation pre-filter */
 		fftset_init(&fftset);
+		strset_init(&sset);
+		ret = sample_load_set_init(&ls);
+		if (ret)
+			return ret;
 
 		/*TODO */
 		(void)odfilter_interp_prefilter_init(&prefilter, &mem, &fftset);
 
-		at_pipes = load_executors(".", &mem, &fftset, &prefilter, at_first_midi, 1+at_last_midi-at_first_midi, at_rank_harmonic64);
+		at_pipes = load_executors(&ls, &sset, ".", &mem, &fftset, &prefilter, at_first_midi, 1+at_last_midi-at_first_midi, at_rank_harmonic64);
+
+		err = load_samples(&ls, &mem, &fftset, &prefilter);
+		if (err != NULL) {
+			fprintf(stderr, "load error: %s\n", err);
+			abort();
+		}
+
 		pipe_frequencies = malloc(sizeof(pipe_frequencies[0]) * (1+at_last_midi-at_first_midi));
 		old_pipe_frequencies = malloc(sizeof(pipe_frequencies[0]) * (1+at_last_midi-at_first_midi));
 		for (i = 0; i < 1+at_last_midi-at_first_midi; i++) {
-			pipe_frequencies[i] = at_pipes[i].pd.data.frequency;
-			old_pipe_frequencies[i] = at_pipes[i].pd.data.frequency;
+			pipe_frequencies[i] = at_pipes[i].data.frequency;
+			old_pipe_frequencies[i] = at_pipes[i].data.frequency;
 		}
 	}
 

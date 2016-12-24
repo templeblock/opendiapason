@@ -29,7 +29,7 @@
 #include "smplwav/smplwav_mount.h"
 #include "smplwav/smplwav_convert.h"
 
-static const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, size_t fsz, unsigned load_format)
+static const char *load_smpl_mem(struct memory_wave *mw, struct cop_alloc_iface *mem, unsigned char *buf, size_t fsz, unsigned load_format)
 {
 	unsigned        i, ch;
 	float          *buffers;
@@ -92,7 +92,7 @@ static const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, siz
 	mw->as.chan_stride = mw->chan_stride;
 	mw->rel.chan_stride = mw->chan_stride;
 
-	buffers         = malloc(sizeof(float *) * mw->channels * mw->chan_stride);
+	buffers         = cop_alloc(mem, sizeof(float *) * mw->channels * mw->chan_stride, 32);
 	mw->buffers     = buffers;
 
 	if (mw->as.length) {
@@ -139,7 +139,7 @@ static const char *load_smpl_mem(struct memory_wave *mw, unsigned char *buf, siz
 	return NULL;
 }
 
-static void *load_file_to_memory(const char *fname, size_t *pfsz)
+static void *load_file_to_memory(const char *fname, struct cop_alloc_iface *mem, size_t *pfsz)
 {
 	FILE *f = fopen(fname, "rb");
 	if (f != NULL) {
@@ -147,15 +147,13 @@ static void *load_file_to_memory(const char *fname, size_t *pfsz)
 			long fsz = ftell(f);
 			if (fsz > 0) {
 				if (fseek(f, 0, SEEK_SET) == 0) {
-					unsigned char *fbuf = malloc(fsz);
+					unsigned char *fbuf = cop_alloc(mem, fsz, 0);
 					if (fbuf != NULL) {
 						if (fread(fbuf, 1, fsz, f) == fsz) {
 							fclose(f);
 							*pfsz = (size_t)fsz;
 							return fbuf;
 						}
-						free(fbuf);
-						fbuf = NULL;
 					}
 				}
 			}
@@ -163,18 +161,6 @@ static void *load_file_to_memory(const char *fname, size_t *pfsz)
 		fclose(f);
 	}
 	return NULL;
-}
-
-const char *mw_load_from_file(struct memory_wave *mw, const char *fname, unsigned load_format)
-{
-	const char *err = NULL;
-	size_t fsz;
-	void *data = load_file_to_memory(fname, &fsz);
-	if (data == NULL)
-		return "failed to load file";
-	err = load_smpl_mem(mw, data, fsz, load_format);
-	free(data);
-	return err;
 }
 
 static float quantize_boost_interleave
@@ -304,36 +290,42 @@ static float quantize_boost_interleave
 static
 void
 apply_prefilter
-	(struct as_data             *as
-	,struct rel_data            *rel
-	,unsigned                    channels
-	,uint_fast32_t               rate
-	,struct cop_salloc_iface    *allocator
-	,const struct odfilter      *prefilter
-	,const char                 *debug_prefix
+	(struct as_data              *as
+	,struct rel_data             *rel
+	,unsigned                     channels
+	,uint_fast32_t                rate
+	,struct cop_alloc_iface      *out_alloc
+	,struct cop_salloc_iface     *allocator
+	,const struct odfilter       *prefilter
+	,struct odfilter_temporaries *tmps
+	,const char                  *debug_prefix
 	)
 {
 	unsigned ch;
 	unsigned idx;
-	struct odfilter_temporaries tmps;
-	const size_t save = cop_salloc_save(allocator);
-
-	odfilter_init_temporaries(&tmps, &(allocator->iface), prefilter);
 
 	/* Convolve the attack/sustain segments. */
 	idx = 0;
 	while (as != NULL) {
+		size_t new_stride = VLF_PAD_LENGTH(as->length);
+		float *optr = cop_alloc(out_alloc, channels * new_stride * sizeof(float), 32);
+
 		for (ch = 0; ch < channels; ch++) {
-			odfilter_run_inplace
+			odfilter_run
 				(/* input */           as->data + ch*as->chan_stride
+				,/* output */          optr + ch*new_stride
+				,/* add_to_output */   0
 				,/* sustain start */   as->atk_end_loop_start
 				,/* total length */    as->length
 				,/* pre-read */        (SMPL_INVERSE_FILTER_LEN-1)/2
 				,/* is looped */       1
-				,&tmps
-				,prefilter
+				,/* tmps */            tmps
+				,/* filter */          prefilter
 				);
 		}
+
+		as->chan_stride = new_stride;
+		as->data        = optr;
 
 #if OPENDIAPASON_VERBOSE_DEBUG
 		if (debug_prefix != NULL) {
@@ -356,17 +348,25 @@ apply_prefilter
 	 * of the release. */
 	idx = 0;
 	while (rel != NULL) {
+		size_t new_stride = VLF_PAD_LENGTH(rel->length);
+		float *optr = cop_alloc(out_alloc, channels * new_stride * sizeof(float), 32);
+
 		for (ch = 0; ch < channels; ch++) {
-			odfilter_run_inplace
+			odfilter_run
 				(/* input */           rel->data + ch*rel->chan_stride
+				,/* output */          optr + ch*new_stride
+				,/* add_to_output */   0
 				,/* sustain start */   0
 				,/* total length */    rel->length
 				,/* pre-read */        (SMPL_INVERSE_FILTER_LEN-1)/2 + SMPL_INVERSE_FILTER_LEN/8
 				,/* is looped */       0
-				,&tmps
-				,prefilter
-			);
+				,/* tmps */            tmps
+				,/* filter */          prefilter
+				);
 		}
+
+		rel->chan_stride = new_stride;
+		rel->data        = optr;
 
 #if OPENDIAPASON_VERBOSE_DEBUG
 		if (debug_prefix != NULL) {
@@ -383,20 +383,22 @@ apply_prefilter
 		rel = rel->next;
 		idx++;
 	}
-	cop_salloc_restore(allocator, save);
 }
 
+static
 const char *
 load_smpl_lists
-	(struct pipe_v1             *pipe
-	,struct as_data             *as_bits
-	,struct rel_data            *rel_bits
-	,unsigned                    channels
-	,uint_fast32_t               norm_rate
-	,struct cop_salloc_iface    *allocator
-	,struct fftset              *fftset
-	,const struct odfilter      *prefilter
-	,const char                 *file_ref
+	(struct pipe_v1              *pipe
+	,struct as_data              *as_bits
+	,struct rel_data             *rel_bits
+	,unsigned                     channels
+	,uint_fast32_t                norm_rate
+	,struct cop_alloc_iface      *out_alloc
+	,struct cop_salloc_iface     *allocator
+	,struct fftset               *fftset
+	,const struct odfilter       *prefilter
+	,struct odfilter_temporaries *tmps
+	,const char                  *file_ref
 	)
 {
 	/* What this function needs to do (but doesn't at the moment):
@@ -446,8 +448,10 @@ load_smpl_lists
 		,rel_bits
 		,channels
 		,norm_rate
+		,out_alloc
 		,allocator
 		,prefilter
+		,tmps
 		,file_ref
 		);
 
@@ -678,12 +682,15 @@ load_smpl_lists
 
 const char *
 load_smpl_comp
-	(struct pipe_v1             *pipe
-	,const struct smpl_comp     *components
-	,unsigned                    nb_components
-	,struct cop_salloc_iface    *allocator
-	,struct fftset              *fftset
-	,const struct odfilter      *prefilter
+	(struct pipe_v1              *pipe
+	,const struct smpl_comp      *components
+	,unsigned                     nb_components
+	,struct cop_salloc_iface     *tls1
+	,struct cop_salloc_iface     *tls2
+	,struct cop_salloc_iface     *allocator
+	,struct fftset               *fftset
+	,const struct odfilter       *prefilter
+	,struct odfilter_temporaries *tmps
 	)
 {
 	struct memory_wave *mw;
@@ -698,14 +705,20 @@ load_smpl_comp
 
 	/* Load contributing samples. */
 	for (i = 0; i < nb_components; i++) {
-		err = mw_load_from_file(mw + i, components[i].filename, components[i].load_format);
+		size_t fsz;
+		void *data;
+		size_t save;
+
+		save = cop_salloc_save(tls1);
+		data = load_file_to_memory(components[i].filename, &(tls1->iface), &fsz);
+		if (data == NULL)
+			return "failed to load file";
+
+		err = load_smpl_mem(mw + i, &(tls2->iface), data, fsz, components[i].load_format);
 		if (err != NULL)
-			break;
-	}
-	if (err != NULL) {
-		while (i--)
-			free(mw[i].buffers);
-		return err;
+			return err;
+
+		cop_salloc_restore(tls1, save);
 	}
 
 	/* Combine the segments. */
@@ -750,15 +763,14 @@ load_smpl_comp
 				,&(mw[0].rel)
 				,mw[0].channels
 				,mw[0].rate
+				,&(tls1->iface)
 				,allocator
 				,fftset
 				,prefilter
+				,tmps
 				,components[0].filename
 				);
 	}
-
-	for (i = 0; i < nb_components; i++)
-		free(mw[i].buffers);
 
 	return err;
 }
@@ -767,12 +779,15 @@ load_smpl_comp
  * things start using the other loader. */
 const char *
 load_smpl_f
-	(struct pipe_v1             *pipe
-	,const char                 *filename
-	,struct cop_salloc_iface    *allocator
-	,struct fftset              *fftset
-	,const struct odfilter      *prefilter
-	,int                         load_type
+	(struct pipe_v1              *pipe
+	,const char                  *filename
+	,struct cop_salloc_iface     *tls1
+	,struct cop_salloc_iface     *tls2
+	,struct cop_salloc_iface     *allocator
+	,struct fftset               *fftset
+	,const struct odfilter       *prefilter
+	,struct odfilter_temporaries *tmps
+	,int                          load_type
 	)
 {
 	struct smpl_comp cmp;
@@ -784,9 +799,12 @@ load_smpl_f
 			(pipe
 			,&cmp
 			,1
+			,tls1
+			,tls2
 			,allocator
 			,fftset
 			,prefilter
+			,tmps
 			);
 }
 
@@ -850,11 +868,29 @@ load_samples
 	,const struct odfilter   *prefilter
 	)
 {
-	struct sample_load_info *li;
+	struct sample_load_info    *li;
+	struct cop_salloc_iface     if1;
+	struct cop_salloc_iface     if2;
+	struct cop_alloc_grp_temps  if1_impl;
+	struct cop_alloc_grp_temps  if2_impl;
+	const char                 *err = NULL;
+	struct odfilter_temporaries tmps;
+
+	/* wave file data.
+	 * pre-filtered file data. */
+	cop_alloc_grp_temps_init(&if1_impl, &if1, 16 * 1024 * 1024, 0, 16);
+
+	/* converted wave file data.
+	 * temporaries.  */
+	cop_alloc_grp_temps_init(&if2_impl, &if2, 16 * 1024 * 1024, 0, 16);
+
+	/* Build temporaries for prefilter. */
+	odfilter_init_temporaries(&tmps, &(if2.iface), prefilter);
+
 	while ((li = sample_load_set_pop(load_set)) != NULL) {
-		const char *err;
 		struct smpl_comp comps[1+WAVLDR_MAX_RELEASES];
-		unsigned i;
+		unsigned         i;
+		size_t           if1_reset, if2_reset;
 
 		assert(li->num_files <= 1+WAVLDR_MAX_RELEASES);
 
@@ -864,12 +900,21 @@ load_samples
 			comps[i].load_format = li->load_format;
 		}
 
-		err = load_smpl_comp(li->dest, comps, li->num_files, allocator, fftset, prefilter);
+		if1_reset = cop_salloc_save(&if1);
+		if2_reset = cop_salloc_save(&if2);
+		err = load_smpl_comp(li->dest, comps, li->num_files, &if1, &if2, allocator, fftset, prefilter, &tmps);
+		cop_salloc_restore(&if1, if1_reset);
+		cop_salloc_restore(&if2, if2_reset);
+
 		if (err != NULL)
-			return err;
+			break;
 
 		if (li->on_loaded != NULL)
 			li->on_loaded(li);
 	}
-	return NULL;
+
+	cop_alloc_grp_temps_free(&if1_impl);
+	cop_alloc_grp_temps_free(&if2_impl);
+
+	return err;
 }

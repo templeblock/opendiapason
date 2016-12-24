@@ -104,25 +104,33 @@ struct pipe_v1 {
 	unsigned long   sample_rate;
 };
 
+#if 0
 const char *
 load_smpl_comp
-	(struct pipe_v1             *pipe
-	,const struct smpl_comp     *components
-	,unsigned                    nb_components
-	,struct cop_salloc_iface    *allocator
-	,struct fftset              *fftset
-	,const struct odfilter      *prefilter
+	(struct pipe_v1              *pipe
+	,const struct smpl_comp      *components
+	,unsigned                     nb_components
+	,struct cop_salloc_iface     *tls1
+	,struct cop_salloc_iface     *tls2
+	,struct cop_salloc_iface     *allocator
+	,struct fftset               *fftset
+	,const struct odfilter       *prefilter
+	,struct odfilter_temporaries *tmps
 	);
 
 const char *
 load_smpl_f
-	(struct pipe_v1             *pipe
-	,const char                 *filename
-	,struct cop_salloc_iface    *allocator
-	,struct fftset              *fftset
-	,const struct odfilter      *prefilter
-	,int                         load_type
+	(struct pipe_v1              *pipe
+	,const char                  *filename
+	,struct cop_salloc_iface     *tls1
+	,struct cop_salloc_iface     *tls2
+	,struct cop_salloc_iface     *allocator
+	,struct fftset               *fftset
+	,const struct odfilter       *prefilter
+	,struct odfilter_temporaries *tmps
+	,int                          load_type
 	);
+#endif
 
 #define LOAD_SET_GROW_RATE (500)
 
