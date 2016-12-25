@@ -435,6 +435,7 @@ load_smpl_lists
 	,struct cop_alloc_iface      *out_alloc
 	,struct cop_alloc_iface      *allocator
 	,struct fftset               *fftset
+	,cop_mutex                   *fft_lock
 	,const struct odfilter       *prefilter
 	,struct odfilter_temporaries *tmps
 	,const char                  *file_ref
@@ -623,7 +624,9 @@ load_smpl_lists
 
 		env_width    = (unsigned)(as_bits->period * 2.0f + 0.5f);
 
+		cop_mutex_lock(fft_lock);
 		odfilter_init_filter(&filt, out_alloc, fftset, env_width);
+		cop_mutex_unlock(fft_lock);
 		odfilter_init_temporaries(&filt_tmps, out_alloc, &filt);
 
 		envelope_buf = cop_alloc(out_alloc, sizeof(float) * (buf_stride * (1 + nb_releases)), 64);
@@ -724,6 +727,7 @@ load_smpl_comp
 	,struct cop_salloc_iface     *tls2 /* memory wave */
 	,struct cop_alloc_iface      *allocator
 	,struct fftset               *fftset
+	,cop_mutex                   *fft_lock
 	,const struct odfilter       *prefilter
 	,struct odfilter_temporaries *tmps
 	,const char                  *debug_id
@@ -779,6 +783,7 @@ load_smpl_comp
 				,&(tls1->iface)
 				,allocator
 				,fftset
+				,fft_lock
 				,prefilter
 				,tmps
 				,debug_id
@@ -854,25 +859,184 @@ static void *load_file_to_memory(const char *fname, struct cop_alloc_iface *mem,
 	return NULL;
 }
 
-static struct sample_load_info *sample_load_set_pop(struct sample_load_set *load_set, struct cop_alloc_iface *mem, struct smpl_comp *comps)
+struct loader_state {
+	cop_mutex               read_lock;
+	cop_mutex               state_lock;
+
+	struct sample_load_set *lset;
+
+	/* Things which must only be used by threads which hold locks. */
+	struct cop_alloc_iface *protected_allocator;
+	struct cop_alloc_iface  allocator;
+	struct fftset          *fftset;
+
+	/* Things which are read-only by threads. */
+	const struct odfilter  *prefilter;
+
+	const char             *error;
+};
+
+struct loader_thread_state {
+	struct loader_state        *lstate;
+
+	struct cop_salloc_iface     if1;
+	struct cop_salloc_iface     if2;
+	struct cop_alloc_grp_temps  if1_impl;
+	struct cop_alloc_grp_temps  if2_impl;
+	struct odfilter_temporaries tmps;
+};
+
+
+static struct sample_load_info *
+sample_load_set_pop
+	(struct sample_load_set *load_set
+	)
 {
 	struct sample_load_info *ret = NULL;
 	cop_mutex_lock(&load_set->pop_lock);
-	if (load_set->nb_elems) {
-		unsigned i;
-
+	if (load_set->nb_elems)
 		ret = load_set->elems + --load_set->nb_elems;
+	cop_mutex_unlock(&load_set->pop_lock);
+	return ret;
+}
+
+static struct sample_load_info *
+loader_pop
+	(struct loader_state    *load_state
+	,struct cop_alloc_iface *mem
+	,struct smpl_comp       *comps
+	)
+{
+	static struct sample_load_info *ret;
+
+	cop_mutex_lock(&(load_state->state_lock));
+	if (load_state->error != NULL) {
+		ret = NULL;
+	} else {
+		ret = sample_load_set_pop(load_state->lset);
+	}
+	cop_mutex_unlock(&(load_state->state_lock));
+
+	if (ret != NULL) {
+		unsigned i;
 
 		assert(ret->num_files <= 1+WAVLDR_MAX_RELEASES);
 
+		cop_mutex_lock(&(load_state->read_lock));
 		for (i = 0; i < ret->num_files; i++) {
 			comps[i].filename    = ret->filenames[i];
 			comps[i].load_flags  = ret->load_flags[i];
 			comps[i].load_format = ret->load_format;
 			comps[i].data        = load_file_to_memory(ret->filenames[i], mem, &(comps[i].size));
+			if (comps[i].data == NULL)
+				break;
+		}
+		cop_mutex_unlock(&(load_state->read_lock));
+
+		if (i != ret->num_files) {
+			cop_mutex_lock(&(load_state->state_lock));
+			load_state->error = "failed to read a file to memory";
+			cop_mutex_unlock(&(load_state->state_lock));
 		}
 	}
-	cop_mutex_unlock(&load_set->pop_lock);
+
+	return ret;
+}
+
+static void *loader_thread_proc(void *argument)
+{
+	struct loader_thread_state *ts = argument;
+	struct sample_load_info    *li;
+	struct smpl_comp            comps[1+WAVLDR_MAX_RELEASES];
+	size_t                      if1_reset, if2_reset;
+	const char                 *err = NULL;
+
+	if1_reset = cop_salloc_save(&(ts->if1));
+	if2_reset = cop_salloc_save(&(ts->if2));
+
+	while ((li = loader_pop(ts->lstate, &(ts->if1.iface), comps)) != NULL) {
+		unsigned i;
+		struct memory_wave *mw = cop_salloc(&(ts->if2), sizeof(*mw) * li->num_files, 0);
+		if (mw == NULL)
+			return "out of memory";
+
+		/* Load contributing samples. */
+		for (i = 0; i < li->num_files; i++) {
+			err = load_smpl_mem(mw + i, &(ts->if2.iface), comps[i].data, comps[i].size, comps[i].load_format);
+			if (err != NULL)
+				break;
+		}
+
+		if (err == NULL) {
+			/* The memory wave data has been loaded into if2. if1 contained the
+			 * raw file data and can be reset now. */
+			cop_salloc_restore(&(ts->if1), if1_reset);
+
+			/* At this point: if1 is empty, if2 contains the memory wave. */
+			err = load_smpl_comp(li->dest, mw, li->num_files, &(ts->if1), &(ts->if2), &(ts->lstate->allocator), ts->lstate->fftset, &(ts->lstate->state_lock), ts->lstate->prefilter, &(ts->tmps), li->filenames[0]);
+
+			cop_salloc_restore(&(ts->if1), if1_reset);
+			cop_salloc_restore(&(ts->if2), if2_reset);
+		}
+
+		cop_mutex_lock(&(ts->lstate->state_lock));
+		if (ts->lstate->error != NULL) {
+			/* If the loader error flag is already set, set our local error
+			 * variable to whatever it is. It doesn't matter what the error
+			 * is, all that matters is that it is not NULL for the checks
+			 * below. */
+			err = ts->lstate->error;
+		} else if (err != NULL) {
+			/* The loader error flag is not set, but something in this thread
+			 * buggered up. Store the loader error flag this will cause the
+			 * other threads to stop what they are doing. */
+			ts->lstate->error = err;
+		}
+		cop_mutex_unlock(&(ts->lstate->state_lock));
+
+		/* If there was a local error or loader error, bomb out now. */
+		if (err != NULL)
+			break;
+
+		/* There was no errors. If there is an on-loaded callback, call it
+		 * now. */
+		if (err == NULL && li->on_loaded != NULL)
+			li->on_loaded(li);
+	}
+
+	return NULL;
+}
+
+static int init_thread_state(struct loader_thread_state *ts, struct loader_state *ls)
+{
+	ts->lstate = ls;
+	if (cop_alloc_grp_temps_init(&(ts->if1_impl), &(ts->if1), 16 * 1024 * 1024, 0, 16))
+		return -1;
+	if (cop_alloc_grp_temps_init(&(ts->if2_impl), &(ts->if2), 16 * 1024 * 1024, 0, 16)) {
+		cop_alloc_grp_temps_free(&(ts->if1_impl));
+		return -1;
+	}
+	if (odfilter_init_temporaries(&(ts->tmps), &(ts->if2.iface), ls->prefilter)) {
+		cop_alloc_grp_temps_free(&(ts->if1_impl));
+		cop_alloc_grp_temps_free(&(ts->if2_impl));
+		return -1;
+	}
+	return 0;
+}
+
+static void destroy_thread_state(struct loader_thread_state *ts)
+{
+	cop_alloc_grp_temps_free(&(ts->if1_impl));
+	cop_alloc_grp_temps_free(&(ts->if2_impl));
+}
+
+static void *protected_alloc(struct cop_alloc_iface *a, size_t size, size_t align)
+{
+	struct loader_state *ls = a->ctx;
+	void *ret;
+	cop_mutex_lock(&(ls->state_lock));
+	ret = cop_alloc(ls->protected_allocator, size, align);
+	cop_mutex_unlock(&(ls->state_lock));
 	return ret;
 }
 
@@ -884,62 +1048,49 @@ load_samples
 	,const struct odfilter   *prefilter
 	)
 {
-	struct sample_load_info    *li;
-	struct cop_salloc_iface     if1;
-	struct cop_salloc_iface     if2;
-	struct cop_alloc_grp_temps  if1_impl;
-	struct cop_alloc_grp_temps  if2_impl;
-	const char                 *err = NULL;
-	struct odfilter_temporaries tmps;
-	struct smpl_comp            comps[1+WAVLDR_MAX_RELEASES];
-	size_t                      if1_reset, if2_reset;
 
-	/* wave file data.
-	 * pre-filtered file data. */
-	cop_alloc_grp_temps_init(&if1_impl, &if1, 16 * 1024 * 1024, 0, 16);
+	struct loader_state         loader;
+	struct loader_thread_state  loader_threads[4];
+	cop_thread                  thread_handles[4];
 
-	/* converted wave file data.
-	 * temporaries.  */
-	cop_alloc_grp_temps_init(&if2_impl, &if2, 16 * 1024 * 1024, 0, 16);
+	loader.lset                = load_set;
+	loader.protected_allocator = allocator;
+	loader.allocator.ctx       = &loader;
+	loader.allocator.alloc     = protected_alloc;
+	loader.fftset              = fftset;
+	loader.prefilter           = prefilter;
+	loader.error               = NULL;
+	if (cop_mutex_create(&(loader.state_lock)))
+		return "could not create lock";
+	if (cop_mutex_create(&(loader.read_lock)))
+		return "could not create lock";
 
-	/* Build temporaries for prefilter. */
-	odfilter_init_temporaries(&tmps, &(if2.iface), prefilter);
+	if (init_thread_state(&(loader_threads[0]), &loader))
+		return "out of memory";
+	if (init_thread_state(&(loader_threads[1]), &loader))
+		return "out of memory";
+	if (init_thread_state(&(loader_threads[2]), &loader))
+		return "out of memory";
+	if (init_thread_state(&(loader_threads[3]), &loader))
+		return "out of memory";
 
-	if1_reset = cop_salloc_save(&if1);
-	if2_reset = cop_salloc_save(&if2);
+	cop_thread_create(&(thread_handles[0]), loader_thread_proc, &(loader_threads[0]), 0, 0);
+	cop_thread_create(&(thread_handles[1]), loader_thread_proc, &(loader_threads[1]), 0, 0);
+	cop_thread_create(&(thread_handles[2]), loader_thread_proc, &(loader_threads[2]), 0, 0);
+	cop_thread_create(&(thread_handles[3]), loader_thread_proc, &(loader_threads[3]), 0, 0);
 
-	while ((li = sample_load_set_pop(load_set, &(if1.iface), comps)) != NULL) {
-		unsigned i;
-		struct memory_wave *mw = cop_salloc(&if2, sizeof(*mw) * li->num_files, 0);
-		if (mw == NULL)
-			return "out of memory";
+	cop_thread_join(thread_handles[0], NULL);
+	cop_thread_join(thread_handles[1], NULL);
+	cop_thread_join(thread_handles[2], NULL);
+	cop_thread_join(thread_handles[3], NULL);
 
-		/* Load contributing samples. */
-		for (i = 0; i < li->num_files; i++) {
-			err = load_smpl_mem(mw + i, &(if2.iface), comps[i].data, comps[i].size, comps[i].load_format);
-			if (err != NULL)
-				return err;
-		}
+	destroy_thread_state(&(loader_threads[0]));
+	destroy_thread_state(&(loader_threads[1]));
+	destroy_thread_state(&(loader_threads[2]));
+	destroy_thread_state(&(loader_threads[3]));
 
-		/* The memory wave data has been loaded into if2. if1 contained the
-		 * raw file data and can be reset now. */
-		cop_salloc_restore(&if1, if1_reset);
+	cop_mutex_destroy(&(loader.read_lock));
+	cop_mutex_destroy(&(loader.state_lock));
 
-		/* At this point: if1 is empty, if2 contains the memory wave. */
-		err = load_smpl_comp(li->dest, mw, li->num_files, &if1, &if2, allocator, fftset, prefilter, &tmps, li->filenames[0]);
-
-		cop_salloc_restore(&if1, if1_reset);
-		cop_salloc_restore(&if2, if2_reset);
-
-		if (err != NULL)
-			break;
-
-		if (li->on_loaded != NULL)
-			li->on_loaded(li);
-	}
-
-	cop_alloc_grp_temps_free(&if1_impl);
-	cop_alloc_grp_temps_free(&if2_impl);
-
-	return err;
+	return loader.error;
 }

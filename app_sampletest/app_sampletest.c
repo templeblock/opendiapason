@@ -782,7 +782,7 @@ int main(int argc, char *argv[])
 		err =
 			load_samples
 				(&ls
-				,&mem
+				,&(mem.iface)
 				,&fftset
 				,&prefilter
 				);
