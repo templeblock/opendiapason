@@ -907,7 +907,7 @@ loader_pop
 	,struct smpl_comp       *comps
 	)
 {
-	static struct sample_load_info *ret;
+	struct sample_load_info *ret;
 
 	cop_mutex_lock(&(load_state->state_lock));
 	if (load_state->error != NULL) {
