@@ -203,6 +203,33 @@ static const char *load_smpl_mem(struct memory_wave *mw, struct cop_alloc_iface 
 	return NULL;
 }
 
+
+float find_max(float *buf1, float *buf2, unsigned length)
+{
+	unsigned j;
+	vlf minv = vlf_broadcast(0.0f);
+	vlf maxv = vlf_broadcast(0.0f);
+	vlf minr = vlf_broadcast(0.0f);
+	vlf maxr = vlf_broadcast(0.0f);
+
+	for (j = 0; j < length; j += VLF_WIDTH) {
+		vlf s1 = vlf_ld(buf1 + j);
+		vlf s2 = vlf_ld(buf2 + j);
+		maxv   = vlf_max(maxv, s1);
+		minv   = vlf_min(minv, s1);
+		maxr   = vlf_max(maxr, s2);
+		minr   = vlf_min(minr, s2);
+	}
+
+	maxv = vlf_max(maxv, maxr);
+	minv = vlf_min(minv, minr);
+	minv = vlf_neg(minv);
+	maxv = vlf_max(maxv, minv);
+
+	return VLF_HMAX(maxv);
+}
+
+
 static float quantize_boost_interleave
 	(void           *obuf
 	,float          *in_bufs
@@ -214,29 +241,14 @@ static float quantize_boost_interleave
 	,unsigned        fmtbits
 	)
 {
-	float maxv = 0.0f;
 	uint_fast32_t rseed = *dither_seed;
+	float maxv = 0.0f;
 	float boost;
 
 	if (channels == 2) {
 		unsigned j;
-		float minv = 0.0f;
-		float maxr = 0.0f;
-		float minr = 0.0f;
 
-		for (j = 0; j < in_length; j++) {
-			float s1 = in_bufs[j];
-			float s2 = in_bufs[chan_stride+j];
-			maxv = (s1 > maxv) ? s1 : maxv;
-			minv = (s1 < minv) ? s1 : minv;
-			maxr = (s2 > maxr) ? s2 : maxr;
-			minr = (s2 < minr) ? s2 : minr;
-		}
-
-		maxv  = (maxv > maxr) ? maxv : maxr;
-		minv  = (minv < minr) ? minv : minr;
-		maxv += 1.0f;
-		maxv  = (maxv > -minv) ? maxv : -minv;
+		maxv = find_max(in_bufs, in_bufs + chan_stride, in_length);
 
 		if (fmtbits == 12 && channels == 2) {
 			unsigned char *out_buf = obuf;
@@ -262,8 +274,10 @@ static float quantize_boost_interleave
 			}
 		} else if (fmtbits == 16 && channels == 2) {
 			int_least16_t *out_buf = obuf;
-			maxv  *= 1.0f / 32764.0f;
-			boost  = ((float)((((uint_fast64_t)1u) << 33))) / maxv;
+
+			/* Give room for the dither. */
+			maxv  = (maxv + (4.0f / 32768.0f)) / 32768.0f;
+			boost = ((float)((((uint_fast64_t)1u) << 33))) / maxv;
 
 			/* 4091ms */
 			for (j = 0; j < in_length; j++) {
@@ -350,6 +364,7 @@ apply_prefilter
 		float *optr = cop_alloc(out_alloc, channels * new_stride * sizeof(float), 32);
 
 		for (ch = 0; ch < channels; ch++) {
+			size_t i;
 			odfilter_run
 				(/* input */           as->data + ch*as->chan_stride
 				,/* output */          optr + ch*new_stride
@@ -361,6 +376,8 @@ apply_prefilter
 				,/* tmps */            tmps
 				,/* filter */          prefilter
 				);
+			for (i = as->length; i < new_stride; i++)
+				optr[ch*new_stride+i] = 0.0f;
 		}
 
 		as->chan_stride = new_stride;
@@ -391,6 +408,7 @@ apply_prefilter
 		float *optr = cop_alloc(out_alloc, channels * new_stride * sizeof(float), 32);
 
 		for (ch = 0; ch < channels; ch++) {
+			size_t i;
 			odfilter_run
 				(/* input */           rel->data + ch*rel->chan_stride
 				,/* output */          optr + ch*new_stride
@@ -402,6 +420,8 @@ apply_prefilter
 				,/* tmps */            tmps
 				,/* filter */          prefilter
 				);
+			for (i = rel->length; i < new_stride; i++)
+				optr[ch*new_stride+i] = 0.0f;
 		}
 
 		rel->chan_stride = new_stride;
@@ -958,14 +978,11 @@ static void *loader_thread_proc(void *argument)
 		unsigned i;
 		struct memory_wave *mw = cop_salloc(&(ts->if2), sizeof(*mw) * li->num_files, 0);
 		if (mw == NULL)
-			return "out of memory";
+			err = "out of memory";
 
 		/* Load contributing samples. */
-		for (i = 0; i < li->num_files; i++) {
+		for (i = 0; i < li->num_files && err == NULL; i++)
 			err = load_smpl_mem(mw + i, &(ts->if2.iface), comps[i].data, comps[i].size, comps[i].load_format);
-			if (err != NULL)
-				break;
-		}
 
 		if (err == NULL) {
 			/* The memory wave data has been loaded into if2. if1 contained the
