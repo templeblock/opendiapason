@@ -28,24 +28,8 @@
 #include "fftset/fftset.h"
 #include "opendiapason/odfilter.h"
 
-#define SMPL_COMP_LOADFLAG_AUTO (0)
-#define SMPL_COMP_LOADFLAG_AS   (1)
-#define SMPL_COMP_LOADFLAG_R    (2)
-
-struct smpl_comp {
-	const char    *filename;
-
-	unsigned char *data;
-	size_t         size;
-
-	/* Either SMPL_COMP_LOADFLAG_AUTO or a set of
-	 * SMPL_COMP_LOADFLAG_* flags or'ed together. */
-	unsigned       load_flags;
-
-	int            load_format;
-};
-
 #define WAVLDR_MAX_RELEASES (4)
+#define WAVLDR_MAX_LOAD_THREADS (4)
 
 struct pipe_v1 {
 	struct dec_smpl attack;
@@ -55,7 +39,21 @@ struct pipe_v1 {
 	unsigned long   sample_rate;
 };
 
-#define LOAD_SET_GROW_RATE (500)
+struct wavldr;
+
+/* The process is
+ *   1) initialise
+ *   2) add samples using push()
+ *   3) start the load using begin
+ *   4) optionally call query_progress()
+ *   5) call wavldr_finish which blocks until completion.
+ */
+
+int wavldr_initialise(struct wavldr *load_set);
+
+#define SMPL_COMP_LOADFLAG_AUTO (0)
+#define SMPL_COMP_LOADFLAG_AS   (1)
+#define SMPL_COMP_LOADFLAG_R    (2)
 
 struct sample_load_info {
 	const char              *filenames[1+WAVLDR_MAX_RELEASES];
@@ -71,7 +69,27 @@ struct sample_load_info {
 	void                   (*on_loaded)(const struct sample_load_info *ld_info);
 };
 
-struct wavldr;
+struct sample_load_info *wavldr_add_sample(struct wavldr *load_set);
+
+/* Begins loader threads. nb_threads must be less than WAVLDR_MAX_LOAD_THREADS. */
+const char *
+wavldr_begin_load
+	(struct wavldr  *load_set
+	,struct cop_alloc_iface  *allocator
+	,struct fftset           *fftset
+	,const struct odfilter   *prefilter
+	,unsigned                 nb_threads
+	);
+
+/* Returns number of samples left to load */
+int wavldr_query_progress(struct wavldr *ls, unsigned *nb_samples);
+
+/* Wait for the load process to finish. */
+const char *wavldr_finish(struct wavldr *ls);
+
+/* Private Parts
+ * ---------------------------------------------------------------------------
+ * Don't touch them. Only defined so you can bung them on the stack. */
 
 struct loader_thread_state {
 	struct wavldr     *lstate;
@@ -83,8 +101,6 @@ struct loader_thread_state {
 	struct odfilter_temporaries tmps;
 	cop_thread                  thread_handle;
 };
-
-#define WAVLDR_MAX_LOAD_THREADS (4)
 
 struct wavldr {
 	/* Things which are read-only by threads. */
@@ -113,35 +129,5 @@ struct wavldr {
 	struct cop_alloc_iface   allocator;
 	struct fftset           *fftset;
 };
-
-
-/* The process is
- *   1) initialise
- *   2) add samples using push()
- *   3) start the load using begin
- *   4) optionally call query_progress()
- *   5) call wavldr_finish which blocks until completion.
- */
-
-int wavldr_initialise(struct wavldr *load_set);
-
-struct sample_load_info *wavldr_add_sample(struct wavldr *load_set);
-
-/* Begins loader threads. nb_threads must be less than WAVLDR_MAX_LOAD_THREADS. */
-const char *
-wavldr_begin_load
-	(struct wavldr  *load_set
-	,struct cop_alloc_iface  *allocator
-	,struct fftset           *fftset
-	,const struct odfilter   *prefilter
-	,unsigned                 nb_threads
-	);
-
-/* Returns number of samples left to load */
-int wavldr_query_progress(struct wavldr *ls, unsigned *nb_samples);
-
-/* Wait for the load process to finish. */
-const char *wavldr_finish(struct wavldr *ls);
-
 
 #endif /* WAVELDR_H */

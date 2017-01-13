@@ -29,6 +29,19 @@
 #include "smplwav/smplwav_mount.h"
 #include "smplwav/smplwav_convert.h"
 
+struct smpl_comp {
+	const char    *filename;
+
+	unsigned char *data;
+	size_t         size;
+
+	/* Either SMPL_COMP_LOADFLAG_AUTO or a set of
+	 * SMPL_COMP_LOADFLAG_* flags or'ed together. */
+	unsigned       load_flags;
+
+	int            load_format;
+};
+
 struct rel_data {
 	float           *data;
 	size_t           chan_stride;
