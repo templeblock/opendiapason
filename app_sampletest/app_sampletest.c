@@ -44,13 +44,8 @@
  * probably a bad assumption. */
 #define PLAYBACK_SAMPLE_RATE (96000)
 
-struct simple_pipe {
-	struct pipe_v1 data;
-	unsigned       rate;
-};
-
 struct pipe_executor {
-	struct simple_pipe       pd;
+	struct pipe_v1           data;
 	struct playeng_instance *instance;
 	int                      nb_insts;
 	int                      enabled;
@@ -130,12 +125,6 @@ static const struct test_load_entry TEST_ENTRY_LIST[] =
 
 static struct pipe_executor *loaded_ranks[NUM_TEST_ENTRY_LIST];
 
-static void on_sample_load(const struct sample_load_info *ld_info)
-{
-	struct pipe_executor *pipe = ld_info->ctx;
-	pipe->pd.rate = (pipe->target_freq * pipe->pd.data.sample_rate) * SMPL_POSITION_SCALE / (PLAYBACK_SAMPLE_RATE * pipe->pd.data.frequency) + 0.5;
-}
-
 static struct pipe_executor *
 load_executors
 	(const char              *path
@@ -173,9 +162,9 @@ load_executors
 		sli->num_files        = 4;
 		sli->harmonic_number  = harmonic16;
 		sli->load_format      = 16;
-		sli->dest             = &(pipes[i].pd.data);
-		sli->ctx              = pipes + i;
-		sli->on_loaded        = on_sample_load;
+		sli->dest             = &(pipes[i].data);
+		sli->ctx              = NULL;
+		sli->on_loaded        = NULL;
 
 		if  (   sli->filenames[0] == NULL || sli->filenames[1] == NULL
 		    ||  sli->filenames[2] == NULL || sli->filenames[3] == NULL) {
@@ -200,12 +189,12 @@ engine_callback
 	,unsigned           sampler_time
 	)
 {
-	struct simple_pipe *pd = userdata;
+	struct pipe_executor *pd = userdata;
 
 	/* Initialize sample */
 	if (sigmask & 0x1) {
 		pd->data.attack.instantiate(states[0], &pd->data.attack, 0, 0);
-		states[0]->rate = pd->rate;
+		states[0]->rate = (pd->target_freq * pd->data.sample_rate) * SMPL_POSITION_SCALE / (PLAYBACK_SAMPLE_RATE * pd->data.frequency) + 0.5;
 
 		/* Only state 0 is enabled and there are no termination conditions. */
 		old_flags = PLAYENG_PACK_CALLBACK_STATUS(0, 0x1, 0x0, 0x0);
@@ -221,7 +210,7 @@ engine_callback
 #endif
 
 		pd->data.releases[rtd.id].instantiate(states[1], &pd->data.releases[rtd.id], rtd.pos_int, rtd.pos_frac);
-		states[1]->rate = pd->rate;
+		states[1]->rate = states[0]->rate;
 		states[1]->setfade(states[1], 0, 0.0f);
 		states[1]->setfade(states[1], rtd.crossfade, rtd.gain);
 		states[0]->setfade(states[0], rtd.crossfade, 0.0f);
@@ -370,7 +359,7 @@ static void *midi_thread_proc(void *argument)
 							note_locked = 1;
 						}
 
-						loaded_ranks[j][midx].instance = playeng_insert(engine, 2, 0x01, engine_callback, &(loaded_ranks[j][midx].pd));
+						loaded_ranks[j][midx].instance = playeng_insert(engine, 2, 0x01, engine_callback, &(loaded_ranks[j][midx]));
 						if (loaded_ranks[j][midx].instance == NULL)
 							printf("Polyphony exceeded!\n");
 					}
