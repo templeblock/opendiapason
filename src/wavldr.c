@@ -986,11 +986,6 @@ static void *loader_thread_proc(void *argument)
 		/* If there was a local error or loader error, bomb out now. */
 		if (err != NULL)
 			break;
-
-		/* There was no errors. If there is an on-loaded callback, call it
-		 * now. */
-		if (err == NULL && li->on_loaded != NULL)
-			li->on_loaded(li);
 	}
 
 	return NULL;

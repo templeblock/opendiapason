@@ -64,9 +64,6 @@ struct sample_load_info {
 
 	/* Where to load the data. */
 	struct pipe_v1          *dest;
-
-	void                    *ctx;
-	void                   (*on_loaded)(const struct sample_load_info *ld_info);
 };
 
 struct sample_load_info *wavldr_add_sample(struct wavldr *load_set);

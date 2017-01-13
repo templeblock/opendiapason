@@ -163,8 +163,6 @@ load_executors
 		sli->harmonic_number  = harmonic16;
 		sli->load_format      = 16;
 		sli->dest             = &(pipes[i].data);
-		sli->ctx              = NULL;
-		sli->on_loaded        = NULL;
 
 		if  (   sli->filenames[0] == NULL || sli->filenames[1] == NULL
 		    ||  sli->filenames[2] == NULL || sli->filenames[3] == NULL) {
