@@ -814,7 +814,7 @@ load_smpl_comp
 
 #define LOAD_SET_GROW_RATE (500)
 
-int wavldr_initialise(struct sample_load_set *load_set)
+int wavldr_initialise(struct wavldr *load_set)
 {
 	load_set->max_nb_elems = LOAD_SET_GROW_RATE;
 	load_set->nb_elems = 0;
@@ -834,7 +834,7 @@ int wavldr_initialise(struct sample_load_set *load_set)
 	return 0;
 }
 
-struct sample_load_info *wavldr_add_sample(struct sample_load_set *load_set)
+struct sample_load_info *wavldr_add_sample(struct wavldr *load_set)
 {
 	struct sample_load_info *ns;
 	unsigned new_ele_count;
@@ -881,7 +881,7 @@ static void *load_file_to_memory(const char *fname, struct cop_alloc_iface *mem,
 
 static struct sample_load_info *
 loader_pop
-	(struct sample_load_set *load_state
+	(struct wavldr *load_state
 	,struct cop_alloc_iface *mem
 	,struct smpl_comp       *comps
 	)
@@ -983,7 +983,7 @@ static void *loader_thread_proc(void *argument)
 	return NULL;
 }
 
-static int init_thread_state(struct loader_thread_state *ts, struct sample_load_set *ls)
+static int init_thread_state(struct loader_thread_state *ts, struct wavldr *ls)
 {
 	ts->lstate = ls;
 	if (cop_alloc_grp_temps_init(&(ts->if1_impl), &(ts->if1), 16 * 1024 * 1024, 0, 16))
@@ -1002,7 +1002,7 @@ static int init_thread_state(struct loader_thread_state *ts, struct sample_load_
 
 static void *protected_alloc(struct cop_alloc_iface *a, size_t size, size_t align)
 {
-	struct sample_load_set *ls = a->ctx;
+	struct wavldr *ls = a->ctx;
 	void *ret;
 	cop_mutex_lock(&(ls->state_lock));
 	ret = cop_alloc(ls->protected_allocator, size, align);
@@ -1012,7 +1012,7 @@ static void *protected_alloc(struct cop_alloc_iface *a, size_t size, size_t alig
 
 const char *
 wavldr_begin_load
-	(struct sample_load_set  *load_set
+	(struct wavldr  *load_set
 	,struct cop_alloc_iface  *allocator
 	,struct fftset           *fftset
 	,const struct odfilter   *prefilter
@@ -1059,7 +1059,7 @@ wavldr_begin_load
 	return NULL;
 }
 
-int wavldr_query_progress(struct sample_load_set *ls, unsigned *nb_samples)
+int wavldr_query_progress(struct wavldr *ls, unsigned *nb_samples)
 {
 	unsigned total;
 	unsigned remaining;
@@ -1076,7 +1076,7 @@ int wavldr_query_progress(struct sample_load_set *ls, unsigned *nb_samples)
 	return remaining;
 }
 
-const char *wavldr_finish(struct sample_load_set *load_set)
+const char *wavldr_finish(struct wavldr *load_set)
 {
 	unsigned i;
 

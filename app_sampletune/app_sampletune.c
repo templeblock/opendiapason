@@ -60,7 +60,7 @@ static COP_ATTR_UNUSED int get_target_note(float target_freq, unsigned rank_harm
 
 static struct pipe_executor *
 load_executors
-	(struct sample_load_set     *load_set
+	(struct wavldr              *load_set
 	,struct strset              *sset
 	,const char                 *path
 	,struct cop_salloc_iface    *mem
@@ -624,7 +624,7 @@ int main(int argc, char *argv[])
 	{
 		struct fftset          fftset;
 		struct odfilter        prefilter;
-		struct sample_load_set ls;
+		struct wavldr          ls;
 		struct strset          sset;
 		const char            *err;
 

@@ -142,7 +142,7 @@ load_executors
 	,unsigned                 first_midi
 	,unsigned                 nb_pipes
 	,unsigned                 harmonic16
-	,struct sample_load_set  *lset
+	,struct wavldr           *lset
 	,struct strset           *sset
 	)
 {
@@ -757,7 +757,7 @@ int main(int argc, char *argv[])
 		struct cop_salloc_iface  mem;
 		struct fftset            fftset;
 		struct odfilter          prefilter;
-		struct sample_load_set   ls;
+		struct wavldr            ls;
 		struct strset            ss;
 		size_t                   sysmem;
 		const char              *err;

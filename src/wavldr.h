@@ -71,10 +71,10 @@ struct sample_load_info {
 	void                   (*on_loaded)(const struct sample_load_info *ld_info);
 };
 
-struct sample_load_set;
+struct wavldr;
 
 struct loader_thread_state {
-	struct sample_load_set     *lstate;
+	struct wavldr     *lstate;
 
 	struct cop_salloc_iface     if1;
 	struct cop_salloc_iface     if2;
@@ -86,7 +86,7 @@ struct loader_thread_state {
 
 #define WAVLDR_MAX_LOAD_THREADS (4)
 
-struct sample_load_set {
+struct wavldr {
 	/* Things which are read-only by threads. */
 	const struct odfilter   *prefilter;
 	unsigned                 nb_elems;
@@ -123,14 +123,14 @@ struct sample_load_set {
  *   5) call wavldr_finish which blocks until completion.
  */
 
-int wavldr_initialise(struct sample_load_set *load_set);
+int wavldr_initialise(struct wavldr *load_set);
 
-struct sample_load_info *wavldr_add_sample(struct sample_load_set *load_set);
+struct sample_load_info *wavldr_add_sample(struct wavldr *load_set);
 
 /* Begins loader threads. nb_threads must be less than WAVLDR_MAX_LOAD_THREADS. */
 const char *
 wavldr_begin_load
-	(struct sample_load_set  *load_set
+	(struct wavldr  *load_set
 	,struct cop_alloc_iface  *allocator
 	,struct fftset           *fftset
 	,const struct odfilter   *prefilter
@@ -138,10 +138,10 @@ wavldr_begin_load
 	);
 
 /* Returns number of samples left to load */
-int wavldr_query_progress(struct sample_load_set *ls, unsigned *nb_samples);
+int wavldr_query_progress(struct wavldr *ls, unsigned *nb_samples);
 
 /* Wait for the load process to finish. */
-const char *wavldr_finish(struct sample_load_set *ls);
+const char *wavldr_finish(struct wavldr *ls);
 
 
 #endif /* WAVELDR_H */
