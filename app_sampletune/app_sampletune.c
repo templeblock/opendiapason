@@ -77,7 +77,7 @@ load_executors
 		for (i = 0; i < nb_pipes; i++) {
 			static const char *NAMES[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 
-			struct sample_load_info *sli = sample_load_set_push(load_set);
+			struct sample_load_info *sli = wavldr_add_sample(load_set);
 
 			if (sli == NULL) {
 				printf("out of memory\n");
@@ -631,7 +631,7 @@ int main(int argc, char *argv[])
 		/* Build the interpolation pre-filter */
 		fftset_init(&fftset);
 		strset_init(&sset);
-		ret = sample_load_set_init(&ls);
+		ret = wavldr_initialise(&ls);
 		if (ret)
 			return ret;
 
@@ -640,7 +640,12 @@ int main(int argc, char *argv[])
 
 		at_pipes = load_executors(&ls, &sset, ".", &mem, &fftset, &prefilter, at_first_midi, 1+at_last_midi-at_first_midi, at_rank_harmonic64);
 
-		err = load_samples(&ls, &(mem.iface), &fftset, &prefilter);
+		err = wavldr_begin_load(&ls, &(mem.iface), &fftset, &prefilter, 4);
+		if (err != NULL) {
+			fprintf(stderr, "load initialisation error: %s\n", err);
+			abort();
+		}
+		err = wavldr_finish(&ls);
 		if (err != NULL) {
 			fprintf(stderr, "load error: %s\n", err);
 			abort();
