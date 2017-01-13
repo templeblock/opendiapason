@@ -203,8 +203,7 @@ static const char *load_smpl_mem(struct memory_wave *mw, struct cop_alloc_iface 
 	return NULL;
 }
 
-
-float find_max(float *buf1, float *buf2, unsigned length)
+static float find_max(float *buf1, float *buf2, unsigned length)
 {
 	unsigned j;
 	vlf minv = vlf_broadcast(0.0f);
@@ -226,7 +225,7 @@ float find_max(float *buf1, float *buf2, unsigned length)
 	minv = vlf_neg(minv);
 	maxv = vlf_max(maxv, minv);
 
-	return VLF_HMAX(maxv);
+	return vlf_hmax(maxv);
 }
 
 
