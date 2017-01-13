@@ -71,27 +71,77 @@ struct sample_load_info {
 	void                   (*on_loaded)(const struct sample_load_info *ld_info);
 };
 
-struct sample_load_set {
-	struct sample_load_info *elems;
-	unsigned                 nb_elems;
-	unsigned                 max_nb_elems;
+struct sample_load_set;
 
-	cop_mutex                pop_lock;
-	cop_mutex                file_lock;
+struct loader_thread_state {
+	struct sample_load_set     *lstate;
 
+	struct cop_salloc_iface     if1;
+	struct cop_salloc_iface     if2;
+	struct cop_alloc_grp_temps  if1_impl;
+	struct cop_alloc_grp_temps  if2_impl;
+	struct odfilter_temporaries tmps;
+	cop_thread                  thread_handle;
 };
 
-int sample_load_set_init(struct sample_load_set *load_set);
+#define WAVLDR_MAX_LOAD_THREADS (4)
 
-struct sample_load_info *sample_load_set_push(struct sample_load_set *load_set);
+struct sample_load_set {
+	/* Things which are read-only by threads. */
+	const struct odfilter   *prefilter;
+	unsigned                 nb_elems;
+	unsigned                 cur_elem;
+	unsigned                 max_nb_elems;
 
+	/* Thread states. */
+	unsigned                 nb_threads;
+	struct loader_thread_state thread_states[WAVLDR_MAX_LOAD_THREADS];
+
+	/* This lock is used when accessing files. This is purely to stop multiple
+	 * files being read at the same time (prevents hdd thrashing). Each thread
+	 * must acquire this lock before performing file IO. */
+	cop_mutex                read_lock;
+
+	/* Things which must only be used by threads which hold locks. */
+	cop_mutex                file_lock;
+	
+
+	cop_mutex                state_lock;
+	struct sample_load_info *elems;
+	const char              *error;
+	struct cop_alloc_iface  *protected_allocator;
+	struct cop_alloc_iface   allocator;
+	struct fftset           *fftset;
+};
+
+
+/* The process is
+ *   1) initialise
+ *   2) add samples using push()
+ *   3) start the load using begin
+ *   4) optionally call query_progress()
+ *   5) call wavldr_finish which blocks until completion.
+ */
+
+int wavldr_initialise(struct sample_load_set *load_set);
+
+struct sample_load_info *wavldr_add_sample(struct sample_load_set *load_set);
+
+/* Begins loader threads. nb_threads must be less than WAVLDR_MAX_LOAD_THREADS. */
 const char *
-load_samples
+wavldr_begin_load
 	(struct sample_load_set  *load_set
 	,struct cop_alloc_iface  *allocator
 	,struct fftset           *fftset
 	,const struct odfilter   *prefilter
+	,unsigned                 nb_threads
 	);
+
+/* Returns number of samples left to load */
+int wavldr_query_progress(struct sample_load_set *ls, unsigned *nb_samples);
+
+/* Wait for the load process to finish. */
+const char *wavldr_finish(struct sample_load_set *ls);
 
 
 #endif /* WAVELDR_H */

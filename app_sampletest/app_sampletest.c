@@ -151,7 +151,7 @@ load_executors
 	for (i = 0; i < nb_pipes; i++) {
 		static const char *NAMES[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 
-		struct sample_load_info *sli = sample_load_set_push(lset);
+		struct sample_load_info *sli = wavldr_add_sample(lset);
 
 		if (sli == NULL) {
 			printf("out of memory\n");
@@ -761,6 +761,7 @@ int main(int argc, char *argv[])
 		struct strset            ss;
 		size_t                   sysmem;
 		const char              *err;
+		unsigned nb_samples, remaining;
 
 		/* Setup memory pool. */
 		sysmem = pool_size();
@@ -772,7 +773,7 @@ int main(int argc, char *argv[])
 		(void)odfilter_interp_prefilter_init(&prefilter, &mem, &fftset);
 
 		/* Setup the load list. */
-		(void)sample_load_set_init(&ls);
+		(void)wavldr_initialise(&ls);
 		for (i = 0; i < NUM_TEST_ENTRY_LIST; i++) {
 			printf("loading '%s'\n", TEST_ENTRY_LIST[i].directory_name);
 			loaded_ranks[i] = load_executors(TEST_ENTRY_LIST[i].directory_name, TEST_ENTRY_LIST[i].first_midi, TEST_ENTRY_LIST[i].nb_pipes, TEST_ENTRY_LIST[i].harmonic16, &ls, &ss);
@@ -780,12 +781,26 @@ int main(int argc, char *argv[])
 		
 		/* Execute the load list. */
 		err =
-			load_samples
+			wavldr_begin_load
 				(&ls
 				,&(mem.iface)
 				,&fftset
 				,&prefilter
+				,4
 				);
+		if (err != NULL) {
+			fprintf(stderr, "load start error: %s\n", err);
+			abort();
+		}
+
+		while ((remaining = wavldr_query_progress(&ls, &nb_samples)) != 0) {
+			printf("loading (%0.1f%%)\r", (nb_samples - remaining) * 100.0f / (float)nb_samples);
+			fflush(stdout);
+			sleep(1);
+		}
+		printf("loading (100.0%%)\n");
+
+		err = wavldr_finish(&ls);
 		if (err != NULL) {
 			fprintf(stderr, "load error: %s\n", err);
 			abort();

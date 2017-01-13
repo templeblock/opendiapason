@@ -814,26 +814,27 @@ load_smpl_comp
 
 #define LOAD_SET_GROW_RATE (500)
 
-int sample_load_set_init(struct sample_load_set *load_set)
+int wavldr_initialise(struct sample_load_set *load_set)
 {
 	load_set->max_nb_elems = LOAD_SET_GROW_RATE;
 	load_set->nb_elems = 0;
+	load_set->cur_elem = 0;
 	load_set->elems = malloc(sizeof(struct sample_load_info) * load_set->max_nb_elems);
 	if (load_set->elems == NULL)
 		return -1;
-	if (cop_mutex_create(&load_set->pop_lock)) {
+	if (cop_mutex_create(&load_set->state_lock)) {
 		free(load_set->elems);
 		return -1;
 	}
 	if (cop_mutex_create(&load_set->file_lock)) {
-		cop_mutex_destroy(&load_set->pop_lock);
+		cop_mutex_destroy(&load_set->state_lock);
 		free(load_set->elems);
 		return -1;
 	}
 	return 0;
 }
 
-struct sample_load_info *sample_load_set_push(struct sample_load_set *load_set)
+struct sample_load_info *wavldr_add_sample(struct sample_load_set *load_set)
 {
 	struct sample_load_info *ns;
 	unsigned new_ele_count;
@@ -878,50 +879,9 @@ static void *load_file_to_memory(const char *fname, struct cop_alloc_iface *mem,
 	return NULL;
 }
 
-struct loader_state {
-	cop_mutex               read_lock;
-	cop_mutex               state_lock;
-
-	struct sample_load_set *lset;
-
-	/* Things which must only be used by threads which hold locks. */
-	struct cop_alloc_iface *protected_allocator;
-	struct cop_alloc_iface  allocator;
-	struct fftset          *fftset;
-
-	/* Things which are read-only by threads. */
-	const struct odfilter  *prefilter;
-
-	const char             *error;
-};
-
-struct loader_thread_state {
-	struct loader_state        *lstate;
-
-	struct cop_salloc_iface     if1;
-	struct cop_salloc_iface     if2;
-	struct cop_alloc_grp_temps  if1_impl;
-	struct cop_alloc_grp_temps  if2_impl;
-	struct odfilter_temporaries tmps;
-};
-
-
-static struct sample_load_info *
-sample_load_set_pop
-	(struct sample_load_set *load_set
-	)
-{
-	struct sample_load_info *ret = NULL;
-	cop_mutex_lock(&load_set->pop_lock);
-	if (load_set->nb_elems)
-		ret = load_set->elems + --load_set->nb_elems;
-	cop_mutex_unlock(&load_set->pop_lock);
-	return ret;
-}
-
 static struct sample_load_info *
 loader_pop
-	(struct loader_state    *load_state
+	(struct sample_load_set *load_state
 	,struct cop_alloc_iface *mem
 	,struct smpl_comp       *comps
 	)
@@ -929,10 +889,10 @@ loader_pop
 	struct sample_load_info *ret;
 
 	cop_mutex_lock(&(load_state->state_lock));
-	if (load_state->error != NULL) {
-		ret = NULL;
+	if (load_state->error == NULL && load_state->cur_elem < load_state->nb_elems) {
+		ret = load_state->elems + load_state->cur_elem++;
 	} else {
-		ret = sample_load_set_pop(load_state->lset);
+		ret = NULL;
 	}
 	cop_mutex_unlock(&(load_state->state_lock));
 
@@ -1023,7 +983,7 @@ static void *loader_thread_proc(void *argument)
 	return NULL;
 }
 
-static int init_thread_state(struct loader_thread_state *ts, struct loader_state *ls)
+static int init_thread_state(struct loader_thread_state *ts, struct sample_load_set *ls)
 {
 	ts->lstate = ls;
 	if (cop_alloc_grp_temps_init(&(ts->if1_impl), &(ts->if1), 16 * 1024 * 1024, 0, 16))
@@ -1040,15 +1000,9 @@ static int init_thread_state(struct loader_thread_state *ts, struct loader_state
 	return 0;
 }
 
-static void destroy_thread_state(struct loader_thread_state *ts)
-{
-	cop_alloc_grp_temps_free(&(ts->if1_impl));
-	cop_alloc_grp_temps_free(&(ts->if2_impl));
-}
-
 static void *protected_alloc(struct cop_alloc_iface *a, size_t size, size_t align)
 {
-	struct loader_state *ls = a->ctx;
+	struct sample_load_set *ls = a->ctx;
 	void *ret;
 	cop_mutex_lock(&(ls->state_lock));
 	ret = cop_alloc(ls->protected_allocator, size, align);
@@ -1057,56 +1011,86 @@ static void *protected_alloc(struct cop_alloc_iface *a, size_t size, size_t alig
 }
 
 const char *
-load_samples
+wavldr_begin_load
 	(struct sample_load_set  *load_set
 	,struct cop_alloc_iface  *allocator
 	,struct fftset           *fftset
 	,const struct odfilter   *prefilter
+	,unsigned                 nb_threads
 	)
 {
+	unsigned i;
 
-	struct loader_state         loader;
-	struct loader_thread_state  loader_threads[4];
-	cop_thread                  thread_handles[4];
+	load_set->protected_allocator = allocator;
+	load_set->allocator.ctx       = load_set;
+	load_set->allocator.alloc     = protected_alloc;
+	load_set->fftset              = fftset;
+	load_set->prefilter           = prefilter;
+	load_set->error               = NULL;
+	load_set->nb_threads          = nb_threads;
 
-	loader.lset                = load_set;
-	loader.protected_allocator = allocator;
-	loader.allocator.ctx       = &loader;
-	loader.allocator.alloc     = protected_alloc;
-	loader.fftset              = fftset;
-	loader.prefilter           = prefilter;
-	loader.error               = NULL;
-	if (cop_mutex_create(&(loader.state_lock)))
+	assert(nb_threads < WAVLDR_MAX_LOAD_THREADS);
+
+	if (cop_mutex_create(&(load_set->state_lock)))
 		return "could not create lock";
-	if (cop_mutex_create(&(loader.read_lock)))
+	if (cop_mutex_create(&(load_set->read_lock))) {
+		cop_mutex_destroy(&(load_set->state_lock));
 		return "could not create lock";
+	}
 
-	if (init_thread_state(&(loader_threads[0]), &loader))
+	for (i = 0; i < nb_threads; i++) {
+		if (init_thread_state(&(load_set->thread_states[i]), load_set))
+			break;
+	}
+
+	if (i != nb_threads) {
+		while (i--) {
+			cop_alloc_grp_temps_free(&(load_set->thread_states[i].if1_impl));
+			cop_alloc_grp_temps_free(&(load_set->thread_states[i].if2_impl));
+		}
+		cop_mutex_destroy(&(load_set->read_lock));
+		cop_mutex_destroy(&(load_set->state_lock));
 		return "out of memory";
-	if (init_thread_state(&(loader_threads[1]), &loader))
-		return "out of memory";
-	if (init_thread_state(&(loader_threads[2]), &loader))
-		return "out of memory";
-	if (init_thread_state(&(loader_threads[3]), &loader))
-		return "out of memory";
+	}
 
-	cop_thread_create(&(thread_handles[0]), loader_thread_proc, &(loader_threads[0]), 0, 0);
-	cop_thread_create(&(thread_handles[1]), loader_thread_proc, &(loader_threads[1]), 0, 0);
-	cop_thread_create(&(thread_handles[2]), loader_thread_proc, &(loader_threads[2]), 0, 0);
-	cop_thread_create(&(thread_handles[3]), loader_thread_proc, &(loader_threads[3]), 0, 0);
+	for (i = 0; i < nb_threads; i++)
+		cop_thread_create(&(load_set->thread_states[i].thread_handle), loader_thread_proc, &(load_set->thread_states[i]), 0, 0);
 
-	cop_thread_join(thread_handles[0], NULL);
-	cop_thread_join(thread_handles[1], NULL);
-	cop_thread_join(thread_handles[2], NULL);
-	cop_thread_join(thread_handles[3], NULL);
-
-	destroy_thread_state(&(loader_threads[0]));
-	destroy_thread_state(&(loader_threads[1]));
-	destroy_thread_state(&(loader_threads[2]));
-	destroy_thread_state(&(loader_threads[3]));
-
-	cop_mutex_destroy(&(loader.read_lock));
-	cop_mutex_destroy(&(loader.state_lock));
-
-	return loader.error;
+	return NULL;
 }
+
+int wavldr_query_progress(struct sample_load_set *ls, unsigned *nb_samples)
+{
+	unsigned total;
+	unsigned remaining;
+	cop_mutex_lock(&(ls->state_lock));
+	total     = ls->nb_elems;
+	if (ls->error == NULL) {
+		remaining = total - ls->cur_elem;
+	} else {
+		remaining = 0;
+	}
+	cop_mutex_unlock(&(ls->state_lock));
+	if (nb_samples != NULL)
+		*nb_samples = total;
+	return remaining;
+}
+
+const char *wavldr_finish(struct sample_load_set *load_set)
+{
+	unsigned i;
+
+	for (i = 0; i < load_set->nb_threads; i++) {
+		cop_thread_join(load_set->thread_states[i].thread_handle, NULL);
+		cop_alloc_grp_temps_free(&(load_set->thread_states[i].if1_impl));
+		cop_alloc_grp_temps_free(&(load_set->thread_states[i].if2_impl));
+	}
+
+	cop_mutex_destroy(&(load_set->read_lock));
+	cop_mutex_destroy(&(load_set->state_lock));
+
+	return load_set->error;
+}
+
+
+
