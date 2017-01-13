@@ -28,9 +28,22 @@
 #include "fftset/fftset.h"
 #include "opendiapason/odfilter.h"
 
-#define WAVLDR_MAX_RELEASES (4)
-#define WAVLDR_MAX_LOAD_THREADS (4)
+/* This wavldr module is responsible for loading wave samples into sample data
+ * structures. The API is being structured in a way to support loading with
+ * a memory-mapped cache at some point later.
+ *
+ * You tell the module all the information for every sample which needs to be
+ * loaded along with a state structure (pipe_v1) to store the decodeable
+ * audio. Once this information has been provided, there is a method which
+ * begins the load process across multiple threads. This dramatically speeds
+ * up the load time (pretty much by a factor of almost the number of threads).
+ */
 
+/* The loader cannot handle samples with more than this number of releases. */
+#define WAVLDR_MAX_RELEASES     (4)
+
+/* This structure contains the sampler playback structures which can have
+ * decoders instantiated on them. */
 struct pipe_v1 {
 	struct dec_smpl attack;
 	struct dec_smpl releases[WAVLDR_MAX_RELEASES];
@@ -39,32 +52,44 @@ struct pipe_v1 {
 	unsigned long   sample_rate;
 };
 
-struct wavldr;
+/* The loader cannot handle using more than this many threads during load. */
+#define WAVLDR_MAX_LOAD_THREADS (4)
 
-/* The process is
- *   1) initialise
- *   2) add samples using push()
- *   3) start the load using begin
- *   4) optionally call query_progress()
- *   5) call wavldr_finish which blocks until completion.
- */
-
-int wavldr_initialise(struct wavldr *load_set);
-
+/* These load flags are passed to the load_flags member of the
+ * sample_load_info structure. They determine what should be loaded from the
+ * given audio file. If AUTO is specified, the loader will attempt to
+ * automatically detect what can be loaded based on the audio file. */
 #define SMPL_COMP_LOADFLAG_AUTO (0)
 #define SMPL_COMP_LOADFLAG_AS   (1)
 #define SMPL_COMP_LOADFLAG_R    (2)
 
+/* The sample_load_info structure is what must be populated which corresponds
+ * to one sample (which may consist of multiple files). */
 struct sample_load_info {
 	const char              *filenames[1+WAVLDR_MAX_RELEASES];
 	int                      load_flags[1+WAVLDR_MAX_RELEASES];
 	unsigned                 num_files;
 	unsigned                 harmonic_number;
 	unsigned                 load_format;
-
-	/* Where to load the data. */
 	struct pipe_v1          *dest;
 };
+
+/* The wavldr structure has all the data required to load all the samples. It
+ * is defined later in this header file so you can put it on the stack - but
+ * do not access it's members directly.
+ *
+ * The process to use this is:
+ *   1) Initialise the loader using wavldr_initialise()
+ *   2) Use wavldr_add_sample() once for each sample.
+ *   3) Once all samples have been added, use wavldr_begin_load() to begin the
+ *      load process.
+ *   4) Optionally call wavldr_query_progress() several times to get the
+ *      progress of the load operation.
+ *   5) call wavldr_finish() which blocks until the load has completed. */
+struct wavldr;
+
+/* Initialise the wavldr instance. */
+int wavldr_initialise(struct wavldr *load_set);
 
 struct sample_load_info *wavldr_add_sample(struct wavldr *load_set);
 
