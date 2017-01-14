@@ -241,7 +241,91 @@ static float find_max(float *buf1, float *buf2, unsigned length)
 	return vlf_hmax(maxv);
 }
 
+/* These are the A coefficients for 4 different LCGs operating with a modulus
+ * of M=2^32. C is designed to be 1 for all of these generators which
+ * satisfies that M and C are relatively prime. The coefficients are written
+ * some-what explicitly to show that:
+ *
+ *   - A-1 is divisible by all prime factors of M (i.e. 2)
+ *   - A-1 is divisible by 4 (because M is divisible by 4)
+ *
+ * According to Wikipedia, these requirements are refered to as the Hull-
+ * Dobell Theorem. I am no expert in this business. The whacko extra numbers
+ * in the expression are big prime numbers which I chose for no good reason.
+ *
+ * The random number generators are used in a somewhat obscure way to remove
+ * circular dependencies. We need 4 random numbers to dither one stereo
+ * sample. The obvious way to do this would be to evaluate one random number
+ * generator 4 times - this is however inefficient as it ends up creating a
+ * sequence of dependent results. The way we do it is pick one random number
+ * generator to generate the first random variable - the other three are
+ * derived from the seed such that:
+ *
+ *   R0 = Rprev * RNG_A0
+ *   R1 = Rprev * RNG_A1
+ *   R2 = Rprev * RNG_A2
+ *   R3 = Rprev * RNG_A3
+ *   ...
+ *   Rprev = R0 + 1
+ *
+ * The Rx values are intermediate pseudo random variables which we use as our
+ * random states. This eliminates any dependency to produce our randomness. I
+ * did test this in another small C program to look at the covariance of the
+ * 4 random numbers over time and the results were very good (assuming that
+ * the constants used for the generators are good - I have chosen some well-
+ * spaced prime numbers which gave good results).
+ *
+ * This method will enable more parallel random numbers to be computed if the
+ * need ever arises. Just remember to check the covariance first. :) */
+#define RNG_A0 (1u+4u*899809363u)
+#define RNG_A1 (1u+4u*920419823u)
+#define RNG_A2 (1u+4u*941083987u)
+#define RNG_A3 (1u+4u*961748941u)
 
+/* How my triangular dither code works...
+ *
+ * At the moment I am only permitting stereo samples so two samples are
+ * quantised in each loop. We do not want to be doing lots of floating point
+ * conversions, so the ditering will be done in fixed point. For triangular
+ * dither this requires a total of 4 random numbers in each loop iteration.
+ * We want to compute (where Q is the number of output bits):
+ *
+ *    lq = round(l*2^(Q-1) + uniform(-0.25...0.25) + uniform(-0.25...0.25))
+ *    rq = round(r*2^(Q-1) + uniform(-0.25...0.25) + uniform(-0.25...0.25))
+ *
+ * This is equivalent to:
+ *
+ *    lq = floor(l*2^(Q-1) + uniform(-0.25...0.25) + uniform(-0.25...0.25) + 0.5)
+ *    rq = floor(r*2^(Q-1) + uniform(-0.25...0.25) + uniform(-0.25...0.25) + 0.5)
+ *
+ * We include the bias equally in each of the random number generators to get:
+ *
+ *    lq = floor(l*2^(Q-1) + uniform(0..0.5) + uniform(0..0.5))
+ *    rq = floor(r*2^(Q-1) + uniform(0..0.5) + uniform(0..0.5))
+ *
+ * Using our 32-bit unsigned random numbers, we substitute our uniform noise
+ * functions:
+ *
+ *    lq = floor(l*2^(Q-1) + R0*2^-33 + R1*2^-33)
+ *    rq = floor(r*2^(Q-1) + R2*2^-33 + R3*2^-33)
+ *
+ * Pull the 2^-33 out:
+ *
+ *    lq = floor((l*2^(33+Q-1) + R0 + R1)*2^-33)
+ *    rq = floor((r*2^(33+Q-1) + R2 + R3)*2^-33)
+ *
+ * We can approximate this (almost exactly) in C now as:
+ *
+ *    lq = (l*boost + R0 + R1) >> 33
+ *    rq = (r*boost + R2 + R3) >> 33
+ *
+ * Where boost is some user specified gain multiplied by 2^(33+Q-1). This is
+ * applied as a floating point gain. The value is immediately converted to
+ * a 64-bit integer. The two random numbers are added exactly as they are
+ * computed and the final shift 'almost' performs a floor.
+ *
+ * The code generated on x64 at the moment with Clang on OS X looks really
+ * good for the requantization. */
 static float quantize_boost_interleave
 	(void           *obuf
 	,float          *in_bufs
@@ -298,13 +382,13 @@ static float quantize_boost_interleave
 				int_fast64_t lch, rch;
 				f1     = in_bufs[j];
 				f2     = in_bufs[chan_stride+j];
-				d1     = update_rnd(rseed);
-				d2     = update_rnd(d1);
-				d3     = update_rnd(d2);
-				d4     = update_rnd(d3);
+				d1     = rseed * RNG_A0;
+				d2     = rseed * RNG_A1;
+				d3     = rseed * RNG_A2;
+				d4     = rseed * RNG_A3;
 				f1    *= boost;
 				f2    *= boost;
-				rseed  = d4;
+				rseed  = (d1 + 1) & 0xFFFFFFFFu;
 				lch    = (int_fast64_t)f1;
 				rch    = (int_fast64_t)f2;
 				lch   += (int_fast64_t)(d1 & 0xFFFFFFFFu);
