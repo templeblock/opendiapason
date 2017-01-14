@@ -929,6 +929,7 @@ loader_pop
 			cop_mutex_lock(&(load_state->state_lock));
 			load_state->error = "failed to read a file to memory";
 			cop_mutex_unlock(&(load_state->state_lock));
+			ret = NULL;
 		}
 	}
 
@@ -1037,7 +1038,7 @@ wavldr_begin_load
 	load_set->error               = NULL;
 	load_set->nb_threads          = nb_threads;
 
-	assert(nb_threads < WAVLDR_MAX_LOAD_THREADS);
+	assert(nb_threads <= WAVLDR_MAX_LOAD_THREADS);
 
 	if (cop_mutex_create(&(load_set->state_lock)))
 		return "could not create lock";
