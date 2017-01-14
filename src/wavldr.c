@@ -892,6 +892,10 @@ static void *load_file_to_memory(const char *fname, struct cop_alloc_iface *mem,
 	return NULL;
 }
 
+/* This function returns NULL if either an error condition is active in the
+ * loader state OR if there are no more samples to load. If an error occurs
+ * in this function and the error state was not already set, the error will
+ * indicate what went wrong in here. */
 static struct sample_load_info *
 loader_pop
 	(struct wavldr *load_state
@@ -927,7 +931,8 @@ loader_pop
 
 		if (i != ret->num_files) {
 			cop_mutex_lock(&(load_state->state_lock));
-			load_state->error = "failed to read a file to memory";
+			if (load_state->error == NULL)
+				load_state->error = "failed to read a file to memory";
 			cop_mutex_unlock(&(load_state->state_lock));
 			ret = NULL;
 		}
