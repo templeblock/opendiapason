@@ -145,6 +145,7 @@ unsigned u16c2_dec(struct dec_state *state, float *COP_ATTR_RESTRICT *buf)
 				float tf1_ = data[2*ipos+0]; \
 				float tf2_ = data[2*ipos+1]; \
 				INSERT_DUAL(s0, s1, &tf1_, &tf2_); \
+				fpos -= SMPL_POSITION_SCALE; \
 				ipos++; \
 				if (COP_HINT_FALSE(ipos > state->s.uncms.loopend.end_smpl)) { \
 					const struct dec_loop_def *pdef = state->smpl->starts + state->s.uncms.loopend.start_idx; \
@@ -152,7 +153,6 @@ unsigned u16c2_dec(struct dec_state *state, float *COP_ATTR_RESTRICT *buf)
 					rndstate = update_rnd(rndstate); \
 					state->s.uncms.loopend = state->smpl->ends[pdef->first_valid_end + rndstate % (state->smpl->nloop - pdef->first_valid_end)]; \
 				} \
-				fpos -= SMPL_POSITION_SCALE; \
 			} \
 		} while (0)
 
