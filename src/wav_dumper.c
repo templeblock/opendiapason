@@ -89,6 +89,7 @@ static int write_interleaved_buffer(struct wav_dumper *dump, struct wav_dumper_b
 	}
 
 	dump->rseed = rseed;
+	buf->nb_frames = 0;
 
 	return err;
 }
@@ -98,43 +99,33 @@ static void *wav_dumper_threadproc(void *argument)
 	struct wav_dumper *dump = argument;
 
 	do {
-		struct wav_dumper_buffer  *buffers;
-		struct wav_dumper_buffer  *written_first = NULL;
-		struct wav_dumper_buffer **written_last_next = &written_first;
+		struct wav_dumper_buffer  *outbuf;
+		int err;
 
 		/* Obtain buffer list. */
 		cop_mutex_lock(&dump->thread_lock);
-		while ((buffers = dump->towrite_first) == NULL && !dump->end_thread) {
+		while (dump->length == 0 && !dump->end_thread) {
 			cop_cond_wait(&dump->thread_cond, &dump->thread_lock);
 		}
-		dump->towrite_first     = NULL;
-		dump->towrite_last_next = &(dump->towrite_first);
+		if (dump->end_thread)
+			outbuf = NULL;
+		else
+			outbuf = dump->buffers + dump->out_pos;
 		cop_mutex_unlock(&dump->thread_lock);
 
-		/* Nothing to write? That means that end_thread was set and we need to
-		 * terminate! */
-		if (buffers == NULL)
-			break;
+		/* Quitting? */
+		if (outbuf == NULL)
+			return NULL;
 
-		/* Write the buffers to file and construct a new list to append to the
-		 * "written" list. */
-		while (buffers != NULL) {
-			if (write_interleaved_buffer(dump, buffers))
-				dump->write_error = 1;
-
-			*written_last_next = buffers;
-			written_last_next  = &(buffers->next);
-			buffers            = buffers->next;
-		}
-
-		/* Sanity check. The last item should absolutely be NULL, otherwise
-		 * how could the above loop have terminated? */
-		assert(*written_last_next == NULL);
-
-		/* Append the free buffer list back into the empty queue. */
+		/* Write samples to file. */
+		err = write_interleaved_buffer(dump, outbuf);
+		
+		/* Modify queue. */
 		cop_mutex_lock(&dump->thread_lock);
-		*(dump->written_last_next) = written_first;
-		dump->written_last_next    = written_last_next;
+		dump->length  = dump->length - 1;
+		dump->out_pos = (dump->out_pos + 1) % dump->nb_buffers;
+		if (err)
+			dump->write_error = err;
 		cop_mutex_unlock(&dump->thread_lock);
 	} while (1);
 
@@ -152,28 +143,29 @@ unsigned wav_dumper_write_from_floats(struct wav_dumper *dump, const float *data
 		unsigned i, ch;
 		float    *wb;
 
-		/* Ensure we have a buffer that can be written into. */
-		if (dump->current_first == NULL) {
-			/* If there is no buffer we can replace this with, there is an
-			 * buffer overflow condition and the output will be missing some
-			 * samples. */
-			if (dump->avail_first == NULL)
-				return num_written;
+		struct wav_dumper_buffer *buf;
 
-			dump->current_first = dump->avail_first;
-			dump->avail_first   = dump->avail_first->next;
-			if (dump->avail_first == NULL)
-				dump->avail_last_next = &(dump->avail_first);
-
-			dump->current_first->nb_frames = 0;
-			dump->current_first->next      = NULL;
+		if (dump->nb_buffers > 1) {
+			cop_mutex_lock(&dump->thread_lock);
+			if (dump->length < dump->nb_buffers) {
+				buf = dump->buffers + dump->in_pos;
+			}
+			else {
+				buf = NULL;
+			}
+			cop_mutex_unlock(&dump->thread_lock);
+		} else {
+			buf = dump->buffers;
 		}
+
+		if (buf == NULL)
+			return num_written;
 
 		/* How much is left to write? */
 		remain                   = num_samples - num_written;
 
 		/* Limit the write so that it does not overflow the current buffer. */
-		nb_can_write_into_buffer = dump->buffer_frames - dump->current_first->nb_frames;
+		nb_can_write_into_buffer = dump->buffer_frames - buf->nb_frames;
 		can_write                = (remain < nb_can_write_into_buffer) ? remain : nb_can_write_into_buffer;
 
 		/* Limit the write so that it won't result in an invalid wave file. */
@@ -185,7 +177,7 @@ unsigned wav_dumper_write_from_floats(struct wav_dumper *dump, const float *data
 			return num_written;
 
 		/* Store the input data in the write buffer. */
-		wb = dump->current_first->buf + (dump->current_first->nb_frames * dump->channels);
+		wb = buf->buf + (buf->nb_frames * dump->channels);
 		for (i = 0; i < can_write; i++) {
 			for (ch = 0; ch < dump->channels; ch++) {
 				*wb++ = data[(num_written + i) * sample_stride + ch * channel_stride];
@@ -195,30 +187,22 @@ unsigned wav_dumper_write_from_floats(struct wav_dumper *dump, const float *data
 		/* Increment the number of frames in the buffer we just wrote into,
 		 * the entire wave file and the number of frames we have written this
 		 * call. */
-		dump->current_first->nb_frames += can_write;
-		dump->nb_frames                += can_write;
-		num_written                    += can_write;
+		buf->nb_frames    += can_write;
+		dump->nb_frames   += can_write;
+		num_written       += can_write;
 
 		/* If we did not write the amount remaining, this indicates that
 		 * either the wave file is full or the current buffer is now full.
 		 * Flush the current buffer to the output file. */
-		if (can_write != remain) {
-			if (dump->is_multi_threaded) {
+		if (can_write != remain || buf->nb_frames == dump->buffer_frames) {
+			if (dump->nb_buffers > 1) {
 				cop_mutex_lock(&dump->thread_lock);
-				*(dump->towrite_last_next) = dump->current_first;
-				dump->towrite_last_next    = &(dump->current_first->next);
-				dump->current_first        = NULL;
-				if (dump->written_first != NULL) {
-					*(dump->avail_last_next) = dump->written_first;
-					dump->avail_last_next    = dump->written_last_next;
-					dump->written_first      = NULL;
-					dump->written_last_next  = &(dump->written_first);
-				}
+				dump->length = dump->length + 1;
+				dump->in_pos = (dump->in_pos + 1) % dump->nb_buffers;
 				cop_cond_signal(&dump->thread_cond);
 				cop_mutex_unlock(&dump->thread_lock);
 			} else {
-				write_interleaved_buffer(dump, dump->current_first);
-				dump->current_first->nb_frames = 0;
+				write_interleaved_buffer(dump, buf);
 			}
 		}
 	}
@@ -257,13 +241,11 @@ wav_dumper_begin
 	size_t memsz;
 	unsigned i;
 	void *x;
-	struct wav_dumper_buffer *bufs;
 	float *bufdata;
 
 	assert(nb_buffers);
 
-	dump->is_multi_threaded = (nb_buffers > 1);
-	if (dump->is_multi_threaded) {
+	if (nb_buffers > 1) {
 		if (cop_mutex_create(&dump->thread_lock))
 			return -1;
 		if (cop_cond_create(&dump->thread_cond)) {
@@ -273,13 +255,10 @@ wav_dumper_begin
 	}
 	dump->rseed             = 0x1EA7F00Du;
 	dump->buffer_frames     = buffer_length;
-	dump->current_first     = NULL;
-	dump->towrite_first     = NULL;
-	dump->towrite_last_next = &(dump->towrite_first);
-	dump->written_first     = NULL;
-	dump->written_last_next = &(dump->written_first);
-	dump->avail_first       = NULL;
-	dump->avail_last_next   = &(dump->avail_first);
+	dump->in_pos            = 0;
+	dump->out_pos           = 0;
+	dump->length            = 0;
+	dump->nb_buffers        = nb_buffers;
 	dump->write_error       = 0;
 	dump->end_thread        = 0;
 	dump->channels          = channels;
@@ -294,7 +273,7 @@ wav_dumper_begin
 	dump->mem_base          = (x = malloc(memsz));
 
 	if (dump->mem_base == NULL) {
-		if (dump->is_multi_threaded) {
+		if (dump->nb_buffers > 1) {
 			cop_cond_destroy(&dump->thread_cond);
 			cop_mutex_destroy(&dump->thread_lock);
 		}
@@ -302,22 +281,19 @@ wav_dumper_begin
 	}
 
 	dump->write_buffer      = (x = align_buf(x, 31));
-	bufs                    = (x = align_buf((char *)x + sizeof(unsigned char) * buffer_length * dump->block_align, 31));
+	dump->buffers           = (x = align_buf((char *)x + sizeof(unsigned char) * buffer_length * dump->block_align, 31));
 	bufdata                 = (x = align_buf((char *)x + sizeof(struct wav_dumper_buffer) * nb_buffers, 31));
 
 	for (i = 0; i < nb_buffers; i++) {
-		*(dump->avail_last_next)  = bufs;
-		dump->avail_last_next     = &(bufs->next);
-		bufs->next                = NULL;
-		bufs->buf                 = bufdata;
-		bufdata                  += buffer_length * channels;
-		bufs                     += 1;
+		dump->buffers[i].nb_frames = 0;
+		dump->buffers[i].buf = bufdata;
+		bufdata += buffer_length * channels;
 	}
 
 	dump->f = fopen(filename, "wb");
 	if (dump->f == NULL) {
 		free(dump->mem_base);
-		if (dump->is_multi_threaded) {
+		if (dump->nb_buffers > 1) {
 			cop_cond_destroy(&dump->thread_cond);
 			cop_mutex_destroy(&dump->thread_lock);
 		}
@@ -352,7 +328,7 @@ wav_dumper_begin
 
 	if (fwrite(header, PCM_HEADER_SIZE, 1, dump->f) != 1) {
 		free(dump->mem_base);
-		if (dump->is_multi_threaded) {
+		if (dump->nb_buffers > 1) {
 			cop_cond_destroy(&dump->thread_cond);
 			cop_mutex_destroy(&dump->thread_lock);
 		}
@@ -360,7 +336,7 @@ wav_dumper_begin
 		return -1;
 	}
 
-	if (dump->is_multi_threaded && cop_thread_create(&dump->thread, wav_dumper_threadproc, dump, 0, 0)) {
+	if (dump->nb_buffers > 1 && cop_thread_create(&dump->thread, wav_dumper_threadproc, dump, 0, 0)) {
 		free(dump->mem_base);
 		fclose(dump->f);
 		cop_cond_destroy(&dump->thread_cond);
@@ -375,21 +351,20 @@ int wav_dumper_end(struct wav_dumper *dump)
 {
 	int ret = 0;
 
-	if (dump->is_multi_threaded) {
+	if (dump->nb_buffers > 1) {
 		cop_mutex_lock(&dump->thread_lock);
 		dump->end_thread = 1;
-		if (dump->current_first != NULL) {
-			*(dump->towrite_last_next) = dump->current_first;
-			dump->towrite_last_next    = &(dump->current_first->next);
-		}
 		cop_cond_signal(&dump->thread_cond);
 		cop_mutex_unlock(&dump->thread_lock);
 		cop_thread_join(dump->thread, NULL);
 		cop_cond_destroy(&dump->thread_cond);
 		cop_mutex_destroy(&dump->thread_lock);
 		ret = dump->write_error;
-	} else if (dump->current_first != NULL && dump->current_first->nb_frames > 0) {
-		ret = write_interleaved_buffer(dump, dump->current_first);
+	} else {
+		while (dump->length--) {
+			ret = write_interleaved_buffer(dump, dump->buffers + dump->out_pos);
+			dump->out_pos = (dump->out_pos + 1) % dump->nb_buffers;
+		}
 	}
 
 	assert(dump->f != NULL);

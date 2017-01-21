@@ -28,12 +28,10 @@
 struct wav_dumper_buffer {
 	unsigned                   nb_frames;
 	float                     *buf;
-	struct wav_dumper_buffer  *next;
 };
 
 struct wav_dumper {
 	/* Constants */
-	int                        is_multi_threaded;
 	uint_fast32_t              max_frames;
 	unsigned                   channels;
 	unsigned                   bits_per_sample;
@@ -47,17 +45,15 @@ struct wav_dumper {
 	FILE                      *f;
 
 	/* Don't touch unless thread_lock is held. */
-	struct wav_dumper_buffer  *towrite_first;
-	struct wav_dumper_buffer **towrite_last_next;
-	struct wav_dumper_buffer  *written_first;
-	struct wav_dumper_buffer **written_last_next;
+	struct wav_dumper_buffer  *buffers;
+	unsigned                   nb_buffers;
+	unsigned                   length;
+	unsigned                   in_pos;
+	unsigned                   out_pos;
 	int                        end_thread;
 
 	/* These are completely owned by the calling code. */
 	void                      *mem_base;
-	struct wav_dumper_buffer  *current_first;
-	struct wav_dumper_buffer  *avail_first;
-	struct wav_dumper_buffer **avail_last_next;
 	uint_fast32_t              nb_frames;
 
 	/* Synchronisation stuff. */
