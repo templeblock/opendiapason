@@ -37,6 +37,17 @@ struct playeng_instance {
 	struct playeng_instance *next;
 };
 
+struct playeng_payloads {
+	cop_mutex                   thread_lock;
+	cop_cond                    thread_cond;
+	struct playeng_thread_data *start;
+	unsigned                    nb_channels; /* 0 == terminate */
+
+	cop_mutex                   consumer_lock;
+	cop_cond                    consumer_cond;
+	struct playeng_thread_data *done;
+};
+
 struct playeng_thread_data {
 	struct playeng_instance    *active;
 	struct playeng_instance    *zombie;
@@ -75,10 +86,13 @@ struct playeng {
 	unsigned                      reblock_start;
 	float     *COP_ATTR_RESTRICT *reblock_buffers;
 
+	struct playeng_payloads       payloads;
+
 	/* Memory allocator for everything in engine. */
 	struct cop_alloc_virtual      allocator;
 };
 
+static void* playeng_thread_proc(void *context);
 
 struct playeng *playeng_init(unsigned max_poly, unsigned nb_channels, unsigned nb_threads)
 {
@@ -137,6 +151,14 @@ struct playeng *playeng_init(unsigned max_poly, unsigned nb_channels, unsigned n
 		}
 	}
 
+	pe->payloads.start       = NULL;
+	pe->payloads.nb_channels = 1;
+	pe->payloads.done        = NULL;
+	cop_mutex_create(&(pe->payloads.consumer_lock));
+	cop_mutex_create(&(pe->payloads.thread_lock));
+	cop_cond_create(&(pe->payloads.consumer_cond));
+	cop_cond_create(&(pe->payloads.thread_cond));
+
 	if (cop_mutex_create(&pe->signal_lock)) {
 		cop_alloc_virtual_free(&a);
 		return NULL;
@@ -165,6 +187,7 @@ struct playeng *playeng_init(unsigned max_poly, unsigned nb_channels, unsigned n
 		pe->threads[i].zombie                = NULL;
 		pe->threads[i].permitted_signal_mask = pe->locked_permitted_signal_mask;
 		pe->threads[i].current_time          = 0;
+		cop_thread_create(&(pe->threads[i].thread), playeng_thread_proc, &(pe->payloads), 0, 0);
 	}
 
 	pe->allocator        = a;
@@ -174,9 +197,24 @@ struct playeng *playeng_init(unsigned max_poly, unsigned nb_channels, unsigned n
 
 void playeng_destroy(struct playeng *eng)
 {
+	unsigned i;
 	struct cop_alloc_virtual a = eng->allocator;
-	cop_mutex_destroy(&eng->signal_lock);
-	cop_mutex_destroy(&eng->list_lock);
+
+	cop_mutex_lock(&(eng->payloads.thread_lock));
+	eng->payloads.nb_channels = 0; /* trigger termination */
+	eng->payloads.start       = NULL;
+	cop_cond_broadcast(&(eng->payloads.thread_cond));
+	cop_mutex_unlock(&(eng->payloads.thread_lock));
+
+	for (i = 0; i < eng->nb_threads; i++)
+		cop_thread_join(eng->threads[i].thread, NULL);
+
+	cop_mutex_destroy(&(eng->payloads.consumer_lock));
+	cop_mutex_destroy(&(eng->payloads.thread_lock));
+	cop_cond_destroy(&(eng->payloads.consumer_cond));
+	cop_cond_destroy(&(eng->payloads.thread_cond));
+	cop_mutex_destroy(&(eng->signal_lock));
+	cop_mutex_destroy(&(eng->list_lock));
 	cop_alloc_virtual_free(&a);
 }
 
@@ -259,6 +297,7 @@ playeng_insert
 	return ei;
 }
 
+
 static void playeng_thread_data_execute(struct playeng_thread_data *td)
 {
 	struct playeng_instance    *active_list = td->active;
@@ -327,13 +366,45 @@ static void playeng_thread_data_execute(struct playeng_thread_data *td)
 	td->active = new_active_list;
 }
 
-static void* playeng_thread_proc(void *context)
+static void *playeng_thread_proc(void *context)
 {
-	playeng_thread_data_execute(context);
+	struct playeng_payloads *pl = context;
+	while (1) {
+		struct playeng_thread_data *td;
+		unsigned nb_channels;
+		unsigned j;
+		cop_mutex_lock(&(pl->thread_lock));
+		while (pl->start == NULL && ((nb_channels = pl->nb_channels) != 0))
+			cop_cond_wait(&(pl->thread_cond), &(pl->thread_lock));
+		if (nb_channels) {
+			td = pl->start;
+			pl->start = td->next;
+		} else {
+			td = NULL;
+		}
+		cop_mutex_unlock(&(pl->thread_lock));
+		
+		if (td == NULL)
+			break;
+
+		for (j = 0; j < nb_channels; j++) {
+			unsigned k;
+			for (k = 0; k < OUTPUT_SAMPLES; k++) {
+				td->buffers[j][k] = 0.0f;
+			}
+		}
+
+		playeng_thread_data_execute(td);
+
+		cop_mutex_lock(&(pl->consumer_lock));
+		td->next = pl->done;
+		pl->done = td;
+		cop_cond_signal(&(pl->consumer_cond));
+		cop_mutex_unlock(&(pl->consumer_lock));
+	}
 	return NULL;
 }
-
-
+#include <stdio.h>
 /* Create a single output block of audio. */
 void playeng_process(struct playeng *eng, float *buffers, unsigned nb_channels, unsigned nb_samples)
 {
@@ -414,6 +485,7 @@ void playeng_process(struct playeng *eng, float *buffers, unsigned nb_channels, 
 	}
 
 	while (nb_samples) {
+		unsigned nb_other = 0;
 		struct playeng_thread_data *otherthreads = NULL;
 		struct playeng_thread_data *thisthread = NULL;
 
@@ -428,86 +500,70 @@ void playeng_process(struct playeng *eng, float *buffers, unsigned nb_channels, 
 				} else {
 					eng->threads[i].next = otherthreads;
 					otherthreads = &(eng->threads[i]);
+					nb_other++;
 				}
 				eng->threads[i].current_time = eng->current_time;
 			}
 		}
 
-		/* Zero the buffer that will be written to by the calling thread. We
-		 * do this here because when threads fail to spawn, we execute them
-		 * in this thread (we don't want audio to ever fail to be written). */
 		if (thisthread != NULL) {
 			unsigned j;
+
+			/* Spawn all other processing threads (if there are any). If a thread
+			 * fails to build (for whatever reason), the calling thread will
+			 * process the samples that were supposed to be processed by the
+			 * thread directly into the output buffer. The otherthreads list will
+			 * be rebuilt and will only contain threads that actually ran in
+			 * another thread. This is done so that when otherthreads is parsed
+			 * later, we can actually call join() on threads that were active and
+			 * sum output buffers which contain non-zero data into the output. */
+			if (otherthreads != NULL) {
+				assert(thisthread != NULL);
+				cop_mutex_lock(&(eng->payloads.thread_lock));
+				eng->payloads.start = otherthreads;
+				eng->payloads.nb_channels = nb_channels;
+				cop_cond_broadcast(&(eng->payloads.thread_cond));
+				cop_mutex_unlock(&(eng->payloads.thread_lock));
+
+				cop_mutex_lock(&(eng->payloads.consumer_lock));
+				eng->payloads.done = NULL;
+			}
+
+			/* Zero the buffer that will be written to by the calling thread. We
+			 * do this here because when threads fail to spawn, we execute them
+			 * in this thread (we don't want audio to ever fail to be written). */
 			for (j = 0; j < nb_channels; j++) {
 				unsigned k;
 				for (k = 0; k < OUTPUT_SAMPLES; k++) {
 					thisthread->buffers[j][k] = 0.0f;
 				}
 			}
-		}
 
-		/* Spawn all other processing threads (if there are any). If a thread
-		 * fails to build (for whatever reason), the calling thread will
-		 * process the samples that were supposed to be processed by the
-		 * thread directly into the output buffer. The otherthreads list will
-		 * be rebuilt and will only contain threads that actually ran in
-		 * another thread. This is done so that when otherthreads is parsed
-		 * later, we can actually call join() on threads that were active and
-		 * sum output buffers which contain non-zero data into the output. */
-		if (otherthreads != NULL) {
-			struct playeng_thread_data *td = otherthreads;
-			otherthreads = NULL;
-			assert(thisthread != NULL);
-			while (td != NULL) {
-				int err;
-				unsigned j;
-
-				/* Zero the thread's data buffer. TODO: Move this into the
-				 * thread proc (NOT playeng_thread_data_execute!!!!!! AS WE
-				 * MAY WRITE INTO ITS BUFFERS MULTIPLE TIMES). */
-				for (j = 0; j < nb_channels; j++) {
-					unsigned k;
-					for (k = 0; k < OUTPUT_SAMPLES; k++) {
-						td->buffers[j][k] = 0.0f;
-					}
-				}
-
-				/* If the thread failed to be created, run this thread locally
-				 * into the main output buffer. */
-				err = cop_thread_create(&td->thread, playeng_thread_proc, td, 0, 0);
-				if (err) {
-					float *COP_ATTR_RESTRICT *buftmp = td->buffers;
-					td->buffers = thisthread->buffers;
-					playeng_thread_data_execute(td);
-					td->buffers = buftmp;
-					td = td->next;
-				} else {
-					/* Thread executed successfully, put the thread item back
-					 * into the otherthreads list. */
-					struct playeng_thread_data *tmp = td->next;
-					td->next = otherthreads;
-					otherthreads = td;
-					td = tmp;
-				}
-			}
-		}
-
-		if (thisthread != NULL) {
 			/* Run this thread into the user supplied output buffer. */
 			playeng_thread_data_execute(thisthread);
 
 			/* Run all other threads and sum the output into the buffer
 			 * produced by the calling thread. */
-			while (otherthreads != NULL) {
-				unsigned j;
-				cop_thread_join(otherthreads->thread, NULL);
-				for (j = 0; j < nb_channels; j++) {
-					unsigned k;
-					for (k = 0; k < OUTPUT_SAMPLES; k++) {
-						thisthread->buffers[j][k] += otherthreads->buffers[j][k];
-					}
+			if (otherthreads != NULL) {
+				while (nb_other) {
+					unsigned j;
+					while (eng->payloads.done == NULL)
+						cop_cond_wait((&eng->payloads.consumer_cond), &(eng->payloads.consumer_lock));
+
+					assert(eng->payloads.done != NULL);
+					do {
+						assert(nb_other);
+						for (j = 0; j < nb_channels; j++) {
+							unsigned k;
+							for (k = 0; k < OUTPUT_SAMPLES; k++) {
+								thisthread->buffers[j][k] += eng->payloads.done->buffers[j][k];
+							}
+						}
+						nb_other--;
+						eng->payloads.done = eng->payloads.done->next;
+					} while (eng->payloads.done != NULL);
 				}
-				otherthreads = otherthreads->next;
+				cop_mutex_unlock(&(eng->payloads.consumer_lock));
 			}
 
 			/* At this point, thisthread's buffer contains all of the output
