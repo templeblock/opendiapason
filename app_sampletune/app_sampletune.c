@@ -466,13 +466,14 @@ int main_audio(int argc, char *argv[])
 		}
 	} while (!finished);
 
+	Pa_StopStream(astream);
+	Pa_CloseStream(astream);
+
 #ifdef DUMP_TUNING_SESSION
 	if (wav_dumper_end(&dump))
 		fprintf(stderr, "there were issues with the dump file\n");
 #endif
 
-	Pa_StopStream(astream);
-	Pa_CloseStream(astream);
 	Pa_Terminate();
 
 	return 0;
