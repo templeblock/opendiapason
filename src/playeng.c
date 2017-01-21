@@ -374,7 +374,7 @@ static void *playeng_thread_proc(void *context)
 		unsigned nb_channels;
 		unsigned j;
 		cop_mutex_lock(&(pl->thread_lock));
-		while (pl->start == NULL && ((nb_channels = pl->nb_channels) != 0))
+		while (((nb_channels = pl->nb_channels) != 0) && pl->start == NULL)
 			cop_cond_wait(&(pl->thread_cond), &(pl->thread_lock));
 		if (nb_channels) {
 			td = pl->start;
@@ -519,14 +519,14 @@ void playeng_process(struct playeng *eng, float *buffers, unsigned nb_channels, 
 			 * sum output buffers which contain non-zero data into the output. */
 			if (otherthreads != NULL) {
 				assert(thisthread != NULL);
+				cop_mutex_lock(&(eng->payloads.consumer_lock));
+				eng->payloads.done = NULL;
+
 				cop_mutex_lock(&(eng->payloads.thread_lock));
 				eng->payloads.start = otherthreads;
 				eng->payloads.nb_channels = nb_channels;
 				cop_cond_broadcast(&(eng->payloads.thread_cond));
 				cop_mutex_unlock(&(eng->payloads.thread_lock));
-
-				cop_mutex_lock(&(eng->payloads.consumer_lock));
-				eng->payloads.done = NULL;
 			}
 
 			/* Zero the buffer that will be written to by the calling thread. We

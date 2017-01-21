@@ -214,8 +214,8 @@ unsigned wav_dumper_write_from_floats(struct wav_dumper *dump, const float *data
 					dump->written_first      = NULL;
 					dump->written_last_next  = &(dump->written_first);
 				}
-				cop_mutex_unlock(&dump->thread_lock);
 				cop_cond_signal(&dump->thread_cond);
+				cop_mutex_unlock(&dump->thread_lock);
 			} else {
 				write_interleaved_buffer(dump, dump->current_first);
 				dump->current_first->nb_frames = 0;
@@ -382,8 +382,8 @@ int wav_dumper_end(struct wav_dumper *dump)
 			*(dump->towrite_last_next) = dump->current_first;
 			dump->towrite_last_next    = &(dump->current_first->next);
 		}
-		cop_mutex_unlock(&dump->thread_lock);
 		cop_cond_signal(&dump->thread_cond);
+		cop_mutex_unlock(&dump->thread_lock);
 		cop_thread_join(dump->thread, NULL);
 		cop_cond_destroy(&dump->thread_cond);
 		cop_mutex_destroy(&dump->thread_lock);

@@ -4,7 +4,11 @@
 #include "opendiapason/src/playeng.h"
 #include "opendiapason/src/decode_least16x2.h"
 #include "cop/cop_alloc.h"
+#ifndef WIN32
 #include <sys/time.h>
+#else
+#include <windows.h>
+#endif
 
 /* Current performance measurements
 
@@ -143,11 +147,16 @@ int main(int argc, char *argv[])
 		samples[i].instance                          = playeng_insert(eng, 2, 1, engine_callback, &(samples[i]));
 	}
 
+#if WIN32
+	ULONGLONG spec1 = GetTickCount64();
+	ULONGLONG spec2;
+	unsigned long long t0 = 0;
+#else
 	struct timeval spec1;
 	struct timeval spec2;
-
 	gettimeofday(&spec1, NULL);
 	unsigned long long t0 = __builtin_readcyclecounter();
+#endif
 
 	vlf zero = vlf_broadcast(0.0f);
 	for (i = 0; i < PROCESS_ITERATIONS; i++) {
@@ -158,11 +167,18 @@ int main(int argc, char *argv[])
 
 		playeng_process(eng, buf, 2, PROCESS_BUFFER_SIZE);
 	}
+
+#if WIN32
+	spec2 = GetTickCount64();
+	double ms1 = spec1;
+	double ms2 = spec2;
+	unsigned long long t1 = 0;
+#else
 	unsigned long long t1 = __builtin_readcyclecounter();
 	gettimeofday(&spec2, NULL);
-
 	double ms1 = spec1.tv_sec * 1000.0 + spec1.tv_usec / 1000.0;
 	double ms2 = spec2.tv_sec * 1000.0 + spec2.tv_usec / 1000.0;
+#endif
 
 	double execution_time_seconds                 = (ms2 - ms1) / 1000.0;
 

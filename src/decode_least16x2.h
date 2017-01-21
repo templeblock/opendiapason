@@ -21,6 +21,7 @@
 #ifndef DECODE_LEAST16X2
 #define DECODE_LEAST16X2
 
+#include <stdlib.h>
 #include "decode_types.h"
 #include "cop/cop_conversions.h"
 
