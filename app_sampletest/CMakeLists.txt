@@ -22,7 +22,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_LIST_DIR}/../cmakemod
 
 add_executable(sampletest app_sampletest.c)
 
-if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+if (x${CMAKE_CXX_COMPILER_ID} STREQUAL "xMSVC")
   set_property(TARGET sampletest APPEND_STRING PROPERTY COMPILE_FLAGS " /W3")
 else()
   set_property(TARGET sampletest APPEND_STRING PROPERTY COMPILE_FLAGS " -Wall")
@@ -37,9 +37,14 @@ else ()
   target_link_libraries(sampletest ${PORTAUDIO_LIBRARIES})
 endif ()
 
-find_package(Portmidi REQUIRED)
-target_include_directories(sampletest PRIVATE ${PORTMIDI_INCLUDE_DIRS})
-target_link_libraries(sampletest ${PORTMIDI_LIBRARIES})
+if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../portmidi" AND IS_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/../../portmidi")
+  target_link_libraries(sampletest portmidi-static)
+  add_subdirectory("../../portmidi" "${CMAKE_CURRENT_BINARY_DIR}/portmidi_dep")
+else ()
+  find_package(Portmidi REQUIRED)
+  target_include_directories(sampletest PRIVATE ${PORTMIDI_INCLUDE_DIRS})
+  target_link_libraries(sampletest ${PORTMIDI_LIBRARIES})
+endif ()
 
 target_include_directories(sampletest PRIVATE "../..")
 target_link_libraries(sampletest od_audioengine fftset smplwav)

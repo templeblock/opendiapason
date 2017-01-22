@@ -480,7 +480,11 @@ static int setup_sound(PmDeviceID midi_devid)
 	stream_params.device                    = def_api_info->defaultOutputDevice;
 	stream_params.channelCount              = 2;
 	stream_params.sampleFormat              = paFloat32;
+#if WIN32
+	stream_params.suggestedLatency          = def_device_info->defaultLowOutputLatency;
+#else
 	stream_params.suggestedLatency          = def_device_info->defaultLowOutputLatency * 1.5;
+#endif
 	stream_params.hostApiSpecificStreamInfo = NULL;
 	if (Pa_IsFormatSupported(NULL, &stream_params, PLAYBACK_SAMPLE_RATE) != paFormatIsSupported) {
 		fprintf(stderr, "the required stream format is not supported\n");
@@ -783,7 +787,11 @@ int main(int argc, char *argv[])
 		while ((remaining = wavldr_query_progress(&ls, &nb_samples)) != 0) {
 			printf("loading (%0.1f%%)\r", (nb_samples - remaining) * 100.0f / (float)nb_samples);
 			fflush(stdout);
+#ifdef WIN32
+			Sleep(1000);
+#else
 			sleep(1);
+#endif
 		}
 		printf("loading (100.0%%)\n");
 

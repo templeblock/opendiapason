@@ -97,7 +97,7 @@ int main(int argc, char *argv[])
 
 	uint_fast32_t               rval = 1;
 
-	if ((eng = playeng_init(2048, 2, 4)) == NULL) {
+	if ((eng = playeng_init(2048, 2, 8)) == NULL) {
 		fprintf(stderr, "could not create instance of playback engine.\n");
 		return -1;
 	}
