@@ -125,16 +125,4 @@ void odfilter_run
 	,const struct odfilter       *filter
 	);
 
-/* Deprecated - inplace version of the above function - don't use it, I want
- * to delete it. */
-void odfilter_run_inplace
-	(float                       *data
-	,unsigned long                susp_start
-	,unsigned long                length
-	,unsigned                     pre_read
-	,int                          is_looped
-	,struct odfilter_temporaries *tmps
-	,const struct odfilter       *filter
-	);
-
 #endif /* ODFILTER_H */

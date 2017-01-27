@@ -752,13 +752,13 @@ load_smpl_lists
 			for (i = 0; i < as_bits->length; i++) {
 				float fl = as_bits->data[i];
 				float fr = as_bits->data[i+as_bits->chan_stride];
-				envelope_buf[i] = fl * fl + fr * fr;
+				mse_buf[i] = fl * fl + fr * fr;
 			}
 		} else {
 			assert(channels == 1);
 			for (i = 0; i < as_bits->length; i++) {
 				float fm = as_bits->data[i];
-				envelope_buf[i] = fm * fm;
+				mse_buf[i] = fm * fm;
 			}
 		}
 
@@ -766,14 +766,16 @@ load_smpl_lists
 		odfilter_build_rect(&filt, &filt_tmps, env_width, 1.0f / env_width);
 
 		/* Get the envelope */
-		odfilter_run_inplace
-			(envelope_buf
-			,as_bits->atk_end_loop_start
-			,as_bits->length
-			,env_width-1
-			,1
-			,&filt_tmps
-			,&filt
+		odfilter_run
+			(/* input */         mse_buf
+			,/* output */        envelope_buf
+			,/* add_to_output */ 0
+			,/* sustain start */ as_bits->atk_end_loop_start
+			,/* total length */  as_bits->length
+			,/* pre-read */      env_width-1
+			,/* is looped */     1
+			,/* tmps */          &filt_tmps
+			,/* filter */        &filt
 			);
 
 		r      = rel_bits;

@@ -167,37 +167,3 @@ void odfilter_run
 	}
 }
 
-void odfilter_run_inplace
-	(float                       *data
-	,unsigned long                susp_start
-	,unsigned long                length
-	,unsigned                     pre_read
-	,int                          is_looped
-	,struct odfilter_temporaries *tmps
-	,const struct odfilter       *filter
-	)
-{
-	float *old_data = malloc(sizeof(float) * length);
-
-	if (old_data == NULL)
-		abort();
-
-	/* Copy input buffer to temp buffer. */
-	memcpy(old_data, data, sizeof(float) * length);
-
-	odfilter_run
-		(old_data
-		,data
-		,0
-		,susp_start
-		,length
-		,pre_read
-		,is_looped
-		,tmps
-		,filter
-		);
-
-	free(old_data);
-}
-
-
