@@ -143,7 +143,7 @@ engine_callback
 #if OPENDIAPASON_VERBOSE_DEBUG
 		{
 			int mn = get_target_note(pd->target_freq, at_rank_harmonic64);
-			printf("%03d-%s RELEASED pos=(%u,%u),rgain=%f,xfade=%d,id=%d\n", mn, NAMES[mn%12], rtd.pos_int, rtd.pos_frac, rtd.gain, rtd.crossfade, rtd.id);
+			printf("%03d RELEASED pos=(%u,%u),rgain=%f,xfade=%d,id=%d\n", mn, rtd.pos_int, rtd.pos_frac, rtd.gain, rtd.crossfade, rtd.id);
 		}
 #endif
 

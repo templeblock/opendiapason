@@ -28,6 +28,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef OPENDIAPASON_VERBOSE_DEBUG
+#include "svgplot/svgplot.h"
+#endif
+
 struct relnode {
 	double           modfac;
 	double           b;
@@ -494,6 +498,49 @@ reltable_build
 		}
 
 #ifdef OPENDIAPASON_VERBOSE_DEBUG
+		{
+			struct svgplot plot;
+			double *xs, *ys;
+			struct svgplot_gridinfo gi;
+			char   namebuf[1024];
+			FILE  *fo;
+
+			gi.x.is_visible     = 1;
+			gi.x.major_interval = 50000;
+			gi.x.sub_divisions  = 10;
+			gi.x.show_text      = 1;
+			gi.x.is_log         = 0;
+			gi.x.auto_size      = 1;
+			gi.x.start          = 0;
+			gi.x.end            = 0;
+
+			gi.y.is_visible     = 1;
+			gi.y.major_interval = 10;
+			gi.y.sub_divisions  = 10;
+			gi.y.show_text      = 1;
+			gi.y.is_log         = 1;
+			gi.y.auto_size      = 1;
+			gi.y.start          = 0;
+			gi.y.end            = 0;
+
+			svgplot_create(&plot);
+			for (rel_idx = 0; rel_idx < nb_rels; rel_idx++) {
+				unsigned i;
+				xs = malloc(sizeof(double) * nb_syncs[rel_idx]);
+				ys = malloc(sizeof(double) * nb_syncs[rel_idx]);
+				for (i = 0; i < nb_syncs[rel_idx]; i++) {
+					xs[i] = error_positions[rel_idx * rel_stride + i];
+					ys[i] = ms_errors[rel_idx * rel_stride + error_positions[rel_idx * rel_stride + i]];
+				}
+				svgplot_add_data(&plot, xs, ys, nb_syncs[rel_idx]);
+			}
+
+			sprintf(namebuf, "%s_reltable_mses.svg", debug_prefix);
+			fo = fopen(namebuf, "w");
+			svgplot_finalise(&plot, &gi, 16, 12, 1, fo);
+			fclose(fo);
+		}
+
 		if (strlen(debug_prefix) < 1024 - 50) {
 			char      namebuf[1024];
 			struct wav_dumper dump;

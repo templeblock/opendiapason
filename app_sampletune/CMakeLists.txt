@@ -47,4 +47,14 @@ target_link_libraries(sampletune od_audioengine fftset smplwav)
 add_subdirectory("../../cop" "${CMAKE_CURRENT_BINARY_DIR}/cop_dep")
 add_subdirectory("../../smplwav" "${CMAKE_CURRENT_BINARY_DIR}/smplwav_dep")
 add_subdirectory("../../fftset" "${CMAKE_CURRENT_BINARY_DIR}/fftset_dep")
+
+# Set the flag here so that it is not included on any source files other than
+# those that are a part of open diapason. There is probably a better way to do
+# this.
+if (OPENDIAPASON_VERBOSE_DEBUG)
+  target_link_libraries(sampletune svgplot)
+  add_subdirectory("../../svgplot" "${CMAKE_CURRENT_BINARY_DIR}/svgplot_dep")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DOPENDIAPASON_VERBOSE_DEBUG=1")
+endif ()
+
 add_subdirectory("../../opendiapason" "${CMAKE_CURRENT_BINARY_DIR}/opendiapason_dep")
