@@ -14,31 +14,24 @@ You will need my "cop" and "fftset" repositories regardless of the operating sys
 > git clone https://github.com/nickappleton/cop  
 > git clone https://github.com/nickappleton/fftset
 
-I follow a convention in my repositories that anything buildable as an application resides in a subdirectory beginning with "app" (i.e. this directory always contains a CMakeLists.txt file containing a project() directive). You should always be able to point cmake at one of these directories to get project files for whatever that application is for.
+I follow a convention in my repositories that anything buildable as an application resides in a subdirectory beginning with "app" (i.e. this directory always contains a CMakeLists.txt file containing a project() directive). You should always be able to point CMake at one of these directories to get project files for whatever that application is for.
 
-### OS X
+OpenDiapason uses PortAudio and PortMidi for audio/midi support. On linux and OS X, if you have PortAudio installed on your system, CMake will try to find the libraries and headers. If you do not have PortAudio installed in a usual place, you will need to specify the PORTAUDIO_INCLUDEDIR, PORTAUDIO_LIBDIR, PORTMIDI_INCLUDEDIR and PORTMIDI_LIBDIR CMake variables. On Windows, PortAudio can be built alongside OpenDiapason in the same way as cop and fftset. i.e.
 
-- You need cmake.
-- You need portaudio and portmidi.
-- If the portaudio and portmidi libraries/headers are in usual locations on the system, you should just be able to use cmake to create Makefiles and build any of the applications.
+> git clone https://git.assembla.com/portaudio.git
 
-### Linux
+If the build system finds a "portaudio" directory at the same level as the other dependencies, it will automatically include it when building OpenDiapason. This makes things easier on Windows systems. Unfortunately, portmidi is a bit more complex to get up and running on Windows and I usually need to hack it just to get it to compile.
 
-- You need cmake.
-- You need portaudio and portmidi.
--- On Ubuntu, this is as easy as `sudo apt-get install portaudio19-dev cmake libportmidi-dev`
-- You should just be able to use cmake to create Makefiles and build any of the applications.
+On Linux, getting PortAudio/PortMidi development headers is as easy as:
 
-### Windows
+> sudo apt-get install portaudio19-dev cmake libportmidi-dev
 
-On Windows, things are a little bit (actually, a lot) trickier. I am using MS Visual Studio 2015 Community Edition (as Visual Studio seems like the right thing to do on Windows). You will need to get and build portaudio and portmidi (there is some tricky-ness here) and you will need to build a 64-bit binary... this is mainly to do with not finding vector types in 32-bit so the FFT will not build - there is probably a way to get around this but I haven't bothered to look into it. If you do, please update this readme. :)
+### Notes for Windows
 
-I found building portaudio much simpler than portmidi. The Visual Studio solution bundled with portaudio appears to work, but nothing worked with portmidi. If you are looking for guidance here, the first thing I did was hack out JNI support. Once that is gone, things appear to build ok.
+I am using MS Visual Studio 2015 Community Edition (as Visual Studio seems like the right thing to do on Windows). The simplest way to get PortAudio working is to clone it at the same level as the other dependencies as mentioned previously. PortMidi requires more attention and it's never compiled for me out of the box - if you hack out JNI support, things generally start working - but there isn't a clean way to disable it using the build system.
 
-You will need to specify the locations of where cmake should search for the portaudio/midi headers. My cmake scripts will look for the variables PORTAUDIO_INCLUDEDIR, PORTAUDIO_LIBDIR to search, so the command line will end up looking something like this:
+As mentioned above, once you have a libraries built, you must specify the PORTMIDI_INCLUDEDIR and PORTMIDI_LIBDIR (and PORTAUDIO_INCLUDEDIR and PORTAUDIO_LIBDIR if you built it too from scratch).
 
-`cmake .. -G "Visual Studio 14 2015 Win64" -DPORTAUDIO_LIBDIR=C:\things\portaudiobin\Release -DPORTAUDIO_INCLUDEDIR=C:\things\port2\include`
+### Current issues
 
-You will also need to copy the built portaudio dynamic library into the build directory in order to run the binary.
-
-As a side-note, I've found that the latency on Windows 10 fluctuates a bit at run-time. I have no idea what clown-business is going on here, but it seems to perform worse than every other platform I am building on. You may also need to increase the latency slightly to get acceptable performance.
+I've really only noticed big problems on Windows. The main issue at the moment is related to compressed memory kicking in and starting to move chunks of the loaded samples somewhere else. After running for two days, the memory usage with one particular sample set went from 4 GB to 2 MB - as soon as keys start playing, theres glitching everywhere as everything gets uncompressed again. I think there are some hacky ways to solve this (a thread that continously reads from the allocated memory), but I'm not doing that until I'm convinced that I'm not missing something on Windows... ping me if you've got any ideas
