@@ -157,14 +157,14 @@ static float accusum(float *buf, unsigned len)
 
 int
 do_processing
-	(struct smplwav *sample
-	,struct aalloc  *mem
-	,float          *wave_data
-	,float          *square_buf
-	,float          *envelope_buf
-	,uint_fast32_t   chanstride
-	,uint_fast32_t   buf_start
-	,uint_fast32_t   buf_len
+	(struct smplwav           *sample
+	,struct cop_salloc_iface  *mem
+	,float                    *wave_data
+	,float                    *square_buf
+	,float                    *envelope_buf
+	,uint_fast32_t             chanstride
+	,uint_fast32_t             buf_start
+	,uint_fast32_t             buf_len
 	)
 {
 	struct scaninfo    *scinfo;
@@ -179,13 +179,13 @@ do_processing
 	struct xcdata      *xcresults3;
 	unsigned            nb_results = 0;
 
-	if  (   (tmp_buf      = aalloc_align_alloc(mem, sizeof(float) * buf_len, 32)) == NULL
-	    ||  (scinfo       = aalloc_align_alloc(mem, sizeof(*scinfo) * buf_len * 2, 32)) == NULL
-	    ||  (xcbuf        = aalloc_align_alloc(mem, sizeof(*xcbuf) * (MAX_NB_XCDATA * (MAX_NB_XCDATA + 1) / 2), 32)) == NULL
-	    ||  (xcscratch    = aalloc_align_alloc(mem, sizeof(*xcscratch) * (MAX_NB_XCDATA * (MAX_NB_XCDATA + 1) / 2), 32)) == NULL
-	    ||  (xcresults    = aalloc_align_alloc(mem, sizeof(*xcscratch) * MAX_NB_XCDATA, 32)) == NULL
-	    ||  (xcresults2   = aalloc_align_alloc(mem, sizeof(*xcscratch) * MAX_NB_XCDATA, 32)) == NULL
-	    ||  (xcresults3   = aalloc_align_alloc(mem, sizeof(*xcscratch) * MAX_NB_XCDATA, 32)) == NULL
+	if  (   (tmp_buf      = cop_salloc(mem, sizeof(float) * buf_len, 32)) == NULL
+	    ||  (scinfo       = cop_salloc(mem, sizeof(*scinfo) * buf_len * 2, 32)) == NULL
+	    ||  (xcbuf        = cop_salloc(mem, sizeof(*xcbuf) * (MAX_NB_XCDATA * (MAX_NB_XCDATA + 1) / 2), 32)) == NULL
+	    ||  (xcscratch    = cop_salloc(mem, sizeof(*xcscratch) * (MAX_NB_XCDATA * (MAX_NB_XCDATA + 1) / 2), 32)) == NULL
+	    ||  (xcresults    = cop_salloc(mem, sizeof(*xcscratch) * MAX_NB_XCDATA, 32)) == NULL
+	    ||  (xcresults2   = cop_salloc(mem, sizeof(*xcscratch) * MAX_NB_XCDATA, 32)) == NULL
+	    ||  (xcresults3   = cop_salloc(mem, sizeof(*xcscratch) * MAX_NB_XCDATA, 32)) == NULL
 	    ) {
 		fprintf(stderr, "out of memory\n");
 		return -1;
@@ -356,16 +356,16 @@ do_processing
 
 int main(int argc, char *argv[])
 {
-	struct cop_filemap  infile;
-	struct smplwav      sample;
-	struct aalloc       mem;
-	int                 err;
-	float              *wave_data;
-	uint_fast32_t       chanstride;
-	float              *square_buf;
-	float              *envelope_buf;
-	uint_fast32_t       i;
-
+	struct cop_filemap          infile;
+	struct smplwav              sample;
+	struct cop_salloc_iface     mem;
+	struct cop_alloc_grp_temps  mem_impl;
+	int                         err;
+	float                      *wave_data;
+	uint_fast32_t               chanstride;
+	float                      *square_buf;
+	float                      *envelope_buf;
+	uint_fast32_t               i;
 	uint_fast32_t               start_search;
 	uint_fast32_t               end_search;
 	struct odfilter             filter;
@@ -399,19 +399,29 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-	aalloc_init(&mem, 1024*1024*256, 32, 1024*1024);
-	fftset_init(&fftset);
+	if (cop_alloc_grp_temps_init(&mem_impl, &mem, 1024*1024*256, 1024*1024, 32)) {
+		cop_filemap_close(&infile);
+		fprintf(stderr, "out of memory.\n");
+		return -1;
+	}
+
+	if (fftset_init(&fftset)) {
+		cop_alloc_grp_temps_free(&mem_impl);
+		cop_filemap_close(&infile);
+		fprintf(stderr, "out of memory.\n");
+		return -1;
+	}
 
 	/* Allocate memory for the various awful things this program does. */
 	chanstride = ((sample.data_frames + VLF_WIDTH - 1) / VLF_WIDTH) * VLF_WIDTH;
-	if  (   (wave_data    = aalloc_align_alloc(&mem, sizeof(float) * chanstride * sample.format.channels, 32)) == NULL
-		||  (square_buf   = aalloc_align_alloc(&mem, sizeof(float) * sample.data_frames, 32)) == NULL
-		||  (envelope_buf = aalloc_align_alloc(&mem, sizeof(float) * sample.data_frames, 32)) == NULL
-		||  (odfilter_init_filter(&filter, &mem, &fftset, LONG_WINDOW_LENGTH))
-		||  (odfilter_init_temporaries(&filter_temps, &mem, &filter))
+	if  (   (wave_data    = cop_salloc(&mem, sizeof(float) * chanstride * sample.format.channels, 32)) == NULL
+		||  (square_buf   = cop_salloc(&mem, sizeof(float) * sample.data_frames, 32)) == NULL
+		||  (envelope_buf = cop_salloc(&mem, sizeof(float) * sample.data_frames, 32)) == NULL
+		||  (odfilter_init_filter(&filter, &mem.iface, &fftset, LONG_WINDOW_LENGTH))
+		||  (odfilter_init_temporaries(&filter_temps, &mem.iface, &filter))
 		) {
 		fftset_destroy(&fftset);
-		aalloc_free(&mem);
+		cop_alloc_grp_temps_free(&mem_impl);
 		cop_filemap_close(&infile);
 		fprintf(stderr, "out of memory\n");
 		return -1;
@@ -470,7 +480,7 @@ int main(int argc, char *argv[])
 			);
 
 	fftset_destroy(&fftset);
-	aalloc_free(&mem);
+	cop_alloc_grp_temps_free(&mem_impl);
 	cop_filemap_close(&infile);
 
 	return err;
