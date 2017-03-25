@@ -58,6 +58,17 @@
 
 #define FILTER_LEN           (SMPL_POSITION_SCALE * SMPL_INTERP_TAPS)
 
+/* In the graphic file that is created by this program, an X axis value of 1
+ * represents the Nyquist rate. This specifies the width of the axis. The way
+ * the graph is generated relies on the filter actually being a valid low-pass
+ * filter as the graph is expanded by aliasing the filter coefficients! It
+ * does not impact the filter coefficients, but does impact on the inverse
+ * filter coefficients. */
+#define FILTER_ALIAS (4)
+
+#define ANA_FFT_SIZE (2048)
+
+
 static double filter[FILTER_LEN];
 
 /* Implements the 0th order modified Bessel function of the first kind. */
@@ -114,10 +125,29 @@ static void l1_norm(double *filter, unsigned len, double scale)
 		filter[i] *= norm;
 }
 
+/* That's right. No optimization problem solving going on here. The filter is
+ * built using the parameters listed below. The frequency-response graph is
+ * looked at to determine the legitimacy of the filter coefficients. */
+#if 0
+/* Old filter. */
+/* Peak aliasing -52 dB : avg aliasing -75 dB : peak boost 28 dB */
+#define TIME_SKEW     (1.0)
+#define BENT_FACTOR   (1.7)
+#define KAISER_FACTOR (1.8)
+#endif
+
+#if 1
+/* 24th March 2017  - better in pretty much every way. */
+/* Peak aliasing -58 dB : avg aliasing -72 dB : peak boost 26 dB */
+#define TIME_SKEW     (0.86)
+#define BENT_FACTOR   (3.5)
+#define KAISER_FACTOR (2.15)
+#endif
+
+
 int main(int argc, char *argv[])
 {
 	unsigned i;
-	const unsigned fft_size      = 2048;
 	float  VEC_ALIGN_BEST fft_buf[2048];
 	float  VEC_ALIGN_BEST tmp_buf[2048];
 	float  VEC_ALIGN_BEST tmp2_buf[2048];
@@ -130,65 +160,66 @@ int main(int argc, char *argv[])
 
 	struct fftset convs;
 	const struct fftset_fft *fft;
+	const struct fftset_fft *fft_synth;
 
 	fftset_init(&convs);
 
-	fft     = fftset_create_fft(&convs, FFTSET_MODULATION_FREQ_OFFSET_REAL, fft_size / 2);
+	fft       = fftset_create_fft(&convs, FFTSET_MODULATION_FREQ_OFFSET_REAL, ANA_FFT_SIZE/2);
+	fft_synth = fftset_create_fft(&convs, FFTSET_MODULATION_FREQ_OFFSET_REAL, ANA_FFT_SIZE/(2*FILTER_ALIAS));
 
 	/* 1) Build the interpolation filter and normalise the DC component to
 	 *    have unity gain. */
 	for (i = 0; i < FILTER_LEN-1; i++) {
 		int    t  = (int)i - (int)(SMPL_POSITION_SCALE * SMPL_INTERP_TAPS / 2 - 1);
 		double f  = 0.5 / SMPL_POSITION_SCALE;
-		double sv = bent_sinc(M_PI * t * f, 1.7);
+		double sv = bent_sinc(M_PI * t * f * TIME_SKEW, BENT_FACTOR);
 		filter[i] = sv;
 	}
-	apply_kaiser(filter, FILTER_LEN-1, 1.8);
+	apply_kaiser(filter, FILTER_LEN-1, KAISER_FACTOR);
 	filter[i] = 0;
 	l1_norm(filter, FILTER_LEN, SMPL_POSITION_SCALE);
 
 	/* 2) Find the combined magnitude spectrum of the interpolation filter by
 	 *    summing all of the polyphase components. */
-	for (i = 0; i < fft_size; i++) {
-		fft_buf[i] = 0.0;
+	for (i = 0; i < SMPL_INTERP_TAPS * FILTER_ALIAS; i++) {
+		fft_buf[i] = (float)(filter[i * SMPL_POSITION_SCALE / FILTER_ALIAS] / FILTER_ALIAS);
 	}
-	for (i = 0; i < SMPL_INTERP_TAPS; i++) {
-		unsigned j;
-		for (j = 0; j < SMPL_POSITION_SCALE; j++) {
-			fft_buf[i] += (float)(filter[i * SMPL_POSITION_SCALE + j] / SMPL_POSITION_SCALE);
-		}
+	for (; i < ANA_FFT_SIZE; i++) {
+		fft_buf[i] = 0.0;
 	}
 	fftset_fft_forward(fft, tmp_buf, fft_buf, tmp2_buf);
 
 	/* 3) Create plot of interpolation filter magnitude response and create a
 	 *    response for the inverse interpolation filter. */
-	for (i = 0; i < fft_size/2; i++) {
+	for (i = 0; i < ANA_FFT_SIZE/2; i++) {
 		double re = tmp_buf[2*i];
 		double im = tmp_buf[2*i+1];
 		double gain = 10.0 * log10(re * re + im * im);
 
 		assert(re == re && im == im);
-		plot_x_buf[i] = 44100 * ((i + 0.5) / fft_size);
+		plot_x_buf[i]         = (i + 0.5) / (ANA_FFT_SIZE/(2 * FILTER_ALIAS));
 		plot_interp_filter[i] = fmin(100.0, fmax(-300, gain));
 
-		double w = (i + 0.5) / (float)(fft_size / 2);
-		double co   = 19000.0 * 2.0 / 44100.0;
-		double cooe = 21500.0 * 2.0 / 44100.0;
-		double target = 10.0 * log10(1.0 / (1.0 + pow(w / co, 38.0)));
-		double interp = pow(fmin(fmax(0.0, (w - co) / (cooe - co)), 1.0), 5);
-		gain = (1.0 - interp) * (target - gain) + interp * -80.0;
+		if (i < ANA_FFT_SIZE/(2 * FILTER_ALIAS)) {
+			double w = (i + 0.5) / (float)(ANA_FFT_SIZE / (2 * FILTER_ALIAS));
+			double co   = 19000.0 * 2.0 / (44100.0);
+			double cooe = 21500.0 * 2.0 / (44100.0);
+			double target = 10.0 * log10(1.0 / (1.0 + pow(w / co, 38.0)));
+			double interp = pow(fmin(fmax(0.0, (w - co) / (cooe - co)), 1.0), 5);
+			gain = (1.0 - interp) * (target - gain) + interp * -80.0;
 
-		/* Invert magnitude. */
-		gain = pow(10.0, gain * 0.05);
+			/* Invert magnitude. */
+			gain = pow(10.0, gain * 0.05);
 
-		tmp_buf[2*i+0] = gain / (fft_size/2);
-		tmp_buf[2*i+1] = 0.0f;
+			tmp_buf[2*i+0] = gain / (ANA_FFT_SIZE/(2 * FILTER_ALIAS));
+			tmp_buf[2*i+1] = 0.0f;
+		}
 	}
 
 	/* 4) Convert the inverse filter response back into the time-domain,
 	 *    truncate it to the required length and window it with a Kaiser
 	 *    window (to smooth it out). */
-	fftset_fft_inverse(fft, fft_buf, tmp_buf, tmp2_buf);
+	fftset_fft_inverse(fft_synth, fft_buf, tmp_buf, tmp2_buf);
 	tmp_double[(SMPL_INVERSE_FILTER_LEN-1)/2] = fft_buf[0] / SMPL_POSITION_SCALE;
 	for (i = 1; i < (SMPL_INVERSE_FILTER_LEN+1)/2; i++) {
 		double x = fft_buf[i] / SMPL_POSITION_SCALE;
@@ -199,19 +230,19 @@ int main(int argc, char *argv[])
 	for (i = 0; i < SMPL_INVERSE_FILTER_LEN; i++) {
 		fft_buf[i] = tmp_double[i];
 	}
-	for (; i < fft_size; i++) {
+	for (; i < ANA_FFT_SIZE; i++) {
 		fft_buf[i] = 0.0;
 	}
 	for (i = 0; i < SMPL_INVERSE_FILTER_LEN; i++) {
 		inv_buf[i] = fft_buf[i] * SMPL_POSITION_SCALE;
 	}
-	fftset_fft_forward(fft, tmp_buf, fft_buf, tmp2_buf);
-	for (i = 0; i < fft_size/2; i++) {
+	fftset_fft_forward(fft_synth, tmp_buf, fft_buf, tmp2_buf);
+	for (i = 0; i < ANA_FFT_SIZE/(2 * FILTER_ALIAS); i++) {
 		double re = tmp_buf[2*i] * SMPL_POSITION_SCALE;
 		double im = tmp_buf[2*i+1] * SMPL_POSITION_SCALE;
-		double magnitude = sqrt(re * re + im * im);
+		double pow = re * re + im * im;
 		assert(re == re && im == im);
-		plot_inverse_filter[i]  = fmin(100.0, fmax(-300, 20.0 * log10(magnitude)));
+		plot_inverse_filter[i]  = fmin(100.0, fmax(-300, 10.0 * log10(pow)));
 		plot_combined_filter[i] = plot_interp_filter[i] + plot_inverse_filter[i];
 	}
 
@@ -277,9 +308,9 @@ int main(int argc, char *argv[])
 		struct svgplot_gridinfo gi;
 		struct svgplot plot;
 		svgplot_create(&plot);
-		svgplot_add_data(&plot, plot_x_buf, plot_interp_filter,   fft_size/2);
-		svgplot_add_data(&plot, plot_x_buf, plot_inverse_filter,  fft_size/2);
-		svgplot_add_data(&plot, plot_x_buf, plot_combined_filter, fft_size/2);
+		svgplot_add_data(&plot, plot_x_buf, plot_interp_filter,   ANA_FFT_SIZE/2);
+		svgplot_add_data(&plot, plot_x_buf, plot_inverse_filter,  ANA_FFT_SIZE/(2 * FILTER_ALIAS));
+		svgplot_add_data(&plot, plot_x_buf, plot_combined_filter, ANA_FFT_SIZE/(2 * FILTER_ALIAS));
 #if 0
 		gi.x.is_log = 1;
 		gi.x.sub_divisions = 9;
@@ -288,7 +319,7 @@ int main(int argc, char *argv[])
 #else
 		gi.x.is_log = 0;
 		gi.x.sub_divisions = 5;
-		gi.x.major_interval = 5000;
+		gi.x.major_interval = 1;
 		gi.x.auto_size = 1;
 #endif
 		gi.x.is_visible = 1;
@@ -301,7 +332,7 @@ int main(int argc, char *argv[])
 		gi.y.auto_size = 0;
 		gi.y.start = -130;
 		gi.y.end   = 35;
-		svgplot_finalise(&plot, &gi, 12, 12*3/4, 0.2, f);
+		svgplot_finalise(&plot, &gi, 24, 24*3/4, 0.2, f);
 		fclose(f);
 	}
 
