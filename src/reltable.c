@@ -465,6 +465,8 @@ reltable_build
 	float    *shape_errors    = malloc(rel_stride * nb_rels * sizeof(float));
 	unsigned *nb_syncs        = malloc(nb_rels * sizeof(unsigned));
 	(void)debug_prefix;
+	float clipmax = powf(10.0f, 2.0f / 20.0f);
+	float clipmin = powf(10.0f, -2.0f / 20.0f);
 
 	{
 		float          *ms_errors = malloc(rel_stride * nb_rels * sizeof(float));
@@ -483,9 +485,19 @@ reltable_build
 				float scale = rel_power + envelope_buf[i];
 				float f     = scale - 2.0f * corrbuf[i];
 
+				/* This is new...
+				 * We are working out the MS error if we crossfade into the
+				 * release at the best gain. But the best gain might be zero.
+				 * It also might be very large. We hack it by limiting the
+				 * gain range. This is great, but when multiple releases have
+				 * similar levels, the gain is similar - but one release is
+				 * clearly going to be the winner; so we use a power to bring
+				 * the resultant gain closer and closer to 1. */
 				float g = corrbuf[i] / rel_power;
-				if (g > 1.1f) g = 1.1f;
-				else if (g < 0.1f) g = 0.1f;
+				if (g > clipmax) g = clipmax;
+				else if (g < clipmin) g = clipmin;
+				g = (g - 1.0f) * 0.25f + 1.0f;
+//				g = powf(g, 1.0 / 6.0);
 
 				/* TODO: WE ARE USING MS ERROR AGAIN TO BUILD TABLES - THIS
 				 * GIVES THE BEST RESULT WHEN USING MULTIPLE RELEASES...

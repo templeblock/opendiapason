@@ -14,7 +14,7 @@
 
 #define DUMP_TUNING_SESSION "out.wav"
 
-#define PLAYBACK_SAMPLE_RATE (48000)
+#define PLAYBACK_SAMPLE_RATE (96000)
 
 struct pipe_executor {
 	struct pipe_v1           data;

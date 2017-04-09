@@ -81,6 +81,33 @@ struct test_load_entry {
  * samples, the final is the harmonic base pitch relative to 16. */
 static const struct test_load_entry TEST_ENTRY_LIST[] =
 #if 1
+{	{"II Geigen Principal 8",      36, 51, SW,       2, '1', 48}
+,	{"II Portunal Flaut 8",        36, 51, SW,       2, '2', 49}
+,	{"II Flaut Major 8",           36, 51, SW,       2, '3', 50}
+,	{"II Salicet 8",               36, 51, SW,       2, '4', 51}
+,	{"II Viol-Principal 4",        36, 51, SW,       4, '5', 52}
+,	{"II Portunal Flaut 4",        36, 51, SW,       4, '6', 53}
+#if 1
+,	{"I Trompete 8",               36, 51, PED | GT, 2, 'a', 64}
+,	{"I Bordun 16",                36, 51, PED | GT, 1, 's', 65}
+,	{"I Principal 8",              36, 51, PED | GT, 2, 'd', 66}
+,	{"I Doppelrohrflote 8",        36, 51, PED | GT, 2, 'f', 67}
+,	{"I Gemshorn 8",               36, 51, PED | GT, 2, 'g', 68}
+,	{"I Viola di Gamba 8",         36, 51, PED | GT, 2, 'h', 69}
+,	{"I Octave 4",                 36, 51, PED | GT, 4, 'j', 70}
+,	{"I Quinte 2 23",              36, 51, PED | GT, 6, 'k', 71}
+,	{"I Octave 2",                 36, 51, PED | GT, 8, 'l', 72}
+,	{"I Mixtur 4 Fach",            36, 51, PED | GT, 2, ';', 73}
+,	{"P Posaune 16",               36, 27, PED,      1, 'z', 80}
+,	{"P Principalbass 16",         36, 27, PED,      1, 'x', 81}
+,	{"P Subbass 16",               36, 27, PED,      1, 'c', 82}
+,	{"P Violonbass 16",            36, 27, PED,      1, 'v', 83}
+,	{"P Octavbass 8",              36, 27, PED,      2, 'b', 84}
+,	{"P Flautbass 8",              36, 27, PED,      2, 'n', 85}
+#endif
+};
+#endif
+#if 0
 {	{"III Trompette Harmonique 8", 36, 53, SW,       2, '1', 48}
 ,	{"III Hautbois 8",             36, 53, SW,       2, '2', 49}
 ,	{"III Aeoline 8",              36, 53, SW,       2, '3', 50}
@@ -102,7 +129,8 @@ static const struct test_load_entry TEST_ENTRY_LIST[] =
 ,	{"P Soubasse 16",              36, 27, PED,      1, 'c', 82}
 ,	{"P Violoncelle 8",            36, 27, PED,      2, 'v', 83}
 };
-#else
+#endif
+#if 0
 {	{"I Bordun 16",                36, 53, PED | GT,  1, 'a'}
 ,	{"I Principal 8",              36, 53, PED | GT,  2, 's'}
 ,	{"I Octave 4",                 36, 53, PED | GT,  4, 'd'}
